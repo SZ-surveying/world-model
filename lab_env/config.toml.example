@@ -1,0 +1,31 @@
+standalone_entrypoint = "127.0.0.1:14552"
+
+[router]
+listen = "0.0.0.0:14550"
+tcp_port = 0
+# Leave endpoints unset to forward to standalone_entrypoint by default.
+# Add [[router.endpoints]] only when you need extra fan-out targets.
+#
+# [[router.endpoints]]
+# name = "mac"
+# endpoint = "100.68.243.25:14552"
+#
+# [[router.endpoints]]
+# name = "qgc"
+# endpoint = "127.0.0.1:14560"
+
+[gazebo]
+container_name = "compose-gazebo-1"
+world = "/workspace/worlds/uav_obstacle_5m.sdf"
+
+[foxglove]
+container_name = "compose-foxglove-1"
+port = 8765
+
+[rosbag]
+container_name = "compose-rosbag-record-1"
+topic_file = "/workspace/profiles/rosbag-topics.txt"
+
+[fast_lio]
+container_name = "compose-fast-lio-1"
+config_path = "/workspace/profiles/fast-lio/config.yaml"

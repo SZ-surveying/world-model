@@ -7,8 +7,23 @@ requires-python = ">=3.11"
 dependencies = []
 
 [dependency-groups]
-dev = [
-    "ruff>=0.15.11",
+dev = ["pytest>=8.4.2", "pyright>=1.1.408", "ruff>=0.15.11"]
+lab_env = [
+    "dronecan>=1.0.27",
+    "empy==3.3.4",
+    "fastapi>=0.136.1",
+    "future>=1.0.0",
+    "intelhex>=2.3.0",
+    "lxml>=6.1.0",
+    "matplotlib>=3.10.9",
+    "mavproxy>=1.8.74",
+    "numpy>=2.4.5",
+    "pexpect>=4.9.0",
+    "pymavlink>=2.4.49",
+    "pyserial>=3.5",
+    "python-on-whales>=0.81.0",
+    "rich>=14.1.0",
+    "typer>=0.25.1",
 ]
 
 

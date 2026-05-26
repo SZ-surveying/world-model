@@ -1,0 +1,170 @@
+name: lab_env
+
+x-nn-user: &nn_user
+  user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+
+services:
+  sitl:
+    <<: *nn_user
+    image: remote-sitl-lab/ardupilot-sitl:latest
+    environment:
+      SESSION_ID: "${SESSION_ID:-manual}"
+      SITL_UPSTREAM_ENDPOINT: "${SITL_UPSTREAM_ENDPOINT:-mavlink-router:14550}"
+      SITL_ROUTER_ONLY: "${SITL_ROUTER_ONLY:-false}"
+    volumes:
+      - ./artifacts/sessions:/artifacts/sessions
+      - ./docker/entrypoints/start-sitl.sh:/usr/local/bin/start-sitl.sh:ro
+    command: [ "bash", "/usr/local/bin/start-sitl.sh" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "pgrep -x arducopter >/dev/null" ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    profiles: [ "base_env" ]
+    depends_on:
+      mavlink-router:
+        condition: service_healthy
+    networks:
+      - mavlink-lab
+
+  mavlink-router:
+    <<: *nn_user
+    image: remote-sitl-lab/mavlink-router:latest
+    environment:
+      SESSION_ID: "${SESSION_ID:-manual}"
+      ROUTER_LISTEN: "${ROUTER_LISTEN:-0.0.0.0:14550}"
+      ROUTER_TCP_PORT: "${ROUTER_TCP_PORT:-0}"
+      ROUTER_DOWNSTREAM_ENDPOINTS: "${ROUTER_DOWNSTREAM_ENDPOINTS:-}"
+    volumes:
+      - ./artifacts/sessions:/artifacts/sessions
+      - ./docker/entrypoints/start-mavlink-router.sh:/usr/local/bin/start-mavlink-router.sh:ro
+    command: [ "bash", "/usr/local/bin/start-mavlink-router.sh" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "pgrep -x mavlink-routerd >/dev/null" ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    profiles: [ "base_env" ]
+    networks:
+      - mavlink-lab
+
+  gazebo:
+    <<: *nn_user
+    image: remote-sitl-lab/gazebo-headless:latest
+    environment:
+      SESSION_ID: "${SESSION_ID:-manual}"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      WORLD: "${GAZEBO_WORLD:-/workspace/worlds/uav_obstacle_5m.sdf}"
+    volumes:
+      - ./artifacts/ros:/artifacts/ros
+      - ./docker/worlds:/workspace/worlds:ro
+      - ./docker/models:/workspace/models:ro
+      - ./docker/entrypoints/start-gazebo.sh:/usr/local/bin/start-gazebo.sh:ro
+    command: [ "bash", "/usr/local/bin/start-gazebo.sh" ]
+    profiles: [ "base_env" ]
+    networks:
+      - mavlink-lab
+
+  scan-bridge:
+    <<: *nn_user
+    image: remote-sitl-lab/ros-jazzy-base:latest
+    network_mode: "service:gazebo"
+    environment:
+      SESSION_ID: "${SESSION_ID:-manual}"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      CONFIG_FILE: "/workspace/ros_gz_bridge/scan_bridge.yaml"
+    volumes:
+      - ./docker/ros_gz_bridge:/workspace/ros_gz_bridge:ro
+      - ./docker/entrypoints/start-scan-bridge.sh:/usr/local/bin/start-scan-bridge.sh:ro
+    command: [ "bash", "/usr/local/bin/start-scan-bridge.sh" ]
+    profiles: [ "sim_p1" ]
+
+  foxglove:
+    <<: *nn_user
+    image: remote-sitl-lab/ros-jazzy-base:latest
+    environment:
+      SESSION_ID: "${SESSION_ID:-manual}"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+    volumes:
+      - ./docker/entrypoints/start-foxglove-bridge.sh:/usr/local/bin/start-foxglove-bridge.sh:ro
+    command: [ "bash", "/usr/local/bin/start-foxglove-bridge.sh" ]
+    ports:
+      - "${FOXGLOVE_PUBLISHED_PORT:-8765}:8765"
+    profiles: [ "base_env" ]
+    networks:
+      - mavlink-lab
+
+  rosbag-record:
+    <<: *nn_user
+    image: remote-sitl-lab/ros-jazzy-base:latest
+    environment:
+      SESSION_ID: "${SESSION_ID:-manual}"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      TOPIC_FILE: "${TOPIC_FILE:-/workspace/profiles/rosbag-topics.txt}"
+    volumes:
+      - ./artifacts/ros:/artifacts/ros
+      - ./profiles:/workspace/profiles:ro
+      - ./docker/entrypoints/start-rosbag-record.sh:/usr/local/bin/start-rosbag-record.sh:ro
+    command: [ "bash", "/usr/local/bin/start-rosbag-record.sh" ]
+    profiles: [ "base_env" ]
+    networks:
+      - mavlink-lab
+
+  rosbag-play:
+    <<: *nn_user
+    image: remote-sitl-lab/ros-jazzy-base:latest
+    environment:
+      SESSION_ID: "${SESSION_ID:-manual}"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      PLAY_BAG_DIR: "${PLAY_BAG_DIR:-/artifacts/ros/manual/rosbag}"
+      PLAY_ARGS: "${PLAY_ARGS:---loop}"
+    volumes:
+      - ./artifacts/ros:/artifacts/ros
+      - ./docker/entrypoints/start-rosbag-play.sh:/usr/local/bin/start-rosbag-play.sh:ro
+    command: [ "bash", "/usr/local/bin/start-rosbag-play.sh" ]
+    profiles: [ "rosbag_play" ]
+    networks:
+      - mavlink-lab
+
+  sim-runtime:
+    <<: *nn_user
+    image: remote-sitl-lab/ros-jazzy-base:latest
+    environment:
+      SESSION_ID: "${SESSION_ID:-manual}"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      PYTHONPATH: "/workspace"
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    command: [ "bash", "-lc", "source /opt/ros/jazzy/setup.bash && sleep infinity" ]
+    profiles: [ "sim_p1" ]
+    networks:
+      - mavlink-lab
+
+  fast-lio:
+    <<: *nn_user
+    image: "${FAST_LIO_IMAGE:-remote-sitl-lab/fast-lio:latest}"
+    environment:
+      SESSION_ID: "${SESSION_ID:-manual}"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+    volumes:
+      - ./profiles:/workspace/profiles:ro
+      - ./artifacts/ros:/artifacts/ros
+      - ./docker/entrypoints/start-fast-lio.sh:/usr/local/bin/start-fast-lio.sh:ro
+    command: [ "bash", "/usr/local/bin/start-fast-lio.sh" ]
+    profiles: [ "fast-lio" ]
+    networks:
+      - mavlink-lab
+
+networks:
+  mavlink-lab:
+    driver: bridge

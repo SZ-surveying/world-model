@@ -35,6 +35,12 @@
 - `docs/scenarios/indoor/mvp_plan.md`: 室内场景 MVP 路线图
 - `docs/scenarios/indoor/ardupilot_slam_design.md`: 室内 SLAM + ExternalNav + ArduPilot 详细设计评审
 
+### 当前仿真路径 `docs/sim/`
+
+- `docs/sim/README.md`: 当前只关注 fake `/scan` 和 Gazebo lidar 的两阶段仿真设计，明确排除旧 `ros2_ws/`
+- `docs/sim/scan_contract.md`: 真实 `x3` 驱动对外暴露的 `/scan` 契约，fake 和 Gazebo 都必须对齐
+- `docs/sim/todo.md`: 当前仿真路线的 P0 / P1 / P2 任务拆解和验收标准
+
 ## 当前推荐阅读顺序
 
 如果你想先看顶层通用设计，建议按这个顺序：
@@ -51,6 +57,12 @@
 2. `docs/scenarios/indoor/architecture.md`
 3. `docs/scenarios/indoor/mvp_plan.md`
 4. `docs/scenarios/indoor/ardupilot_slam_design.md`
+
+如果你想直接推进当前避障仿真，先看：
+
+1. `docs/sim/README.md`
+2. `docs/sim/scan_contract.md`
+3. `docs/sim/todo.md`
 
 ## 当前目录结构
 
@@ -71,6 +83,10 @@ docs/
       architecture.md
       mvp_plan.md
       ardupilot_slam_design.md
+  sim/
+    README.md
+    scan_contract.md
+    todo.md
 ```
 
 ## 当前约束

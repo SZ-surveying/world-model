@@ -1,0 +1,17 @@
+standalone_entrypoint = "100.68.243.25:14552"
+
+[router]
+listen = "0.0.0.0:14550"
+tcp_port = 0
+
+[[router.endpoints]]
+name = "mp-service"
+endpoint = "100.68.243.25:14552"
+
+[[router.endpoints]]
+name = "monitor-run-bridge"
+endpoint = "100.68.243.25:14553"
+
+[[router.endpoints]]
+name = "mp-capture"
+endpoint = "100.68.243.25:14554"

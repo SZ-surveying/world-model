@@ -154,6 +154,7 @@ ros2 launch ydlidar_ros2_driver ydlidar_launch.py
 ```bash
 just x3-build
 just x3-launch
+just x3-trip
 just x3-features
 just x3-echo-features
 ```
@@ -204,6 +205,87 @@ ros2 run ydlidar_ros2_driver ydlidar_ros2_driver_scan_features
 source install/setup.bash
 ros2 topic echo /scan_features
 ```
+
+### 8.4 一趟采集 + 远程查看 + 自动录包
+
+如果你现在的目标是：
+
+- 插上雷达
+- 跑一趟
+- 远程用 Foxglove 看实时数据
+- 同时把这一趟录成 rosbag2
+
+那么优先用这条：
+
+```bash
+cd /home/admin/workspace/world-model
+just x3-trip
+```
+
+这个命令会一起启动：
+
+- `ydlidar_launch.py`
+- `foxglove_bridge`
+- `ydlidar_ros2_driver_scan_features`
+- `ros2 bag record`
+
+默认行为：
+
+- Foxglove WebSocket 地址：`ws://<机器人IP>:8765`
+- rosbag 输出目录：`/home/admin/workspace/world-model/x3/bags/`
+- 默认 rosbag 存储后端：`mcap`
+- 默认录制话题：
+  - `/scan`
+  - `/point_cloud`
+  - `/tf`
+  - `/tf_static`
+  - `/rosout`
+  - `/scan_features`
+  - `/scan_nearest_point`
+
+如果你想直接把 launch 参数透传进去，也可以这样用：
+
+```bash
+just x3-trip record_all:=true
+just x3-trip foxglove_port:=9001
+just x3-trip bag_storage:=sqlite3
+just x3-trip extra_topics:=/diagnostics,/imu/data
+just x3-trip params_file:=/home/admin/workspace/world-model/x3/src/ydlidar_ros2_driver/params/X2.yaml
+```
+
+如果你不想通过 `just`，也可以直接运行：
+
+```bash
+cd /home/admin/workspace/world-model/x3
+source install/setup.bash
+ros2 launch ydlidar_ros2_driver x3_remote_trip.launch.py
+```
+
+Foxglove 客户端里填：
+
+```text
+ws://<机器人IP>:8765
+```
+
+关于 `/point_cloud`：
+
+- 现在驱动发布的是 `sensor_msgs/msg/PointCloud2`
+- 这样可以直接被 Foxglove 的 `3D` 面板识别
+- 之前如果是旧的 `sensor_msgs/msg/PointCloud`，Foxglove `3D` 面板通常不会按点云正常渲染
+
+结束采集时，直接在启动终端按 `Ctrl-C`，`rosbag2` 会正常收尾。
+
+### 8.5 每次开跑前检查
+
+如果下面 5 件事已经满足，那么基本就是“接上雷达就能用”：
+
+1. `x3` 工作空间已经成功构建过，并且有 `install/setup.bash`
+2. 本机已经安装 `foxglove_bridge`
+3. 如果默认录制 MCAP，本机已经安装 `rosbag2_storage_mcap`
+4. 雷达串口权限没问题，当前用户能访问设备
+5. 参数文件里的 `port`、`baudrate`、型号相关参数和你的设备一致
+
+也就是说，不需要你每次再改代码；但第一次环境准备没做好时，仍然会卡在串口、权限或参数不匹配上。
 
 ## 9. 最小使用顺序
 

@@ -11,6 +11,12 @@ wheels/
 
 .codex
 
+x3/bags/
 x3/build/
 x3/install/
 x3/log/
+
+artifacts/
+build/
+install/
+log/
