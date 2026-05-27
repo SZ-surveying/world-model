@@ -15,3 +15,7 @@ endpoint = "100.68.243.25:14553"
 [[router.endpoints]]
 name = "mp-capture"
 endpoint = "100.68.243.25:14554"
+
+[sim.logging]
+console_level = "DEBUG"
+file_level = "INFO"

@@ -22,9 +22,12 @@ world = "/workspace/worlds/uav_obstacle_5m.sdf"
 container_name = "compose-foxglove-1"
 port = 8765
 
-[rosbag]
-container_name = "compose-rosbag-record-1"
-topic_file = "/workspace/profiles/rosbag-topics.txt"
+[sim]
+stop_distance = 0.5
+
+[sim.logging]
+console_level = "DEBUG"
+file_level = "INFO"
 
 [fast_lio]
 container_name = "compose-fast-lio-1"

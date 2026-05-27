@@ -10,6 +10,7 @@ wheels/
 .venv
 
 .codex
+.sim_ros2_overlay/
 
 x3/bags/
 x3/build/

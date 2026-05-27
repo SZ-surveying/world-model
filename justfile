@@ -5,38 +5,50 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 x3_ws := "/home/admin/workspace/world-model/x3"
 pkg := "ydlidar_ros2_driver"
-compose_cmd := "docker compose -f compose/docker-compose.yaml --project-directory ."
+lab_env_cmd := "uv run --project lab_env --no-sync --group host python -m lab_env.main"
 
 default:
     @just --list
 
 # Start the default lab environment profile.
 up:
-    uv run --no-sync --group lab_env python -m lab_env.main up
+    {{lab_env_cmd}} up
 
 # Check the default lab environment profile.
 doctor:
-    uv run --no-sync --group lab_env python -m lab_env.main doctor
+    {{lab_env_cmd}} doctor
 
 # Stop the lab environment.
 down:
-    uv run --no-sync --group lab_env python -m lab_env.main down
+    {{lab_env_cmd}} down
 
 # Subscribe to /scan on the host. Requires a sourced ROS2 Python environment.
 sim-scan-consumer *args='':
-    python3 -m lab_env.sim.front_sector_consumer {{args}}
+    python3 -m lab_env.sim.nodes.front_sector_consumer {{args}}
 
 # Start Gazebo + scan bridge + runtime helper container for P1 validation.
-sim-p1-up:
-    {{compose_cmd}} --profile base_env --profile sim_p1 up -d gazebo scan-bridge sim-runtime
+sim-p1-up *args='':
+    {{lab_env_cmd}} sim up {{args}}
+
+# Start the sim stack in explicit manual mode for Foxglove teleop.
+sim-p1-manual *args='':
+    {{lab_env_cmd}} sim up --mode manual {{args}}
+
+# Start the sim stack in explicit auto mode with a waypoint file.
+sim-p1-auto waypoint_file *args='':
+    {{lab_env_cmd}} sim up --mode auto --waypoint-file {{waypoint_file}} {{args}}
 
 # Stop Gazebo + scan bridge + runtime helper container.
 sim-p1-down:
-    {{compose_cmd}} --profile base_env --profile sim_p1 down
+    {{lab_env_cmd}} sim down
 
 # Run the existing front-sector consumer against Gazebo-backed /scan.
 sim-p1-consumer *args='':
-    {{compose_cmd}} exec sim-runtime bash -lc "source /opt/ros/jazzy/setup.bash && python3 -m lab_env.sim.front_sector_consumer {{args}}"
+    {{lab_env_cmd}} sim consumer {{args}}
+
+# Run the front-sector consumer with rosbag recording enabled.
+sim-p1-consumer-record *args='':
+    {{lab_env_cmd}} sim consumer-record {{args}}
 
 # Build the YDLidar ROS2 package.
 x3-build:

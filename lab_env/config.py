@@ -15,6 +15,12 @@ class ValueWithSource:
 
 
 @dataclass(slots=True)
+class FloatWithSource:
+    value: float
+    source: str
+
+
+@dataclass(slots=True)
 class RuntimeConfig:
     lab_root: Path
     ardupilot_root: Path
@@ -52,12 +58,6 @@ class FoxgloveConfig:
 
 
 @dataclass(slots=True)
-class RosbagConfig:
-    container_name: ValueWithSource
-    topic_file: ValueWithSource
-
-
-@dataclass(slots=True)
 class FastLioConfig:
     container_name: ValueWithSource
     config_path: ValueWithSource
@@ -68,6 +68,13 @@ class ComposeConfig:
     compose_file: Path
     project_name: ValueWithSource
     default_profile: ValueWithSource
+
+
+@dataclass(slots=True)
+class SimConfig:
+    stop_distance: FloatWithSource
+    console_log_level: ValueWithSource
+    file_log_level: ValueWithSource
 
 
 PACKAGE_PATH = Path(__file__).parent
@@ -81,7 +88,7 @@ DEFAULT_COMPOSE_FILE = PROJECT_PATH / "compose" / "docker-compose.yaml"
 DEFAULT_COMPOSE_PROJECT_NAME = "lab_env"
 DEFAULT_COMPOSE_PROFILE = "base_env"
 COMPOSE_PROFILE_SERVICES: dict[str, tuple[str, ...]] = {
-    "base_env": ("mavlink-router", "sitl", "gazebo", "foxglove", "rosbag-record"),
+    "base_env": ("mavlink-router", "sitl", "gazebo", "foxglove"),
     "rosbag_play": ("rosbag-play",),
     "fast-lio": ("fast-lio",),
 }
@@ -90,10 +97,11 @@ DEFAULT_GAZEBO_CONTAINER_NAME = "gazebo"
 DEFAULT_GAZEBO_WORLD = "/workspace/worlds/uav_obstacle_5m.sdf"
 DEFAULT_FOXGLOVE_CONTAINER_NAME = "foxglove"
 DEFAULT_FOXGLOVE_PORT = "8765"
-DEFAULT_ROSBAG_CONTAINER_NAME = "rosbag-record"
-DEFAULT_ROSBAG_TOPIC_FILE = "/workspace/profiles/rosbag-topics.txt"
 DEFAULT_FAST_LIO_CONTAINER_NAME = "fast-lio"
 DEFAULT_FAST_LIO_CONFIG_PATH = "/workspace/profiles/fast-lio/config.yaml"
+DEFAULT_SIM_STOP_DISTANCE = 0.5
+DEFAULT_SIM_CONSOLE_LOG_LEVEL = "DEBUG"
+DEFAULT_SIM_FILE_LOG_LEVEL = "INFO"
 
 
 def repo_root() -> Path:
@@ -108,6 +116,22 @@ def _resolve_router_value(
     if key in router_config and router_config[key] not in (None, ""):
         return ValueWithSource(str(router_config[key]), "config.toml")
     return ValueWithSource(default, "default")
+
+
+def _resolve_float_value(
+    section: dict[str, Any],
+    key: str,
+    default: float,
+    *,
+    source_name: str = "config.toml",
+) -> FloatWithSource:
+    value = section.get(key)
+    if value not in (None, ""):
+        try:
+            return FloatWithSource(float(value), source_name)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid value for '{key}': expected a number") from exc
+    return FloatWithSource(default, "default")
 
 
 def _resolve_standalone_entrypoint(config: dict[str, Any]) -> ValueWithSource:
@@ -215,20 +239,6 @@ def load_foxglove_config(runtime: RuntimeConfig) -> FoxgloveConfig:
     )
 
 
-def load_rosbag_config(runtime: RuntimeConfig) -> RosbagConfig:
-    config = load_project_config(runtime.config_file)
-    raw_rosbag = config.get("rosbag", {})
-    if raw_rosbag is None:
-        raw_rosbag = {}
-    if not isinstance(raw_rosbag, dict):
-        raise ValueError(f"Invalid [rosbag] section in {runtime.config_file}")
-
-    return RosbagConfig(
-        container_name=_resolve_router_value(raw_rosbag, "container_name", DEFAULT_ROSBAG_CONTAINER_NAME),
-        topic_file=_resolve_router_value(raw_rosbag, "topic_file", DEFAULT_ROSBAG_TOPIC_FILE),
-    )
-
-
 def load_fast_lio_config(runtime: RuntimeConfig) -> FastLioConfig:
     config = load_project_config(runtime.config_file)
     raw_fast_lio = config.get("fast_lio", {})
@@ -256,6 +266,26 @@ def load_compose_config(runtime: RuntimeConfig) -> ComposeConfig:
         compose_file=compose_file,
         project_name=_resolve_router_value(raw_compose, "project_name", DEFAULT_COMPOSE_PROJECT_NAME),
         default_profile=_resolve_router_value(raw_compose, "default_profile", DEFAULT_COMPOSE_PROFILE),
+    )
+
+
+def load_sim_config(runtime: RuntimeConfig) -> SimConfig:
+    config = load_project_config(runtime.config_file)
+    raw_sim = config.get("sim", {})
+    if raw_sim is None:
+        raw_sim = {}
+    if not isinstance(raw_sim, dict):
+        raise ValueError(f"Invalid [sim] section in {runtime.config_file}")
+    raw_logging = raw_sim.get("logging", {})
+    if raw_logging is None:
+        raw_logging = {}
+    if not isinstance(raw_logging, dict):
+        raise ValueError(f"Invalid [sim.logging] section in {runtime.config_file}")
+
+    return SimConfig(
+        stop_distance=_resolve_float_value(raw_sim, "stop_distance", DEFAULT_SIM_STOP_DISTANCE),
+        console_log_level=_resolve_router_value(raw_logging, "console_level", DEFAULT_SIM_CONSOLE_LOG_LEVEL),
+        file_log_level=_resolve_router_value(raw_logging, "file_level", DEFAULT_SIM_FILE_LOG_LEVEL),
     )
 
 
