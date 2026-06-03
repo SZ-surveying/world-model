@@ -27,6 +27,16 @@ downstream_endpoints = "127.0.0.1:14552"
 listen = "0.0.0.0:14550"
 tcp_port = "5760"
 
+[orchestration.sensor]
+scan_source = "x2_virtual_serial"
+profile_path = "/workspace/profiles/x2-vendor-sim.yaml"
+virtual_serial_link = "/tmp/navlab_x2"
+scan_ideal_topic = "/scan_ideal"
+scan_topic = "/scan"
+status_topic = "/sim/x2/status"
+range_noise_stddev_m = "0.0"
+dropout_rate = "0.0"
+
 [orchestration.slam]
 autostart = true
 backend = "cartographer"

@@ -30,7 +30,8 @@ from lab_env.navlab.orchestration.foxglove_upload import upload_acceptance_rosba
 
 COMPANION_CONTAINER = "navlab-companion"
 SLAM_CONTAINER = "navlab-slam"
-ImageKind = Literal["companion", "slam", "all"]
+GAZEBO_SENSOR_SERVICE = "gazebo-sensor"
+ImageKind = Literal["companion", "slam", "gazebo-sensor", "all"]
 
 
 def _compose_client() -> DockerClient:
@@ -60,13 +61,14 @@ def _image_build_specs(
     specs = (
         ("companion", image_config.companion),
         ("slam", image_config.slam),
+        ("gazebo-sensor", image_config.gazebo_sensor),
     )
     if kind == "all":
         return specs
     for spec in specs:
         if spec[0] == kind:
             return (spec,)
-    raise ValueError(f"Invalid NavLab image kind '{kind}': expected companion, slam, or all")
+    raise ValueError(f"Invalid NavLab image kind '{kind}': expected companion, slam, gazebo-sensor, or all")
 
 
 def _render_image_build_config(
@@ -188,6 +190,8 @@ def _render_run_config(console: Console, config: RunConfig) -> None:
     table.add_row("ROS_DOMAIN_ID", config.ros_domain_id)
     table.add_row("companion image", config.companion_image)
     table.add_row("slam image", config.slam_image)
+    table.add_row("gazebo sensor image", config.gazebo_sensor_image)
+    table.add_row("scan source", config.scan_source)
     table.add_row("rosbag profile", config.rosbag_profile)
     console.print(table)
 
@@ -206,6 +210,11 @@ def _capture_stack_logs(*, config: RunConfig) -> None:
     try:
         slam_output = DockerClient().logs(SLAM_CONTAINER, tail=400)
         output = f"{output}\n\n--- {SLAM_CONTAINER} ---\n{slam_output}"
+    except DockerException:
+        pass
+    try:
+        sensor_output = DockerClient().logs(f"lab_env-{GAZEBO_SENSOR_SERVICE}-1", tail=400)
+        output = f"{output}\n\n--- {GAZEBO_SENSOR_SERVICE} ---\n{sensor_output}"
     except DockerException:
         pass
     (config.artifact_dir / "navlab_stack_tail.log").write_text(output, encoding="utf-8")
@@ -425,6 +434,8 @@ def orchestrate_companion_gazebo_acceptance(
                 config.rosbag_profile,
                 "--companion-image",
                 config.companion_image,
+                "--scan-source",
+                config.scan_source,
                 "--config",
                 _runtime_config_path(config),
             ],

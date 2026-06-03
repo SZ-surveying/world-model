@@ -113,6 +113,8 @@ def _write_summary_md(artifact_dir: Path) -> None:
             ("imu_status", "IMU"),
             ("external_nav_status", "ExternalNav"),
             ("cartographer_status", "Cartographer"),
+            ("x2_status", "X2 Sensor"),
+            ("scan_publisher", "Scan Publisher"),
         )
     ]
     rendered = _summary_template().render(

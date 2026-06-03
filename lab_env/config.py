@@ -23,6 +23,12 @@ class FloatWithSource:
 
 
 @dataclass(slots=True)
+class BoolWithSource:
+    value: bool
+    source: str
+
+
+@dataclass(slots=True)
 class RuntimeConfig:
     lab_root: Path
     ardupilot_root: Path
@@ -80,6 +86,22 @@ class SimConfig:
 
 
 @dataclass(slots=True)
+class X2ProtocolSimConfig:
+    enabled: BoolWithSource
+    profile: ValueWithSource
+    virtual_serial_link: ValueWithSource
+    scan_ideal_topic: ValueWithSource
+    scan_topic: ValueWithSource
+    status_topic: ValueWithSource
+    sample_rate_hz: FloatWithSource
+    scan_frequency_hz: FloatWithSource
+    scan_frequency_min_hz: FloatWithSource
+    scan_frequency_max_hz: FloatWithSource
+    range_min_m: FloatWithSource
+    range_max_m: FloatWithSource
+
+
+@dataclass(slots=True)
 class NavLabImageConfig:
     dockerfile: ValueWithSource
     context: ValueWithSource
@@ -100,6 +122,7 @@ class NavLabImageConfig:
 class NavLabImagesConfig:
     companion: NavLabImageConfig
     slam: NavLabImageConfig
+    gazebo_sensor: NavLabImageConfig
 
 
 PACKAGE_PATH = Path(__file__).parent
@@ -116,6 +139,7 @@ COMPOSE_PROFILE_SERVICES: dict[str, tuple[str, ...]] = {
     "base_env": ("mavlink-router", "sitl", "gazebo", "foxglove"),
     "rosbag_play": ("rosbag-play",),
     "fast-lio": ("fast-lio",),
+    "x2_sensor": ("gazebo-sensor",),
 }
 
 DEFAULT_GAZEBO_CONTAINER_NAME = "gazebo"
@@ -127,6 +151,18 @@ DEFAULT_FAST_LIO_CONFIG_PATH = "/workspace/profiles/fast-lio/config.yaml"
 DEFAULT_SIM_STOP_DISTANCE = 0.5
 DEFAULT_SIM_CONSOLE_LOG_LEVEL = "DEBUG"
 DEFAULT_SIM_FILE_LOG_LEVEL = "INFO"
+DEFAULT_X2_PROTOCOL_ENABLED = False
+DEFAULT_X2_VENDOR_PROFILE = "profiles/x2-vendor-sim.yaml"
+DEFAULT_X2_VIRTUAL_SERIAL_LINK = "/tmp/navlab_x2"
+DEFAULT_X2_SCAN_IDEAL_TOPIC = "/scan_ideal"
+DEFAULT_X2_SCAN_TOPIC = "/scan"
+DEFAULT_X2_STATUS_TOPIC = "/sim/x2/status"
+DEFAULT_X2_SAMPLE_RATE_HZ = 3000.0
+DEFAULT_X2_SCAN_FREQUENCY_HZ = 7.0
+DEFAULT_X2_SCAN_FREQUENCY_MIN_HZ = 4.0
+DEFAULT_X2_SCAN_FREQUENCY_MAX_HZ = 8.0
+DEFAULT_X2_RANGE_MIN_M = 0.1
+DEFAULT_X2_RANGE_MAX_M = 8.0
 DEFAULT_NAVLAB_TAG_STRATEGY = "latest"
 DEFAULT_NAVLAB_DOCKERFILE = "docker/Dockerfile.companion"
 DEFAULT_NAVLAB_CONTEXT = "."
@@ -136,6 +172,9 @@ DEFAULT_NAVLAB_COMPANION_IMAGE = f"{DEFAULT_NAVLAB_COMPANION_REPOSITORY}:latest"
 DEFAULT_NAVLAB_SLAM_TARGET = "navlab-slam-cartographer"
 DEFAULT_NAVLAB_SLAM_REPOSITORY = "world-model/navlab-slam-cartographer"
 DEFAULT_NAVLAB_SLAM_IMAGE = f"{DEFAULT_NAVLAB_SLAM_REPOSITORY}:latest"
+DEFAULT_NAVLAB_GAZEBO_SENSOR_TARGET = "navlab-gazebo-sensor"
+DEFAULT_NAVLAB_GAZEBO_SENSOR_REPOSITORY = "world-model/navlab-gazebo-sensor"
+DEFAULT_NAVLAB_GAZEBO_SENSOR_IMAGE = f"{DEFAULT_NAVLAB_GAZEBO_SENSOR_REPOSITORY}:latest"
 
 
 def repo_root() -> Path:
@@ -166,6 +205,27 @@ def _resolve_float_value(
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid value for '{key}': expected a number") from exc
     return FloatWithSource(default, "default")
+
+
+def _resolve_bool_value(
+    section: dict[str, Any],
+    key: str,
+    default: bool,
+    *,
+    source_name: str = "config.toml",
+) -> BoolWithSource:
+    value = section.get(key)
+    if value in (None, ""):
+        return BoolWithSource(default, "default")
+    if isinstance(value, bool):
+        return BoolWithSource(value, source_name)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("1", "true", "yes", "on"):
+            return BoolWithSource(True, source_name)
+        if normalized in ("0", "false", "no", "off"):
+            return BoolWithSource(False, source_name)
+    raise ValueError(f"Invalid value for '{key}': expected a boolean")
 
 
 def _resolve_standalone_entrypoint(config: dict[str, Any]) -> ValueWithSource:
@@ -323,6 +383,43 @@ def load_sim_config(runtime: RuntimeConfig) -> SimConfig:
     )
 
 
+def load_x2_protocol_sim_config(runtime: RuntimeConfig) -> X2ProtocolSimConfig:
+    config = load_project_config(runtime.config_file)
+    raw_sim = config.get("sim", {})
+    if raw_sim is None:
+        raw_sim = {}
+    if not isinstance(raw_sim, dict):
+        raise ValueError(f"Invalid [sim] section in {runtime.config_file}")
+    raw_x2 = raw_sim.get("x2_protocol", {})
+    if raw_x2 is None:
+        raw_x2 = {}
+    if not isinstance(raw_x2, dict):
+        raise ValueError(f"Invalid [sim.x2_protocol] section in {runtime.config_file}")
+
+    return X2ProtocolSimConfig(
+        enabled=_resolve_bool_value(raw_x2, "enabled", DEFAULT_X2_PROTOCOL_ENABLED),
+        profile=_resolve_router_value(raw_x2, "profile", DEFAULT_X2_VENDOR_PROFILE),
+        virtual_serial_link=_resolve_router_value(raw_x2, "virtual_serial_link", DEFAULT_X2_VIRTUAL_SERIAL_LINK),
+        scan_ideal_topic=_resolve_router_value(raw_x2, "scan_ideal_topic", DEFAULT_X2_SCAN_IDEAL_TOPIC),
+        scan_topic=_resolve_router_value(raw_x2, "scan_topic", DEFAULT_X2_SCAN_TOPIC),
+        status_topic=_resolve_router_value(raw_x2, "status_topic", DEFAULT_X2_STATUS_TOPIC),
+        sample_rate_hz=_resolve_float_value(raw_x2, "sample_rate_hz", DEFAULT_X2_SAMPLE_RATE_HZ),
+        scan_frequency_hz=_resolve_float_value(raw_x2, "scan_frequency_hz", DEFAULT_X2_SCAN_FREQUENCY_HZ),
+        scan_frequency_min_hz=_resolve_float_value(
+            raw_x2,
+            "scan_frequency_min_hz",
+            DEFAULT_X2_SCAN_FREQUENCY_MIN_HZ,
+        ),
+        scan_frequency_max_hz=_resolve_float_value(
+            raw_x2,
+            "scan_frequency_max_hz",
+            DEFAULT_X2_SCAN_FREQUENCY_MAX_HZ,
+        ),
+        range_min_m=_resolve_float_value(raw_x2, "range_min_m", DEFAULT_X2_RANGE_MIN_M),
+        range_max_m=_resolve_float_value(raw_x2, "range_max_m", DEFAULT_X2_RANGE_MAX_M),
+    )
+
+
 def resolve_navlab_image_tag(strategy: str, *, cwd: Path | None = None) -> str:
     normalized = strategy.strip().lower()
     if normalized == "latest":
@@ -396,6 +493,12 @@ def load_navlab_images_config(runtime: RuntimeConfig) -> NavLabImagesConfig:
             "slam",
             default_target=DEFAULT_NAVLAB_SLAM_TARGET,
             default_repository=DEFAULT_NAVLAB_SLAM_REPOSITORY,
+        ),
+        gazebo_sensor=_resolve_navlab_image_config(
+            raw_images,
+            "gazebo_sensor",
+            default_target=DEFAULT_NAVLAB_GAZEBO_SENSOR_TARGET,
+            default_repository=DEFAULT_NAVLAB_GAZEBO_SENSOR_REPOSITORY,
         ),
     )
 

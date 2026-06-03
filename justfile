@@ -18,6 +18,18 @@ navlab-companion-image-build *args='':
 navlab-slam-image-build *args='':
     {{lab_env_cmd}} navlab build slam {{args}}
 
+# Build the NavLab Gazebo/sensor image with YDLidar vendor driver support.
+navlab-gazebo-sensor-image-build *args='':
+    {{lab_env_cmd}} navlab build gazebo-sensor {{args}}
+
+# Run the X2 vendor-driver smoke in the Gazebo/sensor runtime.
+x2-driver-smoke duration_sec='15':
+    X2_MODE=driver-smoke \
+    X2_SMOKE_DURATION_SEC={{duration_sec}} \
+    X2_ARTIFACT_DIR=/artifacts/ros/x2_driver_smoke/manual \
+    docker compose --file compose/docker-compose.yaml --project-directory . --profile x2_sensor \
+      up --abort-on-container-exit --exit-code-from gazebo-sensor gazebo-sensor
+
 # Build all NavLab images.
 navlab-images-build *args='':
     {{lab_env_cmd}} navlab build all {{args}}

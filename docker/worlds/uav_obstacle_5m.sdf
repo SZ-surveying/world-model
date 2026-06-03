@@ -76,9 +76,9 @@
             <diffuse>0.1 0.35 0.85 1</diffuse>
           </material>
         </visual>
-        <sensor name="scan" type="gpu_lidar">
+        <sensor name="scan_ideal" type="gpu_lidar">
           <pose>0 0 0.02 0 0 0</pose>
-          <topic>/scan</topic>
+          <topic>/scan_ideal</topic>
           <gz_frame_id>laser_frame</gz_frame_id>
           <update_rate>10</update_rate>
           <always_on>true</always_on>

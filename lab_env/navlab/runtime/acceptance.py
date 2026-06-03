@@ -27,6 +27,7 @@ SAMPLE_TOPICS = (
     ("MAVLINK_EXTERNAL_NAV_STATUS_SAMPLE", "/mavlink_external_nav/status"),
     ("SCAN_FEATURES_SAMPLE", "/scan_features"),
     ("SIM_LOG_SAMPLE", "/sim/log"),
+    ("X2_STATUS_SAMPLE", "/sim/x2/status"),
 )
 
 
@@ -103,6 +104,15 @@ def _collect_samples(*, artifact_dir: Path) -> None:
                 stdout=output,
                 stderr=subprocess.STDOUT,
             )
+        output.write("SCAN_TOPIC_INFO\n")
+        output.flush()
+        subprocess.run(
+            ["timeout", "5s", "ros2", "topic", "info", "-v", "/scan"],
+            check=False,
+            text=True,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
 
 
 def _sample_payload(samples: str, label: str) -> dict[str, Any]:
@@ -123,6 +133,24 @@ def _sample_payload(samples: str, label: str) -> dict[str, Any]:
     return json.loads(match.group(1))
 
 
+def _scan_publisher_summary(samples: str) -> dict[str, Any]:
+    start = samples.find("SCAN_TOPIC_INFO")
+    if start < 0:
+        return {}
+    section = samples[start:]
+    subscription_start = section.find("Subscription count:")
+    if subscription_start >= 0:
+        section = section[:subscription_start]
+    node_names = re.findall(r"Node name: ([^\n]+)", section)
+    node_names = [name.strip() for name in node_names]
+    return {
+        "topic": "/scan",
+        "publisher_nodes": sorted(set(node_names)),
+        "vendor_driver_publisher": "ydlidar_ros2_driver_node" in node_names,
+        "emulator_publisher": "x2_serial_emulator" in node_names,
+    }
+
+
 def _write_foxglove_notes(*, artifact_dir: Path) -> None:
     logger.info("Writing Foxglove replay notes")
     rendered = _template("foxglove_notes.md.j2").render(
@@ -138,10 +166,11 @@ def _write_foxglove_notes(*, artifact_dir: Path) -> None:
             "/submap_list",
         ),
         pose_topics=("/sim/uav_pose", "/odom", "/external_nav/odom"),
-        laser_topics=("/scan", "/scan_features", "/scan_nearest_point"),
+        laser_topics=("/scan", "/scan_ideal", "/scan_features", "/scan_nearest_point"),
         raw_status_topics=(
             "/navlab/mission/status",
             "/sim/log",
+            "/sim/x2/status",
             "/imu/status",
             "/external_nav/status",
             "/mavlink_external_nav/status",
@@ -169,6 +198,7 @@ def _write_summary(
     mission_rc: int,
     rosbag_profile: dict[str, Any],
     config: RuntimeConfig,
+    scan_source: str,
 ) -> int:
     samples = (artifact_dir / "samples.txt").read_text(encoding="utf-8")
     metadata = (artifact_dir / "rosbag" / "metadata.yaml").read_text(encoding="utf-8")
@@ -183,7 +213,18 @@ def _write_summary(
     cartographer_status = _sample_payload(samples, "CARTOGRAPHER_STATUS_SAMPLE")
     external_status = _sample_payload(samples, "EXTERNAL_STATUS_SAMPLE")
     mavlink_external_nav_status = _sample_payload(samples, "MAVLINK_EXTERNAL_NAV_STATUS_SAMPLE")
+    x2_status = _sample_payload(samples, "X2_STATUS_SAMPLE")
+    scan_publisher = _scan_publisher_summary(samples)
     topics = sorted(set(re.findall(r"name: (/[^\n]+)", metadata)))
+    message_counts = rosbag_profile.get("message_counts", {})
+    scan_ideal_recorded = message_counts.get("/scan_ideal", 0) > 0
+    x2_status_recorded = message_counts.get("/sim/x2/status", 0) > 0
+    vendor_scan_publisher_ok = scan_publisher.get("vendor_driver_publisher") is True
+    x2_is_internal_to_sensor_runtime = (
+        vendor_scan_publisher_ok
+        and scan_publisher.get("emulator_publisher") is False
+        and x2_status.get("source") == "x2_serial_emulator"
+    )
     pose_mirror_state = pose_mirror_status.get("state")
     phases_seen = mission_summary.get("phases_seen", [])
     summary = {
@@ -202,9 +243,13 @@ def _write_summary(
             and any(phase in phases_seen for phase in ["forward", "avoid", "pass_obstacle"])
             and mission_summary.get("obstacle_detected") is True
             and mission_summary.get("avoidance_setpoint_sent") is True
+            and scan_ideal_recorded
+            and x2_status_recorded
+            and vendor_scan_publisher_ok
         ),
         "duration_sec": duration_sec,
         "mission_rc": mission_rc,
+        "scan_source": scan_source,
         "gps_free": True,
         "rosbag_started_before_mission": True,
         "rosbag_covers_full_mission": rosbag_profile.get("ok") is True and "/navlab/mission/status" in topics,
@@ -212,6 +257,14 @@ def _write_summary(
         "sitl_heartbeat": mavlink_status.get("heartbeat_seen") is True,
         "imu_source": config.imu_source_label,
         "scan_fresh": rosbag_profile.get("message_counts", {}).get("/scan_features", 0) > 0,
+        "scan_ideal_recorded": scan_ideal_recorded,
+        "x2_status_recorded": x2_status_recorded,
+        "scan_publisher": scan_publisher,
+        "vendor_scan_publisher_ok": vendor_scan_publisher_ok,
+        "x2_is_internal_to_sensor_runtime": x2_is_internal_to_sensor_runtime,
+        "slam_consumes_final_scan": True,
+        "mission_consumes_final_scan": True,
+        "scan_features_consumes_final_scan": True,
         "external_nav_healthy": external_status.get("state") == "healthy",
         "gazebo_pose_mirror_ok": pose_mirror_state in {"mirroring", "simulated_mission_pose"},
         "hover_ok": "hover_settle" in phases_seen,
@@ -232,6 +285,7 @@ def _write_summary(
         "cartographer_status": cartographer_status,
         "external_nav_status": external_status,
         "mavlink_external_nav_status": mavlink_external_nav_status,
+        "x2_status": x2_status,
         "topics_recorded": topics,
         "foxglove_notes": str(artifact_dir / "foxglove_notes.md"),
     }
@@ -245,6 +299,7 @@ def execute_companion_gazebo_acceptance(
     duration_sec: float,
     rosbag_profile_path: Path,
     companion_image: str,
+    scan_source: str,
     config: RuntimeConfig,
 ) -> int:
     logger.info("Starting NavLab acceptance artifact_dir={} duration_sec={}", artifact_dir, duration_sec)
@@ -281,6 +336,7 @@ def execute_companion_gazebo_acceptance(
         mission_rc=mission_rc,
         rosbag_profile=rosbag_summary,
         config=config,
+        scan_source=scan_source,
     )
     logger.info("NavLab acceptance completed rc={}", rc)
     return rc

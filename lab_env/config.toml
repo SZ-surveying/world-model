@@ -20,6 +20,20 @@ endpoint = "100.68.243.25:14554"
 console_level = "DEBUG"
 file_level = "INFO"
 
+[sim.x2_protocol]
+enabled = false
+profile = "profiles/x2-vendor-sim.yaml"
+virtual_serial_link = "/tmp/navlab_x2"
+scan_ideal_topic = "/scan_ideal"
+scan_topic = "/scan"
+status_topic = "/sim/x2/status"
+sample_rate_hz = 3000.0
+scan_frequency_hz = 7.0
+scan_frequency_min_hz = 4.0
+scan_frequency_max_hz = 8.0
+range_min_m = 0.1
+range_max_m = 8.0
+
 [navlab.images]
 tag_strategy = "latest"
 
@@ -34,3 +48,9 @@ dockerfile = "docker/Dockerfile.companion"
 context = "."
 target = "navlab-slam-cartographer"
 repository = "world-model/navlab-slam-cartographer"
+
+[navlab.images.gazebo_sensor]
+dockerfile = "docker/Dockerfile.companion"
+context = "."
+target = "navlab-gazebo-sensor"
+repository = "world-model/navlab-gazebo-sensor"

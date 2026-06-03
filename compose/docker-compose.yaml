@@ -70,7 +70,7 @@ services:
       - ./docker/models:/workspace/models:ro
       - ./docker/entrypoints/start-gazebo.sh:/usr/local/bin/start-gazebo.sh:ro
     command: [ "bash", "/usr/local/bin/start-gazebo.sh" ]
-    profiles: [ "base_env" ]
+    profiles: [ "base_env", "x2_sensor" ]
     networks:
       - mavlink-lab
 
@@ -89,6 +89,43 @@ services:
       - ./docker/entrypoints/start-scan-bridge.sh:/usr/local/bin/start-scan-bridge.sh:ro
     command: [ "bash", "/usr/local/bin/start-scan-bridge.sh" ]
     profiles: [ "sim_p1" ]
+
+  gazebo-sensor:
+    <<: *nn_user
+    image: "${NAVLAB_GAZEBO_SENSOR_IMAGE:-world-model/navlab-gazebo-sensor:latest}"
+    network_mode: "service:gazebo"
+    environment:
+      SESSION_ID: "${SESSION_ID:-manual}"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      PYTHONPATH: "/workspace"
+      X2_VIRTUAL_SERIAL_LINK: "${X2_VIRTUAL_SERIAL_LINK:-/tmp/navlab_x2}"
+      X2_PROFILE_PATH: "${X2_PROFILE_PATH:-/workspace/profiles/x2-vendor-sim.yaml}"
+      X2_STATUS_TOPIC: "${X2_STATUS_TOPIC:-/sim/x2/status}"
+      X2_SCAN_SOURCE: "${X2_SCAN_SOURCE:-x2_virtual_serial}"
+      X2_SCAN_IDEAL_TOPIC: "${X2_SCAN_IDEAL_TOPIC:-/scan_ideal}"
+      X2_SCAN_TOPIC: "${X2_SCAN_TOPIC:-/scan}"
+      X2_SCAN_FREQUENCY_HZ: "${X2_SCAN_FREQUENCY_HZ:-7.0}"
+      X2_SAMPLE_RATE_HZ: "${X2_SAMPLE_RATE_HZ:-3000.0}"
+      X2_RANGE_MIN_M: "${X2_RANGE_MIN_M:-0.1}"
+      X2_RANGE_MAX_M: "${X2_RANGE_MAX_M:-8.0}"
+      X2_STATIC_RANGE_M: "${X2_STATIC_RANGE_M:-1.5}"
+      X2_RANGE_NOISE_STDDEV_M: "${X2_RANGE_NOISE_STDDEV_M:-0.0}"
+      X2_DROPOUT_RATE: "${X2_DROPOUT_RATE:-0.0}"
+      X2_AUTO_START: "${X2_AUTO_START:-false}"
+      X2_MODE: "${X2_MODE:-runtime}"
+      X2_SMOKE_DURATION_SEC: "${X2_SMOKE_DURATION_SEC:-15}"
+      X2_ARTIFACT_DIR: "${X2_ARTIFACT_DIR:-/artifacts/ros/x2_driver_smoke/manual}"
+      X2_STARTUP_TIMEOUT_SEC: "${X2_STARTUP_TIMEOUT_SEC:-20}"
+    volumes:
+      - ./:/workspace:ro
+      - ./artifacts/ros:/artifacts/ros
+      - ./docker/entrypoints/start-gazebo-sensor.sh:/usr/local/bin/start-gazebo-sensor.sh:ro
+    command: [ "bash", "/usr/local/bin/start-gazebo-sensor.sh" ]
+    profiles: [ "x2_sensor" ]
+    depends_on:
+      gazebo:
+        condition: service_started
 
   foxglove:
     <<: *nn_user

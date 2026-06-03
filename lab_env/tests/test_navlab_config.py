@@ -39,6 +39,12 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert env["NAVLAB_CONFIG"] == "profiles/navlab-gazebo.toml"
     assert env["NAVLAB_COMPANION_IMAGE"] == image_config.companion.image()
     assert env["NAVLAB_SLAM_IMAGE"] == image_config.slam.image()
+    assert env["NAVLAB_GAZEBO_SENSOR_IMAGE"] == image_config.gazebo_sensor.image()
+    assert env["X2_MODE"] == "runtime"
+    assert env["X2_SCAN_SOURCE"] == "x2_virtual_serial"
+    assert env["X2_SCAN_IDEAL_TOPIC"] == "/scan_ideal"
+    assert env["X2_SCAN_TOPIC"] == "/scan"
+    assert env["X2_STATUS_TOPIC"] == "/sim/x2/status"
     assert env["SITL_IMAGE"] == "remote-sitl-lab/ardupilot-sitl:stage1-f10500ae45aa"
     assert "NAVLAB_POSE_MIRROR_EXTRA_ARGS" not in env
     assert "NAVLAB_MISSION_EXTRA_ARGS" not in env
@@ -50,6 +56,8 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.slam.autostart is True
     assert config.slam.backend == "cartographer"
     assert config.slam.imu_source_topic == "/navlab/fcu_imu/data"
+    assert config.sensor.scan_source == "x2_virtual_serial"
+    assert config.sensor.acceptance_scan_source == "x2_virtual_serial_vendor_driver"
 
 
 def test_navlab_images_config_drives_default_run_images() -> None:
@@ -65,8 +73,12 @@ def test_navlab_images_config_drives_default_run_images() -> None:
     assert image_config.slam.target.value == "navlab-slam-cartographer"
     assert image_config.slam.repository.value == "world-model/navlab-slam-cartographer"
     assert image_config.slam.image() == "world-model/navlab-slam-cartographer:latest"
+    assert image_config.gazebo_sensor.target.value == "navlab-gazebo-sensor"
+    assert image_config.gazebo_sensor.repository.value == "world-model/navlab-gazebo-sensor"
+    assert image_config.gazebo_sensor.image() == "world-model/navlab-gazebo-sensor:latest"
     assert orchestration.companion_image == image_config.companion.image()
     assert orchestration.slam.image == image_config.slam.image()
+    assert orchestration.sensor.image == image_config.gazebo_sensor.image()
 
 
 def test_navlab_image_tag_cli_override_wins_over_strategy() -> None:
@@ -79,6 +91,8 @@ def test_navlab_image_tag_cli_override_wins_over_strategy() -> None:
 def test_navlab_compose_services_do_not_include_sim_runtime() -> None:
     assert "sim-runtime" not in NAVLAB_SERVICES
     assert "sim-runtime" not in NAVLAB_STOP_SERVICES
+    assert "scan-bridge" not in NAVLAB_SERVICES
+    assert "gazebo-sensor" in NAVLAB_SERVICES
 
 
 def test_navlab_run_config_is_derived_from_profile() -> None:
@@ -168,3 +182,23 @@ def test_navlab_image_build_uses_global_image_config(monkeypatch) -> None:
     assert build["target"] == "navlab-companion"
     assert build["tags"] == "world-model/navlab-companion:cli-tag"
     assert build["stream_logs"] is True
+
+
+def test_navlab_image_build_supports_gazebo_sensor(monkeypatch) -> None:
+    builds: list[dict[str, object]] = []
+
+    class FakeDockerClient:
+        def build(self, context_path, **kwargs):  # noqa: ANN001
+            builds.append({"context_path": context_path, **kwargs})
+            return iter(["build log"])
+
+    monkeypatch.setattr(host, "DockerClient", FakeDockerClient)
+    console = Console(file=io.StringIO(), width=120)
+
+    rc = host.build_navlab_images(kind="gazebo-sensor", tag="cli-tag", console=console)
+
+    assert rc == 0
+    assert len(builds) == 1
+    build = builds[0]
+    assert build["target"] == "navlab-gazebo-sensor"
+    assert build["tags"] == "world-model/navlab-gazebo-sensor:cli-tag"

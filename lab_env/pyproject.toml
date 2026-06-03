@@ -23,6 +23,10 @@ sim = [
     "pymavlink>=2.4.49",
     "PyYAML>=6.0.2",
 ]
+gazebo-sensor = [
+    "numpy>=2.4.5",
+    "PyYAML>=6.0.2",
+]
 
 [tool.uv]
 index-url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"

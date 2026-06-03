@@ -91,6 +91,10 @@ def execute_acceptance_command(
         str,
         typer.Option("--companion-image", help="Companion image label recorded in summaries"),
     ],
+    scan_source: Annotated[
+        str,
+        typer.Option("--scan-source", help="Accepted scan source label recorded in summaries"),
+    ] = "x2_virtual_serial_vendor_driver",
     config: Annotated[
         Path,
         typer.Option("--config", help="NavLab TOML profile path"),
@@ -109,6 +113,7 @@ def execute_acceptance_command(
             duration_sec=duration_sec,
             rosbag_profile_path=rosbag_profile,
             companion_image=companion_image,
+            scan_source=scan_source,
             config=RuntimeConfig.load(config),
         )
     )

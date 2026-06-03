@@ -193,6 +193,10 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+gazebo-sensor = [
+    { name = "numpy" },
+    { name = "pyyaml" },
+]
 host = [
     { name = "python-on-whales" },
     { name = "rich" },
@@ -220,6 +224,10 @@ dev = [
     { name = "pyright", specifier = ">=1.1.408" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "ruff", specifier = ">=0.15.11" },
+]
+gazebo-sensor = [
+    { name = "numpy", specifier = ">=2.4.5" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
 ]
 host = [
     { name = "python-on-whales", specifier = ">=0.81.0" },

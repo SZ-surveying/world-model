@@ -6,12 +6,14 @@
 # MAVLink control, SITL, and Gazebo pose-mirror boundaries.
 
 required /scan
+required /scan_ideal
 required /scan_features
 required /scan_nearest_point
 required /sim/markers
 required /navlab/replay/markers
 required /sim/uav_pose
 required /sim/log
+required /sim/x2/status
 
 required /imu/data
 required /imu/status

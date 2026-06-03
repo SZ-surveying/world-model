@@ -7,6 +7,7 @@
 - Scene objects: `/sim/markers` contains SDF box/cylinder visuals such as the UAV body, path strip, and obstacle wall.
 - 3D pose/odom topics, only if using a Pose/Odometry layer: {% for topic in pose_topics %}`{{ topic }}`{% if not loop.last %}, {% endif %}{% endfor %}.
 - Laser topics: {% for topic in laser_topics %}`{{ topic }}`{% if not loop.last %}, {% endif %}{% endfor %}.
+- `/scan_ideal` is the Gazebo geometric ray topic; `/scan` is the vendor driver output after the virtual X2 serial protocol path.
 - Raw JSON string topics: {% for topic in raw_status_topics %}`{{ topic }}`{% if not loop.last %}, {% endif %}{% endfor %}.
 - Recording starts before the mission controller, so replay should include wait_ready through final_hold/complete.
 - Expected sequence: {{ expected_sequence | join(" -> ") }}.

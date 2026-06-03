@@ -22,17 +22,21 @@
 
 - `docs/sim/README.md`: 当前 Gazebo 仿真主线、`/scan -> /scan_features` 路径和 `0.5 m` 最小净空停止规则，明确排除旧 `ros2_ws/`
 - `docs/sim/todo.md`: 当前仿真路线的已完成 / 未完成清单和验收标准
+- `docs/sim/x2_lidar_simulation_design.md`: X2 虚拟串口协议级仿真设计
+- `docs/sim/x2_lidar_protocol_todo.md`: X2 协议级仿真 phase TODO 和验收标准
 - `docs/sim/examples/*.yaml`: `auto` 模式 mission 输入样例
 
 ## 当前推荐阅读顺序
 
 1. `docs/sim/README.md`
 2. `docs/sim/todo.md`
-3. `docs/scenarios/indoor/task_breakdown_progress_tracking.md`
-4. `docs/scenarios/indoor/stage1_sitl_external_nav_design.md`
-5. `docs/scenarios/indoor/stage1_sitl_external_nav_todo.md`
-6. `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_design.md`
-7. `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_todo.md`
+3. `docs/sim/x2_lidar_simulation_design.md`
+4. `docs/sim/x2_lidar_protocol_todo.md`
+5. `docs/scenarios/indoor/task_breakdown_progress_tracking.md`
+6. `docs/scenarios/indoor/stage1_sitl_external_nav_design.md`
+7. `docs/scenarios/indoor/stage1_sitl_external_nav_todo.md`
+8. `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_design.md`
+9. `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_todo.md`
 
 ## 当前目录结构
 
@@ -49,6 +53,8 @@ docs/
   sim/
     README.md
     todo.md
+    x2_lidar_simulation_design.md
+    x2_lidar_protocol_todo.md
     examples/
       blocked_by_stop_guard.yaml
       straight_line_demo.yaml

@@ -12,16 +12,16 @@ import tomllib
 from lab_env.config import load_navlab_images_config, load_runtime_config
 
 DEFAULT_PROFILE = Path("profiles/navlab-gazebo.toml")
-NAVLAB_PROFILES = ("base_env", "sim_p1")
+NAVLAB_PROFILES = ("base_env", "x2_sensor")
 NAVLAB_SERVICES = (
     "gazebo",
-    "scan-bridge",
+    "gazebo-sensor",
     "foxglove",
     "mavlink-router",
     "sitl",
 )
 NAVLAB_STOP_SERVICES = (
-    "scan-bridge",
+    "gazebo-sensor",
     "gazebo",
     "sitl",
     "mavlink-router",
@@ -53,6 +53,25 @@ class SlamContainerConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SensorContainerConfig:
+    scan_source: str
+    image: str
+    profile_path: str
+    virtual_serial_link: str
+    scan_ideal_topic: str
+    scan_topic: str
+    status_topic: str
+    range_noise_stddev_m: str
+    dropout_rate: str
+
+    @property
+    def acceptance_scan_source(self) -> str:
+        if self.scan_source == "x2_virtual_serial":
+            return "x2_virtual_serial_vendor_driver"
+        return self.scan_source
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -72,6 +91,7 @@ class OrchestrationConfig:
     router_downstream_endpoints: str
     router_listen: str
     router_tcp_port: str
+    sensor: SensorContainerConfig
     slam: SlamContainerConfig
     foxglove_upload: FoxgloveUploadConfig
 
@@ -84,6 +104,7 @@ class OrchestrationConfig:
         orchestration = _section(data, "orchestration")
         sitl = _section(orchestration, "sitl")
         router = _section(orchestration, "router")
+        sensor = _section(orchestration, "sensor")
         slam = _section(orchestration, "slam")
         foxglove_upload = _section(orchestration, "foxglove_upload")
         return cls(
@@ -108,6 +129,17 @@ class OrchestrationConfig:
             router_downstream_endpoints=_as_str(router.get("downstream_endpoints"), "127.0.0.1:14552"),
             router_listen=_as_str(router.get("listen"), "0.0.0.0:14550"),
             router_tcp_port=_as_str(router.get("tcp_port"), "5760"),
+            sensor=SensorContainerConfig(
+                scan_source=_as_scan_source(sensor.get("scan_source")),
+                image=_as_str(sensor.get("image"), image_config.gazebo_sensor.image(cwd=runtime_config.lab_root)),
+                profile_path=_as_str(sensor.get("profile_path"), "/workspace/profiles/x2-vendor-sim.yaml"),
+                virtual_serial_link=_as_str(sensor.get("virtual_serial_link"), "/tmp/navlab_x2"),
+                scan_ideal_topic=_as_str(sensor.get("scan_ideal_topic"), "/scan_ideal"),
+                scan_topic=_as_str(sensor.get("scan_topic"), "/scan"),
+                status_topic=_as_str(sensor.get("status_topic"), "/sim/x2/status"),
+                range_noise_stddev_m=_as_str(sensor.get("range_noise_stddev_m"), "0.0"),
+                dropout_rate=_as_str(sensor.get("dropout_rate"), "0.0"),
+            ),
             slam=SlamContainerConfig(
                 autostart=_as_bool(slam.get("autostart"), True),
                 image=_as_str(slam.get("image"), image_config.slam.image(cwd=runtime_config.lab_root)),
@@ -148,6 +180,16 @@ class OrchestrationConfig:
             "GAZEBO_WORLD": self.gazebo_world,
             "NAVLAB_COMPANION_IMAGE": self.companion_image,
             "NAVLAB_SLAM_IMAGE": self.slam.image,
+            "NAVLAB_GAZEBO_SENSOR_IMAGE": self.sensor.image,
+            "X2_MODE": "runtime",
+            "X2_SCAN_SOURCE": self.sensor.scan_source,
+            "X2_PROFILE_PATH": self.sensor.profile_path,
+            "X2_VIRTUAL_SERIAL_LINK": self.sensor.virtual_serial_link,
+            "X2_SCAN_IDEAL_TOPIC": self.sensor.scan_ideal_topic,
+            "X2_SCAN_TOPIC": self.sensor.scan_topic,
+            "X2_STATUS_TOPIC": self.sensor.status_topic,
+            "X2_RANGE_NOISE_STDDEV_M": self.sensor.range_noise_stddev_m,
+            "X2_DROPOUT_RATE": self.sensor.dropout_rate,
             "NAVLAB_CONFIG": str(self.path),
         }
 
@@ -174,6 +216,14 @@ class RunConfig:
     @property
     def slam_image(self) -> str:
         return self.orchestration.slam.image
+
+    @property
+    def gazebo_sensor_image(self) -> str:
+        return self.orchestration.sensor.image
+
+    @property
+    def scan_source(self) -> str:
+        return self.orchestration.sensor.acceptance_scan_source
 
     @property
     def rosbag_profile(self) -> str:
@@ -228,6 +278,13 @@ def _as_args(value: Any) -> tuple[str, ...]:
     if isinstance(value, list | tuple):
         return tuple(str(item) for item in value)
     raise TypeError(f"expected args list or string, got {type(value).__name__}")
+
+
+def _as_scan_source(value: Any) -> str:
+    scan_source = _as_str(value, "x2_virtual_serial")
+    if scan_source not in {"gazebo_ideal", "x2_virtual_serial"}:
+        raise ValueError("orchestration.sensor.scan_source must be gazebo_ideal or x2_virtual_serial")
+    return scan_source
 
 
 def _section(data: dict[str, Any], *keys: str) -> dict[str, Any]:

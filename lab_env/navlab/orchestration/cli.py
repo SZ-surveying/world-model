@@ -20,7 +20,7 @@ console = Console()
 def image_build_command(
     kind: Annotated[
         str,
-        typer.Argument(help="Image to build: companion, slam, or all"),
+        typer.Argument(help="Image to build: companion, slam, gazebo-sensor, or all"),
     ] = "all",
     tag: Annotated[
         str | None,
