@@ -79,7 +79,7 @@
 说明：
 
 - 当前镜像没有可用 `RepoDigest`，所以 P0.1 先用本机镜像 ID 派生不可变阶段 tag，并把 compose 默认 image 从 `latest` 改为上述阶段 tag；后续如果镜像仓库暴露 digest，再把 compose image 改成 `repo@sha256:...`。
-- `just stage1-sitl-doctor` 的 Runtime 表仍会显示 `lab_env/config.toml` 里的 router 默认配置；实际容器参数以 Service 明细里的 `session id`、`upstream endpoint` 和 `downstream endpoints` 为准。
+- `just stage1-sitl-doctor` 的 Runtime 表仍会显示 `config.toml` 里的 router 默认配置；实际容器参数以 Service 明细里的 `session id`、`upstream endpoint` 和 `downstream endpoints` 为准。
 
 P0.1 操作：
 
@@ -117,7 +117,7 @@ just stage1-sitl-down
 
 交付物：
 
-- `ros2_ws/src/localization/fake_external_nav`
+- `navlab/slam/ros/localization/fake_external_nav`
 - `fake_external_nav_node`
 - `/odom`
 - `/fake_external_nav/status`
@@ -225,8 +225,8 @@ just stage1-sitl-down
 
 当前 P0.4 固定选择：
 
-- MAVLink ExternalNav sender：`lab_env.sim.nodes.mavlink_external_nav_sender`
-- MAVLink observer：`lab_env.sim.nodes.mavlink_stage1_observer`
+- MAVLink ExternalNav sender：`navlab.companion.nodes.external_nav`
+- MAVLink observer：历史 Stage 1 helper 已移除；当前主线由 NavLab companion acceptance 采样 MAVLink/ROS 状态。
 - sender 输入：`/external_nav/odom`
 - sender 输出：MAVLink v2 `ODOMETRY`
 - sender endpoint：`tcp:sitl:5762`
@@ -538,7 +538,7 @@ P0 完成后，应该能明确回答：
 
 - `hold/hover` 验收命令：`just stage1-hold-hover-acceptance 45`
 - `hold/hover` 验收脚本：`scripts/stage1_hold_hover_acceptance.sh`
-- MAVLink 控制器：`lab_env/sim/nodes/mavlink_hold_hover_controller.py`
+- MAVLink 控制器：历史 Stage 1 helper 已移除；当前主线由 NavLab mission controller 下发 hover/forward/avoid setpoint。
 - 验收记录目录：`artifacts/ros/stage1_hold_hover/20260528_201835/`
 - rosbag：`artifacts/ros/stage1_hold_hover/20260528_201835/rosbag/rosbag_0.mcap`
 - summary：`artifacts/ros/stage1_hold_hover/20260528_201835/summary.json`
@@ -652,7 +652,7 @@ P1 完成后，应该能明确回答：
 
 - setpoint 验收命令：`just stage1-local-setpoint-acceptance 70`
 - setpoint 验收脚本：`scripts/stage1_local_setpoint_acceptance.sh`
-- MAVLink setpoint 控制器：`lab_env/sim/nodes/mavlink_local_setpoint_controller.py`
+- MAVLink setpoint 控制器：历史 Stage 1 helper 已移除；当前主线由 NavLab mission controller 负责局部 setpoint。
 - 验收记录目录：`artifacts/ros/stage1_local_setpoint/20260528_214852/`
 - rosbag：`artifacts/ros/stage1_local_setpoint/20260528_214852/rosbag/rosbag_0.mcap`
 - summary：`artifacts/ros/stage1_local_setpoint/20260528_214852/summary.json`
@@ -827,10 +827,10 @@ artifacts/ros/<SESSION_ID>/stage1_sitl_external_nav/<YYYYMMDD_HHMMSS>/
 交付物：
 
 - MAVLink `ODOMETRY` 字段映射说明：`docs/scenarios/indoor/stage1_mavlink_odometry_mapping.md`
-- MAVLink 输出入口：`lab_env.sim.nodes.mavlink_external_nav_sender`
+- MAVLink 输出入口：`navlab.companion.nodes.external_nav`
 - bridge 输出扩展点：`/external_nav/odom`
 - status topic：`/mavlink_external_nav/status`
-- bridge README 更新：`ros2_ws/src/bridges/external_nav_bridge/README.md`
+- bridge README 更新：`navlab/slam/ros/bridges/external_nav_bridge/README.md`
 
 验收标准：
 
@@ -841,7 +841,7 @@ artifacts/ros/<SESSION_ID>/stage1_sitl_external_nav/<YYYYMMDD_HHMMSS>/
 
 - 阶段 1 已验收主路径是 MAVLink `ODOMETRY`，不是 DDS。
 - `/ap/tf` 仍由 `external_nav_bridge` 输出并录包，但用途是 ROS 侧诊断和未来 DDS-shaped 入口，不作为当前 SITL 控制主路径。
-- MAVLink 输出入口固定为 `/external_nav/odom -> lab_env.sim.nodes.mavlink_external_nav_sender -> MAVLink ODOMETRY -> tcp:sitl:5762`。
+- MAVLink 输出入口固定为 `/external_nav/odom -> navlab.companion.nodes.external_nav -> MAVLink ODOMETRY -> tcp:sitl:5762`。
 - `external_nav_bridge` 仍是 ROS 内部归一化边界：`/odom -> /external_nav/odom + /external_nav/status + /ap/tf`。
 
 字段来源：

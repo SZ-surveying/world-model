@@ -43,7 +43,7 @@
 
 交付物：
 
-- `sim up --mode manual|auto` 可运行
+- NavLab acceptance 可运行；旧 Stage 0 单独 sim 入口已退场
 - 仿真中可见 UAV 运动
 - `/sim/log` 可用于状态观测
 - 最小航点自动执行能力

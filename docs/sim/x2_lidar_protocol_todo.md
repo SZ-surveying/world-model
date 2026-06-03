@@ -46,7 +46,7 @@ Gazebo/sensor 镜像内。companion、SLAM、SITL 等其他镜像不应该感知
 
 ### 任务
 
-- [x] 新增协议 encoder，并在 P1.5 迁移到 `lab_env/sim/sensors/x2/protocol.py`。
+- [x] 新增协议 encoder，并在 P1.5 迁移到 `navlab/gazebo_sensor/x2/protocol.py`。
 - [x] 定义 X2 常量：`PH`、`TRI_PACKMAXNODES`、缩放系数、命令字节。
 - [x] 实现距离编码：`Si = int(range_m * 4000)`。
 - [x] 实现角度编码：`encoded_angle = int(angle_deg * 64) << 1`。
@@ -70,19 +70,19 @@ SLAM 或 SITL 镜像感知厂商协议和传感器内部实现。
 
 ### 任务
 
-- [x] 新增 X2 专属代码目录：`lab_env/sim/sensors/x2/`。
-- [x] 将现有协议 encoder 从 `lab_env/sim/perception/x2_protocol.py` 迁移或封装为
-  `lab_env/sim/sensors/x2/protocol.py`。
-- [x] 在 `lab_env/sim/sensors/x2/` 内保留后续 emulator、runtime、CLI 和配置读取代码。
+- [x] 新增 X2 专属代码目录：`navlab/gazebo_sensor/x2/`。
+- [x] 将早期协议 encoder 迁移或封装为
+  `navlab/gazebo_sensor/x2/protocol.py`。
+- [x] 在 `navlab/gazebo_sensor/x2/` 内保留后续 emulator、runtime、CLI 和配置读取代码。
 - [x] 新增 Gazebo/sensor 镜像专用 dependency 定义，包含 `ydlidar_ros2_driver`、
   `YDLidar-SDK`、ROS 2 driver 运行依赖和 PTY/emulator 所需 Python 依赖。
 - [x] 确保 companion、SLAM、SITL 镜像不安装 X2 vendor driver 或 X2 emulator 依赖。
 - [x] X2 runtime 只通过 ROS topic 暴露 `/scan`、`/scan_ideal`、`/sim/x2/status`。
-- [x] 配置继续从 `[sim.x2_protocol]` 读取，但只由 Gazebo/sensor runtime 使用。
+- [x] 配置继续从 `navlab/config.toml` 的 `[gazebo_sensor.x2_protocol]` 读取，只由 Gazebo/sensor runtime 使用。
 
 ### 验收
 
-- [x] `lab_env/sim/sensors/x2/` 是 X2 协议仿真的唯一代码归属。
+- [x] `navlab/gazebo_sensor/x2/` 是 X2 协议仿真的唯一代码归属。
 - [x] Gazebo/sensor 镜像内能 import X2 protocol/runtime 模块。
 - [x] companion 和 SLAM 镜像不需要 import X2 模块也能启动。
 - [x] `docker compose config` 中 X2 相关环境变量或挂载只出现在 Gazebo/sensor 服务。
@@ -94,8 +94,8 @@ SLAM 或 SITL 镜像感知厂商协议和传感器内部实现。
 
 ### 任务
 
-- [x] 新增 `lab_env/sim/sensors/x2/emulator.py`。
-- [x] 新增 Gazebo/sensor runtime CLI：`lab_env/sim/sensors/x2/cli.py`。
+- [x] 新增 `navlab/gazebo_sensor/x2/emulator.py`。
+- [x] 新增 Gazebo/sensor runtime CLI：`navlab/gazebo_sensor/cli.py`。
 - [x] 创建 PTY，并把 `/tmp/navlab_x2` symlink 到 slave path。
 - [x] 从 PTY master 写入生成的 X2 packets。
 - [x] 从 PTY master 读取厂商 driver 发来的命令字节。

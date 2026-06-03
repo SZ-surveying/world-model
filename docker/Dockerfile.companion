@@ -7,14 +7,13 @@ WORKDIR /workspace
 ENV UV_LINK_MODE=copy
 ENV UV_PROJECT_ENVIRONMENT=/opt/companion-venv
 
-COPY lab_env/pyproject.toml lab_env/uv.lock /workspace/lab_env/
+COPY navlab/pyproject.toml navlab/uv.lock /workspace/navlab/
 
 RUN uv sync \
-  --project /workspace/lab_env \
+  --project /workspace/navlab \
   --frozen \
   --no-dev \
-  --group sim \
-  --no-group host \
+  --group companion \
   --no-install-project
 
 
@@ -32,13 +31,12 @@ COPY --from=companion-python-builder /opt/companion-venv /opt/companion-venv
 
 WORKDIR /opt/navlab_ws
 
-COPY ros2_ws/src /opt/navlab_ws/ros2_ws/src
 COPY x3/src/ydlidar_interfaces /opt/navlab_ws/x3/src/ydlidar_interfaces
 
 RUN bash -lc "\
   source /opt/ros/jazzy/setup.bash && \
   colcon --log-base /tmp/navlab_companion-log build \
-    --base-paths ros2_ws/src x3/src \
+    --base-paths x3/src \
     --packages-select ydlidar_interfaces \
     --build-base /tmp/navlab_companion-build \
     --install-base /opt/navlab_ws/install \
@@ -54,13 +52,13 @@ RUN apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https
 
 WORKDIR /opt/navlab_ws
 
-COPY ros2_ws/src /opt/navlab_ws/ros2_ws/src
+COPY navlab/slam/ros /opt/navlab_ws/navlab_slam_ros
 COPY x3/src/ydlidar_interfaces /opt/navlab_ws/x3/src/ydlidar_interfaces
 
 RUN bash -lc "\
   source /opt/ros/jazzy/setup.bash && \
   colcon --log-base /tmp/navlab_slam-log build \
-    --base-paths ros2_ws/src x3/src \
+    --base-paths navlab_slam_ros x3/src \
     --packages-select ydlidar_interfaces fake_external_nav imu_bridge cartographer_indoor external_nav_bridge indoor_bringup \
     --build-base /tmp/navlab_slam-build \
     --install-base /opt/navlab_ws/install \
@@ -76,14 +74,13 @@ WORKDIR /workspace
 ENV UV_LINK_MODE=copy
 ENV UV_PROJECT_ENVIRONMENT=/opt/gazebo-sensor-venv
 
-COPY lab_env/pyproject.toml lab_env/uv.lock /workspace/lab_env/
+COPY navlab/pyproject.toml navlab/uv.lock /workspace/navlab/
 
 RUN uv sync \
-  --project /workspace/lab_env \
+  --project /workspace/navlab \
   --frozen \
   --no-dev \
   --group gazebo-sensor \
-  --no-group host \
   --no-install-project
 
 

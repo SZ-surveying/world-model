@@ -5,22 +5,22 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 x3_ws := "/home/admin/workspace/world-model/x3"
 pkg := "ydlidar_ros2_driver"
-lab_env_cmd := "uv run --project lab_env --no-sync --group host python -m lab_env.main"
+orchestration_cmd := "uv run --project orchestration python orchestration/main.py"
 
 default:
     @just --list
 
 # Build the NavLab companion image.
 navlab-companion-image-build *args='':
-    {{lab_env_cmd}} navlab build companion {{args}}
+    {{orchestration_cmd}} build companion {{args}}
 
 # Build the NavLab Cartographer SLAM image.
 navlab-slam-image-build *args='':
-    {{lab_env_cmd}} navlab build slam {{args}}
+    {{orchestration_cmd}} build slam {{args}}
 
 # Build the NavLab Gazebo/sensor image with YDLidar vendor driver support.
 navlab-gazebo-sensor-image-build *args='':
-    {{lab_env_cmd}} navlab build gazebo-sensor {{args}}
+    {{orchestration_cmd}} build gazebo-sensor {{args}}
 
 # Run the X2 vendor-driver smoke in the Gazebo/sensor runtime.
 x2-driver-smoke duration_sec='15':
@@ -32,15 +32,15 @@ x2-driver-smoke duration_sec='15':
 
 # Build all NavLab images.
 navlab-images-build *args='':
-    {{lab_env_cmd}} navlab build all {{args}}
+    {{orchestration_cmd}} build all {{args}}
 
 # Check the NavLab companion image contents without running a flight mission.
 navlab-doctor *args='':
-    {{lab_env_cmd}} navlab doctor {{args}}
+    {{orchestration_cmd}} doctor {{args}}
 
 # Run NavLab companion + SITL + Gazebo obstacle acceptance with rosbag/Foxglove artifacts.
 navlab-acceptance duration_sec='90' *args='':
-    {{lab_env_cmd}} navlab acceptance {{duration_sec}} {{args}}
+    {{orchestration_cmd}} acceptance {{duration_sec}} {{args}}
 
 # Build the YDLidar ROS2 package.
 x3-build:

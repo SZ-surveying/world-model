@@ -9,7 +9,7 @@
 
 - Gazebo 中的可移动 `uav_start_marker` 挂载真实 lidar
 - 原始 `/scan` 会跟着 UAV 一起运动
-- `sim-runtime` 从 `/scan` 发布 `/scan_features`
+- 旧通用仿真 runtime 从 `/scan` 发布 `/scan_features`
 - `/planner/cmd_vel` 由执行器消费
 - 执行器内部额外保证 `front_min ~= 0.5 m` 时不再继续前进
 
@@ -37,7 +37,7 @@
 - [ ] 把 `SCAN_SOURCE=gazebo|real` 这类显式 source 切换机制收成稳定配置入口
 - [ ] 把真实 `x3` 接入这条链路再跑一遍同口径验证，确认 `/scan -> /scan_features` 一致
 - [ ] 把 `auto` 默认 rosbag 的目录级 metadata / `ros2 bag info` 可用性补一次验收并收口
-- [x] 给 `sim up` 收成明确的 `manual|auto` 两种启动模式入口
+- [x] 给旧 sim CLI 收成明确的 `manual|auto` 两种启动模式入口
 - [x] `manual` 模式文档已补上 Foxglove 操作路径和 `/planner/cmd_vel` preset
 - [ ] `manual` 模式下再做一次完整 Foxglove 人工遥控验收
 - [x] `auto` 模式下支持加载一个航点 `yaml`，先按最小直线执行跑通
@@ -56,13 +56,13 @@
 - [x] `docker/worlds/uav_obstacle_5m.sdf` 是当前默认世界
 - [x] 保留原点起点标记和 `+X` 路径标记
 - [x] 固定障碍物前缘位于 `x=5`
-- [x] 世界不依赖旧 `ros2_ws/`
+- [x] 世界不依赖 SLAM ROS workspace
 
 验收：
 
 - [x] Gazebo 能加载世界
 - [x] 障碍物位置明确可见
-- [x] 世界文件不依赖旧 `ros2_ws/`
+- [x] 世界文件不依赖 SLAM ROS workspace
 
 ### P1.2 可移动 UAV 上的真实 lidar
 
@@ -141,7 +141,7 @@
 当前参数：
 
 - `avoid_distance = 1.0 m`
-- `stop_distance = 0.5 m`（默认来自 `lab_env/config.toml` 的 `[sim].stop_distance`）
+- `stop_distance = 0.5 m`（默认来自 `navlab/config.toml` 的 `[companion].stop_distance`）
 - `forward_speed = 0.2 m/s`（示例值，可在 CLI 覆盖）
 
 验收：
@@ -180,12 +180,12 @@
 - [x] 仿真代码不依赖 `x3` 内部实现
 - [ ] 真实接入时只替换传感器来源，不改行为类下游接口
 
-### P2.5 `sim up` 启动模式分层
+### P2.5 旧 sim CLI 启动模式分层
 
 状态：部分完成
 
-- [x] `sim up` 提供显式 `--mode manual|auto`（或等价配置入口）
-- [x] `manual` 模式默认带 `foxglove`，并暴露人工遥控 UAV 的最短路径
+- [x] 旧 sim CLI 提供显式 `--mode manual|auto`（或等价配置入口）
+- [x] 当前主线不再启动常驻 `foxglove` bridge；批处理 acceptance 生成 rosbag/summary 后上传 Foxglove 云端查看
 - [x] `manual` 模式不强绑当前最小 `front_sector_consumer` 自动前进逻辑
 - [x] `auto` 模式支持读取航点 `yaml`
 - [x] `auto` 模式第一版只做最小直线执行，不提前绑定 world model
@@ -217,7 +217,7 @@
 
 - [ ] real `x3` 与 Gazebo 的统一 source 切换入口
 - [ ] real `x3` 的同口径 `/scan_features` 端到端验证
-- [x] `sim up` 的 `manual|auto` 双模式入口
+- [x] 旧 sim CLI 的 `manual|auto` 双模式入口
 - [x] 自动模式的航点 `yaml` 最小直线执行
 - [x] `/sim/log` 统一日志输出 topic
 - [ ] world model / planner 正式接管 `/planner/cmd_vel`

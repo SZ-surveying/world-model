@@ -1,0 +1,76 @@
+[companion]
+stop_distance = 0.5
+
+[companion.logging]
+console_level = "DEBUG"
+file_level = "INFO"
+
+[companion.runtime]
+imu_source_label = "fcu_mavlink_navlab"
+
+[companion.runtime.world_markers]
+autostart = true
+args = [
+  "--world-file",
+  "/workspace/docker/worlds/uav_obstacle_5m.sdf",
+  "--topic",
+  "/sim/markers",
+  "--pose-topic",
+  "/sim/uav_pose",
+  "--rate",
+  "1",
+]
+
+[companion.runtime.scan_features]
+autostart = true
+args = []
+
+[companion.runtime.pose_mirror]
+autostart = true
+endpoint = "tcp:mavlink-router:5760"
+args = [
+  "--imu-topic",
+  "/navlab/fcu_imu/data",
+  "--imu-status-topic",
+  "/navlab/fcu_imu/status",
+  "--imu-frame-id",
+  "imu_link",
+  "--synthetic-imu-when-mavlink-missing",
+  "--simulate-pose-from-mission-status",
+  "--rate-hz",
+  "10",
+]
+
+[companion.runtime.imu_bridge]
+autostart = false
+endpoint = "tcp:mavlink-router:5760"
+args = ["--allow-raw-imu"]
+
+[companion.runtime.external_nav_sender]
+autostart = true
+endpoint = "tcp:mavlink-router:5760"
+args = ["--rate-hz", "20"]
+
+[companion.runtime.mission]
+autostart = false
+endpoint = "tcp:mavlink-router:5760"
+args = ["--simulate-mode-arm"]
+
+[gazebo_sensor.x2_protocol]
+enabled = false
+scan_source = "x2_virtual_serial"
+profile = "profiles/x2-vendor-sim.yaml"
+virtual_serial_link = "/tmp/navlab_x2"
+scan_ideal_topic = "/scan_ideal"
+scan_topic = "/scan"
+status_topic = "/sim/x2/status"
+sample_rate_hz = 3000.0
+scan_frequency_hz = 7.0
+scan_frequency_min_hz = 4.0
+scan_frequency_max_hz = 8.0
+range_min_m = 0.1
+range_max_m = 8.0
+static_range_m = 1.5
+range_noise_stddev_m = 0.0
+dropout_rate = 0.0
+auto_start = true

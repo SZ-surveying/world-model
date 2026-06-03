@@ -1,0 +1,18 @@
+[project]
+name = "orchestration"
+version = "0.1.0"
+description = "Host-side NavLab Docker, acceptance, artifact, and Foxglove orchestration."
+requires-python = ">=3.11"
+dependencies = [
+    "jinja2>=3.1.6",
+    "python-on-whales>=0.81.0",
+    "rich>=14.1.0",
+    "tomli-w>=1.2.0",
+    "typer>=0.25.1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.4.2", "pyright>=1.1.408", "ruff>=0.15.11"]
+
+[tool.uv]
+index-url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"

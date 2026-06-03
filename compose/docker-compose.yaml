@@ -1,4 +1,4 @@
-name: lab_env
+name: navlab
 
 x-nn-user: &nn_user
   user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
@@ -74,22 +74,6 @@ services:
     networks:
       - mavlink-lab
 
-  scan-bridge:
-    <<: *nn_user
-    image: "${NAVLAB_COMPANION_IMAGE:-world-model/navlab-companion:latest}"
-    network_mode: "service:gazebo"
-    environment:
-      SESSION_ID: "${SESSION_ID:-manual}"
-      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
-      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-      PYTHONPATH: "/workspace"
-      CONFIG_FILE: "/workspace/docker/ros_gz_bridge/scan_bridge.yaml"
-    volumes:
-      - ./:/workspace:ro
-      - ./docker/entrypoints/start-scan-bridge.sh:/usr/local/bin/start-scan-bridge.sh:ro
-    command: [ "bash", "/usr/local/bin/start-scan-bridge.sh" ]
-    profiles: [ "sim_p1" ]
-
   gazebo-sensor:
     <<: *nn_user
     image: "${NAVLAB_GAZEBO_SENSOR_IMAGE:-world-model/navlab-gazebo-sensor:latest}"
@@ -99,20 +83,6 @@ services:
       ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
       RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
       PYTHONPATH: "/workspace"
-      X2_VIRTUAL_SERIAL_LINK: "${X2_VIRTUAL_SERIAL_LINK:-/tmp/navlab_x2}"
-      X2_PROFILE_PATH: "${X2_PROFILE_PATH:-/workspace/profiles/x2-vendor-sim.yaml}"
-      X2_STATUS_TOPIC: "${X2_STATUS_TOPIC:-/sim/x2/status}"
-      X2_SCAN_SOURCE: "${X2_SCAN_SOURCE:-x2_virtual_serial}"
-      X2_SCAN_IDEAL_TOPIC: "${X2_SCAN_IDEAL_TOPIC:-/scan_ideal}"
-      X2_SCAN_TOPIC: "${X2_SCAN_TOPIC:-/scan}"
-      X2_SCAN_FREQUENCY_HZ: "${X2_SCAN_FREQUENCY_HZ:-7.0}"
-      X2_SAMPLE_RATE_HZ: "${X2_SAMPLE_RATE_HZ:-3000.0}"
-      X2_RANGE_MIN_M: "${X2_RANGE_MIN_M:-0.1}"
-      X2_RANGE_MAX_M: "${X2_RANGE_MAX_M:-8.0}"
-      X2_STATIC_RANGE_M: "${X2_STATIC_RANGE_M:-1.5}"
-      X2_RANGE_NOISE_STDDEV_M: "${X2_RANGE_NOISE_STDDEV_M:-0.0}"
-      X2_DROPOUT_RATE: "${X2_DROPOUT_RATE:-0.0}"
-      X2_AUTO_START: "${X2_AUTO_START:-false}"
       X2_MODE: "${X2_MODE:-runtime}"
       X2_SMOKE_DURATION_SEC: "${X2_SMOKE_DURATION_SEC:-15}"
       X2_ARTIFACT_DIR: "${X2_ARTIFACT_DIR:-/artifacts/ros/x2_driver_smoke/manual}"
@@ -126,41 +96,6 @@ services:
     depends_on:
       gazebo:
         condition: service_started
-
-  foxglove:
-    <<: *nn_user
-    image: "${FOXGLOVE_IMAGE:-world-model/navlab-slam-cartographer:latest}"
-    environment:
-      SESSION_ID: "${SESSION_ID:-manual}"
-      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
-      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-      PYTHONPATH: "/workspace"
-    volumes:
-      - ./:/workspace:ro
-      - ./docker/entrypoints/start-foxglove-bridge.sh:/usr/local/bin/start-foxglove-bridge.sh:ro
-    command: [ "bash", "/usr/local/bin/start-foxglove-bridge.sh" ]
-    ports:
-      - "${FOXGLOVE_PUBLISHED_PORT:-8765}:8765"
-    profiles: [ "base_env" ]
-    networks:
-      - mavlink-lab
-
-  rosbag-play:
-    <<: *nn_user
-    image: remote-sitl-lab/ros-jazzy-base:latest
-    environment:
-      SESSION_ID: "${SESSION_ID:-manual}"
-      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
-      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-      PLAY_BAG_DIR: "${PLAY_BAG_DIR:-/artifacts/ros/manual/rosbag}"
-      PLAY_ARGS: "${PLAY_ARGS:---loop}"
-    volumes:
-      - ./artifacts/ros:/artifacts/ros
-      - ./docker/entrypoints/start-rosbag-play.sh:/usr/local/bin/start-rosbag-play.sh:ro
-    command: [ "bash", "/usr/local/bin/start-rosbag-play.sh" ]
-    profiles: [ "rosbag_play" ]
-    networks:
-      - mavlink-lab
 
   fast-lio:
     <<: *nn_user

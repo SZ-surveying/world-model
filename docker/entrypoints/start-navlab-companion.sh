@@ -8,6 +8,6 @@ if [[ -f /opt/navlab_ws/install/setup.bash ]]; then
 fi
 set -u
 
-NAVLAB_CONFIG="${NAVLAB_CONFIG:-/workspace/profiles/navlab-gazebo.toml}"
+NAVLAB_RUNTIME_CONFIG="${NAVLAB_RUNTIME_CONFIG:-/workspace/navlab/config.toml}"
 
-exec /opt/companion-venv/bin/python -m lab_env.navlab.runtime.cli launch-companion --config "${NAVLAB_CONFIG}"
+exec /opt/companion-venv/bin/python -m navlab.companion.cli launch-companion --config "${NAVLAB_RUNTIME_CONFIG}"
