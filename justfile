@@ -10,45 +10,25 @@ lab_env_cmd := "uv run --project lab_env --no-sync --group host python -m lab_en
 default:
     @just --list
 
-# Start the default lab environment profile.
-up:
-    {{lab_env_cmd}} up
+# Build the NavLab companion image.
+navlab-companion-image-build *args='':
+    {{lab_env_cmd}} navlab build companion {{args}}
 
-# Check the default lab environment profile.
-doctor:
-    {{lab_env_cmd}} doctor
+# Build the NavLab Cartographer SLAM image.
+navlab-slam-image-build *args='':
+    {{lab_env_cmd}} navlab build slam {{args}}
 
-# Stop the lab environment.
-down:
-    {{lab_env_cmd}} down
+# Build all NavLab images.
+navlab-images-build *args='':
+    {{lab_env_cmd}} navlab build all {{args}}
 
-# Subscribe to /scan on the host. Requires a sourced ROS2 Python environment.
-sim-scan-consumer *args='':
-    python3 -m lab_env.sim.nodes.front_sector_consumer {{args}}
+# Check the NavLab companion image contents without running a flight mission.
+navlab-doctor *args='':
+    {{lab_env_cmd}} navlab doctor {{args}}
 
-# Start Gazebo + scan bridge + runtime helper container for P1 validation.
-sim-p1-up *args='':
-    {{lab_env_cmd}} sim up {{args}}
-
-# Start the sim stack in explicit manual mode for Foxglove teleop.
-sim-p1-manual *args='':
-    {{lab_env_cmd}} sim up --mode manual {{args}}
-
-# Start the sim stack in explicit auto mode with a waypoint file.
-sim-p1-auto waypoint_file *args='':
-    {{lab_env_cmd}} sim up --mode auto --waypoint-file {{waypoint_file}} {{args}}
-
-# Stop Gazebo + scan bridge + runtime helper container.
-sim-p1-down:
-    {{lab_env_cmd}} sim down
-
-# Run the existing front-sector consumer against Gazebo-backed /scan.
-sim-p1-consumer *args='':
-    {{lab_env_cmd}} sim consumer {{args}}
-
-# Run the front-sector consumer with rosbag recording enabled.
-sim-p1-consumer-record *args='':
-    {{lab_env_cmd}} sim consumer-record {{args}}
+# Run NavLab companion + SITL + Gazebo obstacle acceptance with rosbag/Foxglove artifacts.
+navlab-acceptance duration_sec='90' *args='':
+    {{lab_env_cmd}} navlab acceptance {{duration_sec}} {{args}}
 
 # Build the YDLidar ROS2 package.
 x3-build:

@@ -1,0 +1,18 @@
+external_nav_bridge_node:
+  ros__parameters:
+    odom_timeout_ms: 500
+    imu_timeout_ms: 500
+    height_timeout_ms: 500
+    require_imu_for_output: false
+    require_height_for_output: false
+    height_topic: /height/estimate
+    max_height_covariance: 4.0
+    output_frame_id: external_nav
+    output_child_frame_id: base_link
+    ap_tf_topic: /ap/tf
+    ap_tf_parent_frame: odom
+    ap_tf_child_frame: base_link
+    expected_odom_frame_id: odom
+    expected_odom_child_frame_id: base_link
+    min_odom_rate_hz: 4.0
+    coordinate_mode: pass_through_enu_flu

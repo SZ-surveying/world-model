@@ -1,0 +1,14 @@
+# NavLab Foxglove replay notes
+
+- Rosbag: `{{ rosbag_dir }}`
+- Recommended panels: {{ recommended_panels | join(", ") }}.
+- 3D panel fixed frame: `{{ fixed_frame }}`.
+- 3D marker topics: {% for topic in marker_topics %}`{{ topic }}`{% if not loop.last %}, {% endif %}{% endfor %}.
+- Scene objects: `/sim/markers` contains SDF box/cylinder visuals such as the UAV body, path strip, and obstacle wall.
+- 3D pose/odom topics, only if using a Pose/Odometry layer: {% for topic in pose_topics %}`{{ topic }}`{% if not loop.last %}, {% endif %}{% endfor %}.
+- Laser topics: {% for topic in laser_topics %}`{{ topic }}`{% if not loop.last %}, {% endif %}{% endfor %}.
+- Raw JSON string topics: {% for topic in raw_status_topics %}`{{ topic }}`{% if not loop.last %}, {% endif %}{% endfor %}.
+- Recording starts before the mission controller, so replay should include wait_ready through final_hold/complete.
+- Expected sequence: {{ expected_sequence | join(" -> ") }}.
+- Note: raw Cartographer constraints are recorded as `/constraint_list`, but Foxglove should use `/navlab/replay/constraint_markers` because empty LINE_LIST debug markers are filtered there.
+- Do not add `/sim/log` or `/navlab/mission/status` to a 3D layer; they are `std_msgs/msg/String` raw-message topics.

@@ -32,3 +32,18 @@ file_level = "INFO"
 [fast_lio]
 container_name = "compose-fast-lio-1"
 config_path = "/workspace/profiles/fast-lio/config.yaml"
+
+[navlab.images]
+tag_strategy = "latest"
+
+[navlab.images.companion]
+dockerfile = "docker/Dockerfile.companion"
+context = "."
+target = "navlab-companion"
+repository = "world-model/navlab-companion"
+
+[navlab.images.slam]
+dockerfile = "docker/Dockerfile.companion"
+context = "."
+target = "navlab-slam-cartographer"
+repository = "world-model/navlab-slam-cartographer"

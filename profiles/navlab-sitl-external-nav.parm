@@ -1,0 +1,8 @@
+# NavLab SITL ExternalNav defaults.
+# Uses MAVLink visual odometry as the GPS-denied position source.
+VISO_TYPE 1
+EK3_SRC1_POSXY 6
+EK3_SRC1_VELXY 6
+EK3_SRC1_POSZ 1
+EK3_SRC1_VELZ 0
+EK3_SRC1_YAW 6

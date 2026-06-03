@@ -1,0 +1,26 @@
+# NavLab Companion SITL Gazebo obstacle acceptance
+
+- Result: `{{ summary_ok | status }}`
+- Artifact dir: `{{ artifact_dir }}`
+- Summary JSON: `{{ artifact_dir / "summary.json" }}`
+- Run config: `{{ artifact_dir / "run_config.toml" }}`
+- Rosbag: `{{ artifact_dir / "rosbag" / "rosbag_0.mcap" }}`
+- Foxglove notes: `{{ artifact_dir / "foxglove_notes.md" }}`
+
+## Checks
+
+- Main summary: `{{ summary_ok | status }}`
+- Rosbag profile: `{{ rosbag_ok | status }}`
+- Missing required topics: `{{ rosbag_profile.get("missing_required_topics", []) if rosbag_profile else [] }}`
+- Zero-count required topics: `{{ zero_count_required }}`
+- Present optional topics: `{{ rosbag_profile.get("present_optional_topics", []) if rosbag_profile else [] }}`
+- Message counts: {{ message_counts | summarize_counts }}
+
+{% for title, section in sections if section %}
+## {{ title }}
+
+```json
+{{ section | json_pretty }}
+```
+
+{% endfor %}

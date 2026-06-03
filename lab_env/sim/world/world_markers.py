@@ -51,12 +51,6 @@ class WorldObstacleBox:
     scale: MarkerScale
 
 
-VISIBLE_MODEL_NAMES = (
-    "uav_start_marker",
-    "obstacle_5m_ahead",
-)
-
-
 def _build_uav_body_markers(uav_marker: MarkerSpec) -> list[MarkerSpec]:
     half_length = uav_marker.scale.x / 2.0
     nose_length = 0.2
@@ -140,15 +134,16 @@ def load_world_marker_specs(world_file: str | Path) -> list[MarkerSpec]:
     marker_id = 0
     for model in world.findall("model"):
         name = model.get("name", "")
-        if name not in VISIBLE_MODEL_NAMES:
-            continue
 
         pose = _parse_pose(model.findtext("pose"))
         visual = model.find("link/visual")
         if visual is None:
-            raise ValueError(f"visual not found for model {name}")
+            continue
 
-        shape, scale = _visual_geometry(visual)
+        try:
+            shape, scale = _visual_geometry(visual)
+        except ValueError:
+            continue
         color = _parse_color(visual)
         specs.append(
             MarkerSpec(

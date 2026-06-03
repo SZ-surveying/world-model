@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import shutil
-import tomllib
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import tomllib
 
 
 @dataclass(slots=True)
@@ -77,6 +79,29 @@ class SimConfig:
     file_log_level: ValueWithSource
 
 
+@dataclass(slots=True)
+class NavLabImageConfig:
+    dockerfile: ValueWithSource
+    context: ValueWithSource
+    target: ValueWithSource
+    repository: ValueWithSource
+    tag_strategy: ValueWithSource
+
+    def tag(self, *, cli_tag: str | None = None, cwd: Path | None = None) -> str:
+        if cli_tag:
+            return cli_tag
+        return resolve_navlab_image_tag(self.tag_strategy.value, cwd=cwd)
+
+    def image(self, *, cli_tag: str | None = None, cwd: Path | None = None) -> str:
+        return f"{self.repository.value}:{self.tag(cli_tag=cli_tag, cwd=cwd)}"
+
+
+@dataclass(slots=True)
+class NavLabImagesConfig:
+    companion: NavLabImageConfig
+    slam: NavLabImageConfig
+
+
 PACKAGE_PATH = Path(__file__).parent
 PROJECT_PATH = PACKAGE_PATH.parent
 
@@ -102,6 +127,15 @@ DEFAULT_FAST_LIO_CONFIG_PATH = "/workspace/profiles/fast-lio/config.yaml"
 DEFAULT_SIM_STOP_DISTANCE = 0.5
 DEFAULT_SIM_CONSOLE_LOG_LEVEL = "DEBUG"
 DEFAULT_SIM_FILE_LOG_LEVEL = "INFO"
+DEFAULT_NAVLAB_TAG_STRATEGY = "latest"
+DEFAULT_NAVLAB_DOCKERFILE = "docker/Dockerfile.companion"
+DEFAULT_NAVLAB_CONTEXT = "."
+DEFAULT_NAVLAB_COMPANION_TARGET = "navlab-companion"
+DEFAULT_NAVLAB_COMPANION_REPOSITORY = "world-model/navlab-companion"
+DEFAULT_NAVLAB_COMPANION_IMAGE = f"{DEFAULT_NAVLAB_COMPANION_REPOSITORY}:latest"
+DEFAULT_NAVLAB_SLAM_TARGET = "navlab-slam-cartographer"
+DEFAULT_NAVLAB_SLAM_REPOSITORY = "world-model/navlab-slam-cartographer"
+DEFAULT_NAVLAB_SLAM_IMAGE = f"{DEFAULT_NAVLAB_SLAM_REPOSITORY}:latest"
 
 
 def repo_root() -> Path:
@@ -286,6 +320,83 @@ def load_sim_config(runtime: RuntimeConfig) -> SimConfig:
         stop_distance=_resolve_float_value(raw_sim, "stop_distance", DEFAULT_SIM_STOP_DISTANCE),
         console_log_level=_resolve_router_value(raw_logging, "console_level", DEFAULT_SIM_CONSOLE_LOG_LEVEL),
         file_log_level=_resolve_router_value(raw_logging, "file_level", DEFAULT_SIM_FILE_LOG_LEVEL),
+    )
+
+
+def resolve_navlab_image_tag(strategy: str, *, cwd: Path | None = None) -> str:
+    normalized = strategy.strip().lower()
+    if normalized == "latest":
+        return "latest"
+    if normalized == "git-commit":
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--short=12", "HEAD"],
+                cwd=cwd or repo_root(),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise ValueError("Could not resolve NavLab image tag from git commit") from exc
+        tag = result.stdout.strip()
+        if not tag:
+            raise ValueError("Could not resolve NavLab image tag from git commit")
+        return tag
+    raise ValueError(f"Invalid NavLab image tag_strategy '{strategy}': expected latest or git-commit")
+
+
+def _resolve_navlab_image_config(
+    images: dict[str, Any],
+    key: str,
+    *,
+    default_target: str,
+    default_repository: str,
+) -> NavLabImageConfig:
+    raw_image = images.get(key, {})
+    if raw_image is None:
+        raw_image = {}
+    if not isinstance(raw_image, dict):
+        raise ValueError(f"Invalid [navlab.images.{key}] section: expected a table")
+
+    return NavLabImageConfig(
+        dockerfile=_resolve_router_value(raw_image, "dockerfile", DEFAULT_NAVLAB_DOCKERFILE),
+        context=_resolve_router_value(raw_image, "context", DEFAULT_NAVLAB_CONTEXT),
+        target=_resolve_router_value(raw_image, "target", default_target),
+        repository=_resolve_router_value(raw_image, "repository", default_repository),
+        tag_strategy=_resolve_router_value(
+            raw_image,
+            "tag_strategy",
+            _resolve_router_value(images, "tag_strategy", DEFAULT_NAVLAB_TAG_STRATEGY).value,
+        ),
+    )
+
+
+def load_navlab_images_config(runtime: RuntimeConfig) -> NavLabImagesConfig:
+    config = load_project_config(runtime.config_file)
+    raw_navlab = config.get("navlab", {})
+    if raw_navlab is None:
+        raw_navlab = {}
+    if not isinstance(raw_navlab, dict):
+        raise ValueError(f"Invalid [navlab] section in {runtime.config_file}")
+    raw_images = raw_navlab.get("images", {})
+    if raw_images is None:
+        raw_images = {}
+    if not isinstance(raw_images, dict):
+        raise ValueError(f"Invalid [navlab.images] section in {runtime.config_file}")
+
+    return NavLabImagesConfig(
+        companion=_resolve_navlab_image_config(
+            raw_images,
+            "companion",
+            default_target=DEFAULT_NAVLAB_COMPANION_TARGET,
+            default_repository=DEFAULT_NAVLAB_COMPANION_REPOSITORY,
+        ),
+        slam=_resolve_navlab_image_config(
+            raw_images,
+            "slam",
+            default_target=DEFAULT_NAVLAB_SLAM_TARGET,
+            default_repository=DEFAULT_NAVLAB_SLAM_REPOSITORY,
+        ),
     )
 
 

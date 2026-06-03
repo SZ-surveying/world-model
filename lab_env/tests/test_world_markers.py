@@ -19,6 +19,7 @@ def test_world_marker_specs_cover_visible_models() -> None:
     assert [spec.namespace for spec in specs] == [
         "uav_body_tail_marker",
         "uav_body_nose_marker",
+        "forward_path_marker",
         "obstacle_5m_ahead",
     ]
 
@@ -51,7 +52,7 @@ def test_uav_nose_marker_uses_front_color_band() -> None:
 
 def test_obstacle_marker_faces_uav_with_4_by_2_face() -> None:
     specs = load_world_marker_specs("docker/worlds/uav_obstacle_5m.sdf")
-    obstacle = specs[2]
+    obstacle = specs[3]
     assert obstacle.shape == "cube"
     assert obstacle.pose.x == 5.5
     assert obstacle.scale.x == 1.0

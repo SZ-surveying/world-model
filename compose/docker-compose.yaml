@@ -6,13 +6,19 @@ x-nn-user: &nn_user
 services:
   sitl:
     <<: *nn_user
-    image: remote-sitl-lab/ardupilot-sitl:latest
+    image: "${SITL_IMAGE:-remote-sitl-lab/ardupilot-sitl:stage1-f10500ae45aa}"
     environment:
       SESSION_ID: "${SESSION_ID:-manual}"
       SITL_UPSTREAM_ENDPOINT: "${SITL_UPSTREAM_ENDPOINT:-mavlink-router:14550}"
       SITL_ROUTER_ONLY: "${SITL_ROUTER_ONLY:-false}"
+      SITL_MODEL: "${SITL_MODEL:-quad}"
+      SITL_SPEEDUP: "${SITL_SPEEDUP:-1}"
+      SITL_INSTANCE: "${SITL_INSTANCE:-0}"
+      SITL_HOME: "${SITL_HOME:-}"
+      SITL_EXTRA_ARGS: "${SITL_EXTRA_ARGS:-}"
     volumes:
       - ./artifacts/sessions:/artifacts/sessions
+      - ./profiles:/workspace/profiles:ro
       - ./docker/entrypoints/start-sitl.sh:/usr/local/bin/start-sitl.sh:ro
     command: [ "bash", "/usr/local/bin/start-sitl.sh" ]
     healthcheck:
@@ -30,7 +36,7 @@ services:
 
   mavlink-router:
     <<: *nn_user
-    image: remote-sitl-lab/mavlink-router:latest
+    image: "${ROUTER_IMAGE:-remote-sitl-lab/mavlink-router:stage1-4ee567d97525}"
     environment:
       SESSION_ID: "${SESSION_ID:-manual}"
       ROUTER_LISTEN: "${ROUTER_LISTEN:-0.0.0.0:14550}"
@@ -70,10 +76,7 @@ services:
 
   scan-bridge:
     <<: *nn_user
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.sim
-    image: world-model/sim-python:latest
+    image: "${NAVLAB_COMPANION_IMAGE:-world-model/navlab-companion:latest}"
     network_mode: "service:gazebo"
     environment:
       SESSION_ID: "${SESSION_ID:-manual}"
@@ -81,8 +84,6 @@ services:
       RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
       PYTHONPATH: "/workspace"
       CONFIG_FILE: "/workspace/docker/ros_gz_bridge/scan_bridge.yaml"
-      SIM_CMD_VEL_EXECUTOR_AUTOSTART: "${SIM_CMD_VEL_EXECUTOR_AUTOSTART:-true}"
-      SIM_UP_MODE: "${SIM_UP_MODE:-manual}"
     volumes:
       - ./:/workspace:ro
       - ./docker/entrypoints/start-scan-bridge.sh:/usr/local/bin/start-scan-bridge.sh:ro
@@ -91,12 +92,14 @@ services:
 
   foxglove:
     <<: *nn_user
-    image: remote-sitl-lab/ros-jazzy-base:latest
+    image: "${FOXGLOVE_IMAGE:-world-model/navlab-slam-cartographer:latest}"
     environment:
       SESSION_ID: "${SESSION_ID:-manual}"
       ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
       RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      PYTHONPATH: "/workspace"
     volumes:
+      - ./:/workspace:ro
       - ./docker/entrypoints/start-foxglove-bridge.sh:/usr/local/bin/start-foxglove-bridge.sh:ro
     command: [ "bash", "/usr/local/bin/start-foxglove-bridge.sh" ]
     ports:
@@ -119,36 +122,6 @@ services:
       - ./docker/entrypoints/start-rosbag-play.sh:/usr/local/bin/start-rosbag-play.sh:ro
     command: [ "bash", "/usr/local/bin/start-rosbag-play.sh" ]
     profiles: [ "rosbag_play" ]
-    networks:
-      - mavlink-lab
-
-  sim-runtime:
-    <<: *nn_user
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.sim
-    image: world-model/sim-python:latest
-    environment:
-      SESSION_ID: "${SESSION_ID:-manual}"
-      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
-      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-      PYTHONPATH: "/workspace"
-      SIM_MARKERS_AUTOSTART: "${SIM_MARKERS_AUTOSTART:-true}"
-      SIM_SCAN_FEATURES_AUTOSTART: "${SIM_SCAN_FEATURES_AUTOSTART:-true}"
-      SIM_UP_MODE: "${SIM_UP_MODE:-manual}"
-      SIM_AUTO_WAYPOINT_FILE: "${SIM_AUTO_WAYPOINT_FILE:-}"
-      SIM_AUTO_ROSBAG_ENABLED: "${SIM_AUTO_ROSBAG_ENABLED:-true}"
-      SIM_AUTO_ROSBAG_LABEL: "${SIM_AUTO_ROSBAG_LABEL:-auto_waypoint_follower}"
-      SIM_AUTO_RUN_ID: "${SIM_AUTO_RUN_ID:-}"
-      SIM_AUTO_ARTIFACT_DIR: "${SIM_AUTO_ARTIFACT_DIR:-}"
-      SIM_AUTO_LOG_FILE: "${SIM_AUTO_LOG_FILE:-}"
-    working_dir: /workspace
-    volumes:
-      - ./:/workspace
-      - ./docker/entrypoints/sim-runtime-env.sh:/usr/local/bin/sim-runtime-env.sh:ro
-      - ./docker/entrypoints/start-sim-runtime.sh:/usr/local/bin/start-sim-runtime.sh:ro
-    command: [ "bash", "/usr/local/bin/start-sim-runtime.sh" ]
-    profiles: [ "sim_p1" ]
     networks:
       - mavlink-lab
 

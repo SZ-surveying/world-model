@@ -65,7 +65,7 @@ def run(argv: list[str] | None = None) -> int:
     except ModuleNotFoundError as exc:
         raise SystemExit(
             "scan_features_publisher requires ROS2 Python packages and ydlidar_interfaces. "
-            "Run it through the sim-runtime ROS env wrapper or source the overlay first."
+            "Run it through the NavLab companion runtime or source the overlay first."
         ) from exc
 
     class ScanFeaturesPublisher(Node):
@@ -139,3 +139,11 @@ def run(argv: list[str] | None = None) -> int:
         node.destroy_node()
         rclpy.shutdown()
     return 0
+
+
+def main() -> int:
+    return run()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

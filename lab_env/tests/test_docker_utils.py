@@ -36,8 +36,8 @@ def test_probe_ros_python_parses_json(monkeypatch) -> None:
 
     monkeypatch.setattr(docker_utils, "_exec_ros_command", fake_exec_ros_command)
 
-    assert docker_utils._probe_ros_python("sim-runtime", 'print("hello")') == {"value": 1}
-    assert call["container_name"] == "sim-runtime"
+    assert docker_utils._probe_ros_python("navlab-companion", 'print("hello")') == {"value": 1}
+    assert call["container_name"] == "navlab-companion"
     assert call["command"].startswith("python3 -c ")
 
 

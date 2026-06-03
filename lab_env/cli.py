@@ -30,12 +30,12 @@ from lab_env.docker_utils import (
     services_for_selected_profile,
     summarize_service,
 )
-from lab_env import sim_host
+from lab_env.navlab.orchestration.cli import app as navlab_app
+
+console = Console()
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
-sim_app = typer.Typer(add_completion=False, no_args_is_help=True)
-app.add_typer(sim_app, name="sim")
-console = Console()
+app.add_typer(navlab_app, name="navlab")
 
 SERVICE_TITLES = {
     "fast-lio": "FAST-LIO",
@@ -458,80 +458,3 @@ def down(
         console.print(f"[red]Down failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
-
-@sim_app.command("up")
-def sim_up(
-    markers: bool = typer.Option(
-        True,
-        "--markers/--no-markers",
-        help="Autostart world MarkerArray publisher in sim-runtime.",
-    ),
-    mode: str = typer.Option(
-        "manual",
-        "--mode",
-        help="Run sim in manual mode for Foxglove teleop, or auto mode for straight-line waypoint execution.",
-        show_default=True,
-    ),
-    waypoint_file: str | None = typer.Option(
-        None,
-        "--waypoint-file",
-        help="Straight-line mission yaml used by --mode auto. The file must live inside this repo.",
-    ),
-    timeout_sec: float = typer.Option(
-        300.0,
-        "--timeout-sec",
-        min=1.0,
-        help="Timeout used when waiting for an auto mission to reach a terminal state.",
-    ),
-) -> None:
-    raise typer.Exit(
-        sim_host.sim_up(
-            markers=markers,
-            mode=mode.lower(),
-            waypoint_file=waypoint_file,
-            timeout_sec=timeout_sec,
-        )
-    )
-
-
-@sim_app.command("down")
-def sim_down() -> None:
-    raise typer.Exit(sim_host.sim_down())
-
-
-@sim_app.command("consumer")
-def sim_consumer(args: list[str] = typer.Argument([], help="Extra args for front_sector_consumer")) -> None:
-    raise typer.Exit(sim_host.exec_runtime_python_target("lab_env.sim.nodes.front_sector_consumer:run", args))
-
-
-@sim_app.command("consumer-record")
-def sim_consumer_record(args: list[str] = typer.Argument([], help="Extra args for front_sector_consumer")) -> None:
-    raise typer.Exit(
-        sim_host.exec_runtime_python_target(
-            "lab_env.sim.nodes.front_sector_consumer:run",
-            args,
-            record=True,
-            label="front_sector_consumer",
-        )
-    )
-
-
-@sim_app.command("cmd-vel-preset")
-def sim_cmd_vel_preset(
-    preset: str = typer.Argument(..., help="Preset name: forward or stop."),
-    topic: str = typer.Option("/planner/cmd_vel", "--topic", help="Twist topic to publish."),
-    linear_x: float = typer.Option(0.2, "--linear-x", help="Linear X used by the forward preset."),
-    angular_z: float = typer.Option(0.0, "--angular-z", help="Angular Z used by the forward preset."),
-    duration: float = typer.Option(1.0, "--duration", help="Publish duration in seconds for forward."),
-    rate: float = typer.Option(10.0, "--rate", help="Publish rate in Hz for forward."),
-) -> None:
-    raise typer.Exit(
-        sim_host.publish_cmd_vel_preset(
-            preset=preset,
-            topic=topic,
-            linear_x=linear_x,
-            angular_z=angular_z,
-            duration=duration,
-            rate=rate,
-        )
-    )

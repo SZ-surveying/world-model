@@ -13,6 +13,21 @@ from typing import ParamSpec, TypeVar
 
 DEFAULT_TOPIC_FILE = Path("/workspace/profiles/rosbag-topics.txt")
 DEFAULT_OUTPUT_ROOT = Path("/workspace/artifacts/ros")
+_PROFILE_PREFIXES = {"required", "optional"}
+
+
+def parse_rosbag_topic_line(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    parts = stripped.split()
+    if parts[0] in _PROFILE_PREFIXES and len(parts) != 2:
+        raise ValueError(f"invalid rosbag topic profile line: {line!r}")
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2 and parts[0] in _PROFILE_PREFIXES:
+        return parts[1]
+    raise ValueError(f"invalid rosbag topic profile line: {line!r}")
 
 
 def load_rosbag_topics(topic_file: str | Path) -> list[str]:
@@ -21,9 +36,9 @@ def load_rosbag_topics(topic_file: str | Path) -> list[str]:
         raise FileNotFoundError(f"rosbag topic file missing: {path}")
 
     topics = [
-        line.strip()
+        topic
         for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
+        if (topic := parse_rosbag_topic_line(line)) is not None
     ]
     if not topics:
         raise ValueError(f"no rosbag topics configured in {path}")

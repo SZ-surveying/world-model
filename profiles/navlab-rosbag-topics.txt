@@ -1,0 +1,40 @@
+# NavLab companion + SITL + Gazebo rosbag profile.
+# Format: "<required|optional> <topic>".
+#
+# Required topics must exist in every NavLab acceptance bag so the run can
+# be replayed in Foxglove and debugged across sensor, SLAM, ExternalNav,
+# MAVLink control, SITL, and Gazebo pose-mirror boundaries.
+
+required /scan
+required /scan_features
+required /scan_nearest_point
+required /sim/markers
+required /navlab/replay/markers
+required /sim/uav_pose
+required /sim/log
+
+required /imu/data
+required /imu/status
+optional /navlab/fcu_imu/data
+optional /navlab/fcu_imu/status
+required /tf
+required /odom
+required /cartographer/status
+optional /constraint_list
+optional /navlab/replay/constraint_markers
+optional /trajectory_node_list
+optional /submap_list
+optional /map
+
+required /external_nav/odom
+required /external_nav/status
+required /mavlink_external_nav/status
+
+required /navlab/mavlink/status
+required /navlab/pose_mirror/status
+required /navlab/mission/status
+
+optional /ap/tf
+optional /height/estimate
+optional /navlab/control/status
+optional /planner/cmd_vel

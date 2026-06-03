@@ -30,7 +30,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--waypoint-file",
         default=os.environ.get("SIM_AUTO_WAYPOINT_FILE"),
-        help="Path to the mission yaml file mounted inside sim-runtime.",
+        help="Path to the mission yaml file mounted inside the runtime container.",
     )
     parser.add_argument(
         "--cmd-vel-topic",
@@ -148,7 +148,7 @@ def run(argv: list[str] | None = None) -> int:
     except ModuleNotFoundError as exc:
         raise SystemExit(
             "waypoint_follower requires ROS2 Python packages and ydlidar_interfaces. "
-            "Run it through the sim-runtime ROS env wrapper or source the overlay first."
+            "Run it through the NavLab companion runtime or source the overlay first."
         ) from exc
 
     class WaypointFollower(Node):

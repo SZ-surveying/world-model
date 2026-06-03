@@ -50,7 +50,7 @@ def run(argv: list[str] | None = None) -> int:
     except ModuleNotFoundError as exc:
         raise SystemExit(
             "auto_mission_monitor requires ROS2 Python packages. "
-            "Run it through the sim-runtime ROS env wrapper or source the overlay first."
+            "Run it through the NavLab companion runtime or source the overlay first."
         ) from exc
 
     class AutoMissionMonitor(Node):
@@ -121,7 +121,8 @@ def run(argv: list[str] | None = None) -> int:
                 self._emit(
                     "info",
                     "[sim] running: "
-                    f"event={event} current_x={current_x} goal_x={goal_x} front_min={front_min} cmd_linear_x={cmd_linear_x}",
+                    f"event={event} current_x={current_x} goal_x={goal_x} "
+                    f"front_min={front_min} cmd_linear_x={cmd_linear_x}",
                 )
                 return
 

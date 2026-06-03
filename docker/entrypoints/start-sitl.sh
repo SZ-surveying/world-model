@@ -12,6 +12,7 @@ SITL_EXTRA_ARGS="${SITL_EXTRA_ARGS:-}"
 ARDUPILOT_BIN="${ARDUPILOT_BIN:-/usr/local/bin/arducopter}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-/artifacts/sessions}"
 LOG_FILE="${ARTIFACT_ROOT}/${SESSION_ID}/sitl.log"
+RUN_DIR="${ARTIFACT_ROOT}/${SESSION_ID}/sitl_work"
 
 SITL_UPSTREAM_HOST="${SITL_UPSTREAM_ENDPOINT%:*}"
 SITL_UPSTREAM_PORT="${SITL_UPSTREAM_ENDPOINT##*:}"
@@ -21,7 +22,7 @@ if [[ -z "$SITL_UPSTREAM_HOST" || -z "$SITL_UPSTREAM_PORT" || "$SITL_UPSTREAM_HO
   exit 2
 fi
 
-mkdir -p "$(dirname "$LOG_FILE")"
+mkdir -p "$(dirname "$LOG_FILE")" "$RUN_DIR"
 
 if [[ ! -x "$ARDUPILOT_BIN" ]]; then
   echo "arducopter SITL binary missing or not executable: ${ARDUPILOT_BIN}" | tee -a "$LOG_FILE" >&2
@@ -61,6 +62,7 @@ fi
 echo "Starting ArduPilot SITL session=${SESSION_ID} model=${SITL_MODEL} upstream=${SITL_UPSTREAM_HOST}:${SITL_UPSTREAM_PORT} router_only=${SITL_ROUTER_ONLY}" | tee -a "$LOG_FILE"
 echo "Command: ${cmd[*]}" | tee -a "$LOG_FILE"
 
+cd "$RUN_DIR"
 "${cmd[@]}" > >(tee -a "$LOG_FILE") 2>&1 &
 child=$!
 

@@ -83,7 +83,7 @@ def run(argv: list[str] | None = None) -> int:
             if args.source == "features":
                 raise SystemExit(
                     "front_sector_consumer source=features requires ydlidar_interfaces. "
-                    "Run it through the sim-runtime ROS env wrapper or source the overlay first."
+                    "Run it through the NavLab companion runtime or source the overlay first."
                 ) from exc
         else:
             scan_features_cls = ScanFeatures

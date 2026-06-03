@@ -1,0 +1,67 @@
+FROM remote-sitl-lab/ros-jazzy-base:latest AS companion-python-builder
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.16-python3.11-alpine /usr/local/bin/uv /usr/local/bin/uv
+
+WORKDIR /workspace
+
+ENV UV_LINK_MODE=copy
+ENV UV_PROJECT_ENVIRONMENT=/opt/companion-venv
+
+COPY lab_env/pyproject.toml lab_env/uv.lock /workspace/lab_env/
+
+RUN uv sync \
+  --project /workspace/lab_env \
+  --frozen \
+  --no-dev \
+  --group sim \
+  --no-group host \
+  --no-install-project
+
+
+FROM remote-sitl-lab/ros-jazzy-base:latest AS navlab-companion
+
+ENV VIRTUAL_ENV=/opt/companion-venv
+ENV PATH=/opt/companion-venv/bin:$PATH
+
+RUN apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update && \
+  apt-get install -y --no-install-recommends \
+    ros-jazzy-rosbag2-storage-mcap && \
+  rm -rf /var/lib/apt/lists/*
+
+COPY --from=companion-python-builder /opt/companion-venv /opt/companion-venv
+
+WORKDIR /opt/navlab_ws
+
+COPY ros2_ws/src /opt/navlab_ws/ros2_ws/src
+COPY x3/src/ydlidar_interfaces /opt/navlab_ws/x3/src/ydlidar_interfaces
+
+RUN bash -lc "\
+  source /opt/ros/jazzy/setup.bash && \
+  colcon --log-base /tmp/navlab_companion-log build \
+    --base-paths ros2_ws/src x3/src \
+    --packages-select ydlidar_interfaces \
+    --build-base /tmp/navlab_companion-build \
+    --install-base /opt/navlab_ws/install \
+    --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3"
+
+
+FROM remote-sitl-lab/ros-jazzy-base:latest AS navlab-slam-cartographer
+
+RUN apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update && \
+  apt-get install -y --no-install-recommends \
+    ros-jazzy-cartographer-ros && \
+  rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/navlab_ws
+
+COPY ros2_ws/src /opt/navlab_ws/ros2_ws/src
+COPY x3/src/ydlidar_interfaces /opt/navlab_ws/x3/src/ydlidar_interfaces
+
+RUN bash -lc "\
+  source /opt/ros/jazzy/setup.bash && \
+  colcon --log-base /tmp/navlab_slam-log build \
+    --base-paths ros2_ws/src x3/src \
+    --packages-select ydlidar_interfaces fake_external_nav imu_bridge cartographer_indoor external_nav_bridge indoor_bringup \
+    --build-base /tmp/navlab_slam-build \
+    --install-base /opt/navlab_ws/install \
+    --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3"

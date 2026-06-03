@@ -9,6 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
+.env
+
 .codex
 .sim_ros2_overlay/
 

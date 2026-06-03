@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 from dataclasses import dataclass
 from math import cos, sin
@@ -245,7 +244,7 @@ def run(argv: list[str] | None = None) -> int:
             payload = encode_sim_log(
                 source="cmd_vel_executor",
                 event=event,
-                sim_mode=os.environ.get("SIM_UP_MODE", "manual"),
+                sim_mode="runtime",
                 reason=reason,
                 current_x=self._pose.x,
                 current_y=self._pose.y,

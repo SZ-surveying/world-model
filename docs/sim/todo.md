@@ -1,151 +1,223 @@
 # 仿真 TODO
 
-这个 TODO 只覆盖当前两阶段仿真路线：
+这份清单只覆盖当前仿真主线，并明确区分：
 
-- P1：Gazebo lidar 产生真实仿真 `/scan`
-- P2：把 hover-then-forward 和后续真实传感器切换准备好
+- 已经做完、可以打勾验收的部分
+- 还没做完、后续要继续推进的部分
 
-旧 `ros2_ws/` 不纳入当前任务。
+当前主线已经不是旧版的固定原点探针方案，而是：
+
+- Gazebo 中的可移动 `uav_start_marker` 挂载真实 lidar
+- 原始 `/scan` 会跟着 UAV 一起运动
+- `sim-runtime` 从 `/scan` 发布 `/scan_features`
+- `/planner/cmd_vel` 由执行器消费
+- 执行器内部额外保证 `front_min ~= 0.5 m` 时不再继续前进
+
+## 当前状态总览
+
+### 已完成
+
+- [x] 默认世界固定为 `docker/worlds/uav_obstacle_5m.sdf`
+- [x] 前方 `5 m` 障碍物世界已固定，障碍物宽面朝向 UAV
+- [x] Gazebo 原始 `/scan` 已打通到 ROS2
+- [x] lidar 已直接挂在可移动的 `uav_start_marker` 上，而不是固定原点探针
+- [x] `/scan_features` 与 `/scan_nearest_point` 已自动发布
+- [x] 下游 consumer 已优先消费 `/scan_features`
+- [x] `/planner/cmd_vel` 执行器已打通到 Gazebo 可见 UAV 位姿
+- [x] 原始 `/scan` 与 `/scan_features` 会随 UAV 前进同步变化
+- [x] 执行器内部已增加 `0.5 m` 最小前向净空钳位
+- [x] `/sim/log` JSON 日志 topic 已提供给 manual / auto 共用订阅
+- [x] `auto` 模式的 `/sim/log.mission_state` 已收敛成稳定枚举
+- [x] `auto` 模式默认会留下 mission rosbag，`manual` 模式默认不录制
+- [x] 端到端已验证：`front_min` 从约 `5.0 m` 收敛到约 `0.5 m` 后停止前进
+- [x] 已提供一个“goal 在障碍物后方”的 mission 样例，可稳定触发 `blocked_by_stop_guard`
+
+### 还没做完
+
+- [ ] 把 `SCAN_SOURCE=gazebo|real` 这类显式 source 切换机制收成稳定配置入口
+- [ ] 把真实 `x3` 接入这条链路再跑一遍同口径验证，确认 `/scan -> /scan_features` 一致
+- [ ] 把 `auto` 默认 rosbag 的目录级 metadata / `ros2 bag info` 可用性补一次验收并收口
+- [x] 给 `sim up` 收成明确的 `manual|auto` 两种启动模式入口
+- [x] `manual` 模式文档已补上 Foxglove 操作路径和 `/planner/cmd_vel` preset
+- [ ] `manual` 模式下再做一次完整 Foxglove 人工遥控验收
+- [x] `auto` 模式下支持加载一个航点 `yaml`，先按最小直线执行跑通
+- [x] `auto` 模式到达终点后会输出 `mission_complete` 状态并自行收尾
+- [ ] 接一个真正的 world model / planner，让上游控制替代当前最小 forward/stop 示例
+- [ ] 决定是否还保留 `/sim/uav_pose` 作为纯调试 topic，并把其定位写死到文档
 
 ## P1：Gazebo Lidar 仿真输入
 
-目标：让 Gazebo 世界和模拟 2D lidar 产生符合 `/scan` 契约的 ROS2 输入。
+目标：让 Gazebo 世界输出真实可运动的 `/scan`，并与真实 `x3` 的 ROS2 契约对齐。
 
-前提：
+### P1.1 世界与障碍物布局
 
-- Gazebo `/scan` 必须与 `docs/sim/scan_contract.md` 一致
+状态：已完成
 
-### P1.1 完善 5m 障碍物世界
-
-内容：
-
-- 确认 `docker/worlds/uav_obstacle_5m.sdf` 是当前默认仿真世界。
-- 保留原点起点标记。
-- 保留 `+X` 方向路径标记。
-- 保留 `x=5`, `y=0` 的固定障碍物。
+- [x] `docker/worlds/uav_obstacle_5m.sdf` 是当前默认世界
+- [x] 保留原点起点标记和 `+X` 路径标记
+- [x] 固定障碍物前缘位于 `x=5`
+- [x] 世界不依赖旧 `ros2_ws/`
 
 验收：
 
-- Gazebo 能加载世界。
-- 障碍物位置明确可见。
-- 世界文件不依赖旧 `ros2_ws/`。
+- [x] Gazebo 能加载世界
+- [x] 障碍物位置明确可见
+- [x] 世界文件不依赖旧 `ros2_ws/`
 
-### P1.2 新建 Gazebo lidar rig
+### P1.2 可移动 UAV 上的真实 lidar
 
-内容：
+状态：已完成
 
-- 新建 `docker/models/uav_lidar_rig/`。
-- 添加一个最小模型，初始位姿在原点。
-- 模型包含 2D ray lidar。
-- lidar frame 为 `laser_frame`。
-- lidar topic 设计为 `/scan` 或可桥接到 `/scan`。
-- lidar 参数对齐真实 `x3` 基线。
-
-验收：
-
-- rig 能在 Gazebo 中加载。
-- lidar 面向 `+X`。
-- 原点时能看到 5 m 前方障碍。
-
-### P1.3 增加 Gazebo 到 ROS2 scan bridge
-
-内容：
-
-- 在 `lab_env` compose 编排中增加 Gazebo scan bridge。
-- 将 Gazebo lidar 输出桥接为 ROS2 `/scan`。
-- 消息类型为 `sensor_msgs/msg/LaserScan`。
-- ROS2 侧 QoS、frame、range 和角度语义与真实基线一致。
+- [x] 不再使用旧版固定原点 lidar rig 作为主线
+- [x] lidar 已直接挂到 `uav_start_marker`
+- [x] lidar frame 为 `laser_frame`
+- [x] lidar topic 为 `/scan`
+- [x] lidar 参数对齐当前仿真 README 中的 `/scan` 契约
 
 验收：
 
-- 启动仿真后 ROS2 能看到 `/scan`。
-- `ros2 topic hz /scan` 稳定。
-- front-sector consumer 可以不改代码直接消费 Gazebo `/scan`。
+- [x] lidar 随 UAV 一起移动
+- [x] lidar 面向 `+X`
+- [x] 原点时能看到约 `5 m` 前方障碍
 
-### P1.4 用同一 consumer 验证 Gazebo 输出
+### P1.3 Gazebo 到 ROS2 的 `/scan` bridge
 
-内容：
+状态：已完成
 
-- 使用 front-sector consumer。
-- 对 Gazebo `/scan` 计算 `front_min`。
-- 对比障碍物真实位置。
-
-验收：
-
-- sensor 在原点时，`front_min` 接近 5 m。
-- sensor 向前移动后，`front_min` 变小。
-- 切换 `/scan` 来源时，下游 consumer 不需要改逻辑。
-
-## P2：简单运动闭环与真实传感器切换准备
-
-目标：在 `/scan` 稳定后，增加最小 hover-then-forward 行为，并为后续真实 `x3` 接入留下干净边界。
-
-### P2.1 实现 hover-then-forward 状态机
-
-内容：
-
-- 初始状态为 `hover`。
-- 悬停 N 秒后进入 `forward`。
-- `forward` 状态沿 `+X` 方向前进。
-- 当前阶段可以先控制 rig 或简化 UAV 模型，不要求完整飞行动力学。
+- [x] compose 中已有 Gazebo scan bridge
+- [x] Gazebo lidar 已桥接为 ROS2 `/scan`
+- [x] 消息类型为 `sensor_msgs/msg/LaserScan`
+- [x] frame override 为 `laser_frame`
 
 验收：
 
-- 状态能从 `hover` 切到 `forward`。
-- 前进过程中 `/scan` 的 `front_min` 会逐渐变小。
-- 行为可重复运行。
+- [x] 启动仿真后 ROS2 能看到 `/scan`
+- [x] `ros2 topic hz /scan` 稳定
+- [x] 下游无需改 raw scan 消费代码即可读取 Gazebo `/scan`
 
-### P2.2 增加避障状态切换
+### P1.4 `/scan_features` 主线验证
 
-内容：
+状态：已完成
 
-- 使用 `front_min` 做简单规则判断。
-- `front_min < avoid_distance` 时进入 `avoid_required`。
-- `front_min < stop_distance` 时进入 `stop`。
+- [x] `scan_features_publisher` 从原始 `/scan` 计算结构化特征
+- [x] 发布 `/scan_features`
+- [x] 发布 `/scan_nearest_point`
+- [x] consumer 默认优先消费 `/scan_features`
 
-初始参数：
+验收：
+
+- [x] 原点时 `/scan_features.front_min` 接近 `5.0 m`
+- [x] UAV 前进时 `/scan_features.front_min` 持续减小
+- [x] 同一套下游逻辑无需区分 Gazebo / real 的特征话题格式
+
+## P2：最小运动闭环与真实接入边界
+
+目标：保留一个最小可运行示例，但把主控制权让给未来 world model / planner。
+
+### P2.1 最小 `cmd_vel` 执行闭环
+
+状态：已完成（以 `forward + stop` 替代旧版 `hover-then-forward`）
+
+- [x] `front_sector_consumer` 会输出 `/planner/cmd_vel`
+- [x] `cmd_vel_executor` 会消费 `/planner/cmd_vel`
+- [x] UAV 能沿 `+X` 前进
+- [x] 当前不引入完整飞行动力学
+
+验收：
+
+- [x] `/planner/cmd_vel` 能驱动 Gazebo 中的可见 UAV
+- [x] 前进过程中原始 `/scan` 的 `front_min` 会逐渐变小
+- [x] 行为可重复运行
+
+### P2.2 `0.5 m` 最小前向净空
+
+状态：已完成
+
+- [x] consumer 会在 `front_min <= stop_distance` 时切到 `stop`
+- [x] 执行器内部也会按世界几何额外钳住前向位移
+- [x] `manual` / `auto` 都可通过 `/sim/log` 观察 stop guard 相关状态
+- [x] 当前阶段只保留最小 stop guard，不继续扩展复杂被动避障
+
+当前参数：
 
 - `avoid_distance = 1.0 m`
-- `stop_distance = 0.5 m`
-- `forward_speed = 0.2 m/s`
+- `stop_distance = 0.5 m`（默认来自 `lab_env/config.toml` 的 `[sim].stop_distance`）
+- `forward_speed = 0.2 m/s`（示例值，可在 CLI 覆盖）
 
 验收：
 
-- Gazebo `/scan` 下能触发对应状态。
-- 状态输出可观测。
+- [x] Gazebo 仿真下能稳定触发 `avoid_required`
+- [x] Gazebo 仿真下能稳定触发 `stop`
+- [x] 即使上游还在发 forward，UAV 也会停在 `front_min ~= 0.5 m`
 
-### P2.3 明确 `/scan` source 切换机制
+### P2.3 `/scan` 与 `/scan_features` 的角色边界
 
-内容：
+状态：部分完成
 
-- 定义 `SCAN_SOURCE=gazebo|real` 或等价配置。
-- gazebo 使用 Gazebo bridge。
-- real 预留给未来 `x3/ydlidar_ros2_driver`。
-- 两种 source 都必须满足 `docs/sim/scan_contract.md`。
-
-验收：
-
-- gazebo 和 real 两种 source 可以用配置切换。
-- 下游只依赖 `/scan`。
-- 切换 source 不需要修改避障逻辑代码。
-
-### P2.4 准备真实 `x3` 接入边界
-
-内容：
-
-- 不把 `x3` 代码复制进仿真模块。
-- 只记录真实 `x3` 输出应满足的 `/scan` 契约。
-- 对齐 `frame_id = laser_frame`、频率、range 参数。
-- 如果真实参数文件切换，仿真基线也要同步切换。
+- [x] SLAM / 基础 scan 契约仍以原始 `/scan` 为统一输入边界
+- [x] 行为类下游当前优先消费 `/scan_features`
+- [ ] 把 `gazebo|real` source 切换机制收成明确配置
+- [ ] 把 real `x3` 也跑到同样的 `/scan_features` 行为主线里再验一次
 
 验收：
 
-- 文档明确 gazebo、real 两种 `/scan` 来源。
-- 真实接入时只需要启动 `x3` 驱动并关闭 Gazebo scan source。
-- 仿真代码不依赖 `x3` 内部实现。
+- [x] 行为类下游默认只依赖 `/scan_features`
+- [x] 原始 `/scan` 仍保持与真实 `x3` 对齐的契约
+- [ ] Gazebo 和 real 两种 source 可通过统一配置切换
 
-## 当前完成定义
+### P2.4 真实 `x3` 接入边界
 
-P1 完成后，应能用 Gazebo 世界中的 5 m 障碍物生成真实仿真 `/scan`。
+状态：部分完成
 
-P2 完成后，应能跑一个最小 hover-then-forward 行为，并在接近障碍物时触发 stop 或 avoid 状态。
+- [x] 仿真代码不依赖 `x3` 内部实现
+- [x] `/scan` 契约仍集中在 `docs/sim/README.md`
+- [x] `/scan_features` 契约复用 `ydlidar_interfaces/msg/ScanFeatures`
+- [ ] 真实 `x3` 接入时再跑一轮端到端验证
+
+验收：
+
+- [x] 文档已经区分 raw `/scan` 与结构化 `/scan_features`
+- [x] 仿真代码不依赖 `x3` 内部实现
+- [ ] 真实接入时只替换传感器来源，不改行为类下游接口
+
+### P2.5 `sim up` 启动模式分层
+
+状态：部分完成
+
+- [x] `sim up` 提供显式 `--mode manual|auto`（或等价配置入口）
+- [x] `manual` 模式默认带 `foxglove`，并暴露人工遥控 UAV 的最短路径
+- [x] `manual` 模式不强绑当前最小 `front_sector_consumer` 自动前进逻辑
+- [x] `auto` 模式支持读取航点 `yaml`
+- [x] `auto` 模式第一版只做最小直线执行，不提前绑定 world model
+- [x] `auto` 模式仍复用当前 `/scan -> /scan_features -> stop guard` 安全边界
+- [x] `auto` 模式到达终点后会发布 `mission_complete` 并退出 mission runner
+- [x] 起点支持显式 `start`，不写时默认原点
+- [x] `auto` 模式默认录 rosbag，`manual` 模式默认不录
+
+验收：
+
+- [x] 用户能明确区分“我来开”与“按文件自动跑”两条入口
+- [ ] 手动模式下可通过 Foxglove 远程控制 UAV 在 Gazebo 场景内运动
+- [x] 自动模式下给定单段航点文件后，UAV 能按直线开始执行
+- [x] 自动模式下到达终点后会在 `/sim/log` 发出 `mission_complete`
+- [x] 自动模式下使用“障碍物后方 goal”样例时，会在 `/sim/log` 发出 `mission_state = blocked_by_stop_guard`
+- [x] 两种模式都保留 `0.5 m` 最小前向净空保护
+- [x] 当前阶段不要求 world model 参与这两种模式
+
+## 结论
+
+当前已经可以打勾确认的主线是：
+
+- [x] Gazebo 中有一个会随 UAV 一起运动的真实 `/scan`
+- [x] `/scan_features` 已经从这个真实 `/scan` 自动发布
+- [x] 最小控制闭环可以把 UAV 推到障碍物前
+- [x] `front_min ~= 0.5 m` 时 UAV 会稳定停住，不再继续往前
+
+当前还没有打勾的主线是：
+
+- [ ] real `x3` 与 Gazebo 的统一 source 切换入口
+- [ ] real `x3` 的同口径 `/scan_features` 端到端验证
+- [x] `sim up` 的 `manual|auto` 双模式入口
+- [x] 自动模式的航点 `yaml` 最小直线执行
+- [x] `/sim/log` 统一日志输出 topic
+- [ ] world model / planner 正式接管 `/planner/cmd_vel`

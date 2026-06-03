@@ -19,3 +19,18 @@ endpoint = "100.68.243.25:14554"
 [sim.logging]
 console_level = "DEBUG"
 file_level = "INFO"
+
+[navlab.images]
+tag_strategy = "latest"
+
+[navlab.images.companion]
+dockerfile = "docker/Dockerfile.companion"
+context = "."
+target = "navlab-companion"
+repository = "world-model/navlab-companion"
+
+[navlab.images.slam]
+dockerfile = "docker/Dockerfile.companion"
+context = "."
+target = "navlab-slam-cartographer"
+repository = "world-model/navlab-slam-cartographer"

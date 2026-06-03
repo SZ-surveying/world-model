@@ -4,13 +4,27 @@ import subprocess
 from pathlib import Path
 
 from lab_env.sim import rosbag
-from lab_env.sim.rosbag import RosbagOptions, load_rosbag_topics, with_rosbag_recording
+from lab_env.sim.rosbag import RosbagOptions, load_rosbag_topics, parse_rosbag_topic_line, with_rosbag_recording
 
 
 def test_load_rosbag_topics_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
     topic_file = tmp_path / "topics.txt"
     topic_file.write_text("# comment\n\n/scan\n /tf \n", encoding="utf-8")
     assert load_rosbag_topics(topic_file) == ["/scan", "/tf"]
+
+
+def test_load_rosbag_topics_accepts_required_optional_profile_lines(tmp_path: Path) -> None:
+    topic_file = tmp_path / "topics.txt"
+    topic_file.write_text("required /scan\noptional /ap/tf\n", encoding="utf-8")
+    assert load_rosbag_topics(topic_file) == ["/scan", "/ap/tf"]
+
+
+def test_parse_rosbag_topic_line_rejects_malformed_profile_line() -> None:
+    try:
+        parse_rosbag_topic_line("required")
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError")
 
 
 def test_load_rosbag_topics_requires_existing_file(tmp_path: Path) -> None:

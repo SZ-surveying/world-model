@@ -1,92 +1,57 @@
 # 无人机世界模型项目文档
 
-这套文档现在以“通用设计 + 场景设计”的新结构作为主入口，面向一个后续可扩展到**多个场景**的无人机世界模型仓库。
+这个目录只保留当前主线需要的文档：
 
-当前正在重点推进的只是其中一个场景：
+- Gazebo 最小仿真运动闭环
+- 室内无 GPS 激光 SLAM + ArduPilot SITL 阶段拆解
+- 阶段 1 `ExternalNav` 设计和 TODO
 
-- 室内
-- 无 GPS
-- 激光雷达 / SLAM
-- ArduPilot
-
-但顶层设计本身不应该被这个场景完全绑定。后续如果扩展到室外、半室内半室外、不同传感器组合、不同任务模式，文档结构也应该能自然扩展。
-
-当前文档已经按两层组织：
-
-- `通用设计`：跨场景共用的架构、接口、安全、仓库结构原则
-- `场景设计`：针对某个具体场景的特化方案、MVP 路线和约束
+旧的泛化架构、重复设计草案和过期 runbook 已经删除，避免后续填文档或执行任务时被旧口径干扰。
 
 ## 主导航
 
-### 通用设计 `docs/general/`
+### 室内无 GPS 场景
 
-- `docs/general/README.md`: 通用设计目录说明和边界
-- `docs/general/architecture.md`: 多场景通用架构、分层、控制边界
-- `docs/general/repository_structure.md`: 多场景仓库结构建议
-- `docs/general/ros2_interfaces.md`: 多场景通用 ROS2 接口设计
-- `docs/general/safety_and_validation.md`: 多场景通用安全与验证原则
-- `docs/general/feishu_sync_ci.md`: GitHub Actions 同步 docs 到飞书的 CI 设计
+- `docs/scenarios/indoor/task_breakdown_progress_tracking.md`: 当前任务拆解和进度跟踪
+- `docs/scenarios/indoor/stage1_sitl_external_nav_design.md`: 阶段 1 SITL ExternalNav 设计
+- `docs/scenarios/indoor/stage1_sitl_external_nav_todo.md`: 阶段 1 P0 / P1 / P2 TODO
+- `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_design.md`: 阶段 1.5 无 GPS companion + SITL + Gazebo 设计
+- `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_todo.md`: 阶段 1.5 phase TODO、rosbag 和 Foxglove 回放验收
 
-### 场景设计 `docs/scenarios/`
+### 当前仿真路径
 
-- `docs/scenarios/README.md`: 场景设计目录说明
-- `docs/scenarios/indoor/README.md`: 当前室内场景入口
-- `docs/scenarios/indoor/architecture.md`: 室内无 GPS 场景架构
-- `docs/scenarios/indoor/mvp_plan.md`: 室内场景 MVP 路线图
-- `docs/scenarios/indoor/ardupilot_slam_design.md`: 室内 SLAM + ExternalNav + ArduPilot 详细设计评审
-
-### 当前仿真路径 `docs/sim/`
-
-- `docs/sim/README.md`: 当前只关注 fake `/scan` 和 Gazebo lidar 的两阶段仿真设计，明确排除旧 `ros2_ws/`
-- `docs/sim/scan_contract.md`: 真实 `x3` 驱动对外暴露的 `/scan` 契约，fake 和 Gazebo 都必须对齐
-- `docs/sim/todo.md`: 当前仿真路线的 P0 / P1 / P2 任务拆解和验收标准
+- `docs/sim/README.md`: 当前 Gazebo 仿真主线、`/scan -> /scan_features` 路径和 `0.5 m` 最小净空停止规则，明确排除旧 `ros2_ws/`
+- `docs/sim/todo.md`: 当前仿真路线的已完成 / 未完成清单和验收标准
+- `docs/sim/examples/*.yaml`: `auto` 模式 mission 输入样例
 
 ## 当前推荐阅读顺序
 
-如果你想先看顶层通用设计，建议按这个顺序：
-
-1. `docs/general/architecture.md`
-2. `docs/general/repository_structure.md`
-3. `docs/general/ros2_interfaces.md`
-4. `docs/general/safety_and_validation.md`
-5. `docs/general/feishu_sync_ci.md`
-
-如果你想直接看当前室内场景，建议按这个顺序：
-
-1. `docs/scenarios/indoor/README.md`
-2. `docs/scenarios/indoor/architecture.md`
-3. `docs/scenarios/indoor/mvp_plan.md`
-4. `docs/scenarios/indoor/ardupilot_slam_design.md`
-
-如果你想直接推进当前避障仿真，先看：
-
 1. `docs/sim/README.md`
-2. `docs/sim/scan_contract.md`
-3. `docs/sim/todo.md`
+2. `docs/sim/todo.md`
+3. `docs/scenarios/indoor/task_breakdown_progress_tracking.md`
+4. `docs/scenarios/indoor/stage1_sitl_external_nav_design.md`
+5. `docs/scenarios/indoor/stage1_sitl_external_nav_todo.md`
+6. `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_design.md`
+7. `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_todo.md`
 
 ## 当前目录结构
 
 ```text
 docs/
   README.md
-  todo_docs_reorg.md
-  general/
-    README.md
-    architecture.md
-    repository_structure.md
-    ros2_interfaces.md
-    safety_and_validation.md
   scenarios/
-    README.md
     indoor/
-      README.md
-      architecture.md
-      mvp_plan.md
-      ardupilot_slam_design.md
+      task_breakdown_progress_tracking.md
+      stage1_sitl_external_nav_design.md
+      stage1_sitl_external_nav_todo.md
+      stage1_5_companion_sitl_gazebo_design.md
+      stage1_5_companion_sitl_gazebo_todo.md
   sim/
     README.md
-    scan_contract.md
     todo.md
+    examples/
+      blocked_by_stop_guard.yaml
+      straight_line_demo.yaml
 ```
 
 ## 当前约束
