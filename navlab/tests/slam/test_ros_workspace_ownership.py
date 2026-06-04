@@ -12,14 +12,11 @@ def test_slam_ros_packages_live_under_navlab_slam_without_src_wrapper() -> None:
 
 
 def test_companion_image_does_not_copy_slam_ros_workspace() -> None:
-    dockerfile = Path("docker/Dockerfile.companion").read_text(encoding="utf-8")
-    companion_stage = dockerfile.split("FROM remote-sitl-lab/ros-jazzy-base:latest AS navlab-companion", 1)[1].split(
-        "FROM remote-sitl-lab/ros-jazzy-base:latest AS navlab-slam-cartographer",
-        1,
-    )[0]
-    slam_stage = dockerfile.split("FROM remote-sitl-lab/ros-jazzy-base:latest AS navlab-slam-cartographer", 1)[1]
+    companion_dockerfile = Path("docker/Dockerfile.companion").read_text(encoding="utf-8")
+    slam_dockerfile = Path("docker/Dockerfile.slam").read_text(encoding="utf-8")
 
-    assert "navlab/slam/ros" not in companion_stage
-    assert "navlab/slam/ros" in slam_stage
-    assert "--base-paths x3/src" in companion_stage
-    assert "--base-paths navlab_slam_ros x3/src" in slam_stage
+    assert "navlab-slam-cartographer" not in companion_dockerfile
+    assert "navlab/slam/ros" not in companion_dockerfile
+    assert "navlab/slam/ros" in slam_dockerfile
+    assert "--base-paths x3/src" in companion_dockerfile
+    assert "--base-paths navlab_slam_ros x3/src" in slam_dockerfile

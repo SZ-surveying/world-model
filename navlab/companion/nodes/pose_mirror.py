@@ -7,7 +7,6 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from navlab.companion.nodes.cmd_vel_executor import GazeboPoseCommander, PlanarPoseState, _quaternion_from_yaw
 from navlab.companion.nodes.imu_bridge import (
     GRAVITY_MPS2,
     ImuBridgeStatus,
@@ -18,6 +17,7 @@ from navlab.companion.nodes.imu_bridge import (
     sample_from_scaled_imu,
     state_for_imu_status,
 )
+from navlab.companion.pose import PlanarPoseState, quaternion_from_yaw
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +57,16 @@ class MavlinkTelemetryStatus:
     message_counts: dict[str, int]
 
 
+@dataclass(frozen=True, slots=True)
+class ReplayStaticTransformSpec:
+    parent_frame_id: str
+    child_frame_id: str
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    yaw_rad: float = 0.0
+
+
 def ned_to_gazebo_pose(
     sample: NedPoseSample,
     *,
@@ -72,7 +82,7 @@ def ned_to_gazebo_pose(
 
 
 def build_pose_stamped_fields(pose: PlanarPoseState) -> dict[str, float]:
-    qx, qy, qz, qw = _quaternion_from_yaw(pose.yaw)
+    qx, qy, qz, qw = quaternion_from_yaw(pose.yaw)
     return {
         "x": pose.x,
         "y": pose.y,
@@ -82,6 +92,56 @@ def build_pose_stamped_fields(pose: PlanarPoseState) -> dict[str, float]:
         "qz": qz,
         "qw": qw,
     }
+
+
+def build_replay_transform_fields(
+    *,
+    parent_frame_id: str,
+    child_frame_id: str,
+    pose: PlanarPoseState,
+) -> dict[str, float | str]:
+    fields = build_pose_stamped_fields(pose)
+    return {
+        "parent_frame_id": parent_frame_id,
+        "child_frame_id": child_frame_id,
+        **fields,
+    }
+
+
+def default_replay_static_transforms(
+    *,
+    root_frame_id: str,
+    map_frame_id: str,
+    sensor_base_frame_id: str,
+    laser_frame_id: str,
+    imu_frame_id: str,
+    laser_x_m: float,
+    laser_y_m: float,
+    laser_z_m: float,
+    laser_yaw_rad: float = 0.0,
+) -> tuple[ReplayStaticTransformSpec, ...]:
+    transforms = [
+        ReplayStaticTransformSpec(parent_frame_id=root_frame_id, child_frame_id=map_frame_id),
+        ReplayStaticTransformSpec(
+            parent_frame_id=sensor_base_frame_id,
+            child_frame_id=laser_frame_id,
+            x=laser_x_m,
+            y=laser_y_m,
+            z=laser_z_m,
+            yaw_rad=laser_yaw_rad,
+        )
+    ]
+    if imu_frame_id != laser_frame_id:
+        transforms.append(ReplayStaticTransformSpec(parent_frame_id=sensor_base_frame_id, child_frame_id=imu_frame_id))
+    return tuple(transforms)
+
+
+def yaw_from_pose_orientation(orientation: object) -> float:
+    x = float(orientation.x)
+    y = float(orientation.y)
+    z = float(orientation.z)
+    w = float(orientation.w)
+    return math.atan2(2.0 * ((w * z) + (x * y)), 1.0 - (2.0 * ((y * y) + (z * z))))
 
 
 def stamp_fields_to_nanoseconds(sec: int, nanosec: int) -> int:
@@ -102,6 +162,25 @@ def next_monotonic_stamp_nanoseconds(candidate_ns: int, previous_ns: int | None)
     if previous_ns is None:
         return candidate_ns
     return max(candidate_ns, previous_ns + 1)
+
+
+def next_imu_output_stamp_nanoseconds(
+    *,
+    stamp_source_ns: int | None,
+    stamp_source_monotonic: float,
+    now_monotonic: float,
+    node_clock_ns: int,
+    previous_output_ns: int | None,
+) -> int:
+    if stamp_source_ns is None:
+        candidate_ns = node_clock_ns
+    else:
+        candidate_ns = anchored_sim_stamp_nanoseconds(
+            anchor_stamp_ns=stamp_source_ns,
+            anchor_monotonic=stamp_source_monotonic,
+            now_monotonic=now_monotonic,
+        )
+    return next_monotonic_stamp_nanoseconds(candidate_ns, previous_output_ns)
 
 
 def marker_has_displayable_geometry(marker: object) -> bool:
@@ -171,17 +250,23 @@ def encode_mavlink_telemetry_status(status: MavlinkTelemetryStatus) -> str:
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Mirror ArduPilot local NED position into the Gazebo UAV model pose.")
+    parser = argparse.ArgumentParser(description="Observe ArduPilot local NED position and publish replay pose topics.")
     parser.add_argument("--endpoint", default="tcp:sitl:5763")
-    parser.add_argument("--world-name", default="uav_obstacle_5m")
-    parser.add_argument("--model-name", default="uav_start_marker")
     parser.add_argument("--pose-topic", default="/sim/uav_pose")
-    parser.add_argument("--replay-markers-topic", default="/navlab/replay/markers")
+    parser.add_argument("--pose-frame-id", default="navlab_world")
+    parser.add_argument("--map-frame-id", default="map")
+    parser.add_argument("--sensor-base-frame-id", default="base_link")
+    parser.add_argument("--replay-base-frame-id", default="")
+    parser.add_argument("--laser-frame-id", default="laser_frame")
+    parser.add_argument("--laser-x-m", type=float, default=0.05)
+    parser.add_argument("--laser-y-m", type=float, default=0.0)
+    parser.add_argument("--laser-z-m", type=float, default=0.13)
+    parser.add_argument("--laser-yaw-rad", type=float, default=0.0)
     parser.add_argument("--constraint-list-topic", default="/constraint_list")
     parser.add_argument("--replay-constraints-topic", default="/navlab/replay/constraint_markers")
     parser.add_argument("--status-topic", default="/navlab/pose_mirror/status")
     parser.add_argument("--mavlink-status-topic", default="/navlab/mavlink/status")
-    parser.add_argument("--mission-status-topic", default="/navlab/mission/status")
+    parser.add_argument("--fallback-pose-topic", default="")
     parser.add_argument("--imu-topic", default="/imu/data")
     parser.add_argument("--imu-status-topic", default="/imu/status")
     parser.add_argument("--imu-frame-id", default="fcu_imu")
@@ -194,9 +279,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--imu-min-rate-hz", type=float, default=4.0)
     parser.add_argument("--allow-raw-imu", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--synthetic-imu-when-mavlink-missing", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--simulate-pose-from-mission-status", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--sim-takeoff-alt-m", type=float, default=0.8)
-    parser.add_argument("--sim-climb-rate-mps", type=float, default=0.35)
     parser.add_argument("--rate-hz", type=float, default=10.0)
     parser.add_argument("--stream-rate-hz", type=float, default=10.0)
     parser.add_argument("--timeout-sec", type=float, default=1.0)
@@ -246,13 +328,15 @@ def run(argv: Sequence[str] | None = None) -> int:
 
     try:
         import rclpy
-        from geometry_msgs.msg import Point, PoseStamped
+        from geometry_msgs.msg import PoseStamped, TransformStamped
         from pymavlink import mavutil
         from pymavlink.dialects.v20 import ardupilotmega as mavlink
         from rclpy.node import Node
+        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
         from sensor_msgs.msg import Imu, LaserScan
         from std_msgs.msg import String
-        from visualization_msgs.msg import Marker, MarkerArray
+        from tf2_msgs.msg import TFMessage
+        from visualization_msgs.msg import MarkerArray
     except ModuleNotFoundError as exc:
         raise SystemExit(
             "mavlink_gazebo_pose_mirror requires ROS2 Python packages and pymavlink. "
@@ -263,9 +347,12 @@ def run(argv: Sequence[str] | None = None) -> int:
         def __init__(self) -> None:
             super().__init__("mavlink_gazebo_pose_mirror")
             self._connection = None
-            self._pose_commander = GazeboPoseCommander(world_name=args.world_name)
             self._pose_pub = self.create_publisher(PoseStamped, args.pose_topic, 10)
-            self._replay_markers_pub = self.create_publisher(MarkerArray, args.replay_markers_topic, 10)
+            self._tf_pub = self.create_publisher(TFMessage, "/tf", 10)
+            static_tf_qos = QoSProfile(depth=1)
+            static_tf_qos.reliability = ReliabilityPolicy.RELIABLE
+            static_tf_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+            self._tf_static_pub = self.create_publisher(TFMessage, "/tf_static", static_tf_qos)
             self._replay_constraints_pub = self.create_publisher(MarkerArray, args.replay_constraints_topic, 10)
             self._imu_pub = self.create_publisher(Imu, args.imu_topic, 10)
             self._imu_status_pub = self.create_publisher(String, args.imu_status_topic, 10)
@@ -288,13 +375,9 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._last_sample_monotonic = 0.0
             self._last_yaw_rad = 0.0
             self._last_pose: PlanarPoseState | None = None
-            self._sim_pose: PlanarPoseState | None = None
-            self._path_points: list[Point] = []
-            self._sim_last_tick_monotonic = time.monotonic()
-            self._mission_phase = ""
-            self._mission_vx_mps = 0.0
-            self._mission_vy_mps = 0.0
-            self._last_mission_status_monotonic = 0.0
+            self._fallback_pose: PlanarPoseState | None = None
+            self._fallback_pose_monotonic = 0.0
+            self._fallback_pose_count = 0
             self._set_pose_count = 0
             self._message_counts: dict[str, int] = {}
             self._command_acks: list[dict[str, int]] = []
@@ -309,10 +392,15 @@ def run(argv: Sequence[str] | None = None) -> int:
                     LaserScan,
                     args.imu_stamp_source_topic,
                     self._handle_imu_stamp_source,
+                    qos_profile_sensor_data,
+                )
+            if args.fallback_pose_topic:
+                self.create_subscription(
+                    PoseStamped,
+                    args.fallback_pose_topic,
+                    self._handle_fallback_pose,
                     10,
                 )
-            if args.simulate_pose_from_mission_status:
-                self.create_subscription(String, args.mission_status_topic, self._handle_mission_status, 10)
             if args.constraint_list_topic:
                 self.create_subscription(
                     MarkerArray,
@@ -320,11 +408,26 @@ def run(argv: Sequence[str] | None = None) -> int:
                     self._handle_constraint_list,
                     10,
                 )
+            self._static_transform_specs = default_replay_static_transforms(
+                root_frame_id=args.pose_frame_id,
+                map_frame_id=args.map_frame_id,
+                sensor_base_frame_id=args.sensor_base_frame_id,
+                laser_frame_id=args.laser_frame_id,
+                imu_frame_id=args.imu_frame_id,
+                laser_x_m=args.laser_x_m,
+                laser_y_m=args.laser_y_m,
+                laser_z_m=args.laser_z_m,
+                laser_yaw_rad=args.laser_yaw_rad,
+            )
+            self._publish_static_replay_tf()
             self.create_timer(1.0 / args.rate_hz, self._tick)
+            self.create_timer(2.0, self._publish_static_replay_tf)
             self.get_logger().info(
-                f"pose mirror started endpoint={args.endpoint} model={args.model_name} "
-                f"service={self._pose_commander.service_name} "
-                f"imu_stamp_source={args.imu_stamp_source_topic or 'node_clock'}"
+                f"pose observer started endpoint={args.endpoint} "
+                f"imu_stamp_source={args.imu_stamp_source_topic or 'node_clock'} "
+                f"fallback_pose_topic={args.fallback_pose_topic or '<disabled>'} "
+                f"replay_tf={args.pose_frame_id}->{args.map_frame_id}, "
+                f"{args.sensor_base_frame_id}->{args.laser_frame_id}"
             )
 
         def _connect_mavlink(self) -> None:
@@ -373,18 +476,14 @@ def run(argv: Sequence[str] | None = None) -> int:
 
             age_sec = now - self._last_sample_monotonic if self._last_sample is not None else math.inf
             if self._last_sample is None:
-                if self._tick_simulated_pose(now):
-                    self._publish_mavlink_status()
-                    self._publish_imu_status()
+                if self._publish_fallback_pose_if_fresh(now):
                     return
                 self._publish_status("waiting_for_local_position", age_sec, "waiting_for_LOCAL_POSITION_NED")
                 self._publish_mavlink_status()
                 self._publish_imu_status()
                 return
             if age_sec > args.timeout_sec:
-                if self._tick_simulated_pose(now):
-                    self._publish_mavlink_status()
-                    self._publish_imu_status()
+                if self._publish_fallback_pose_if_fresh(now):
                     return
                 self._publish_status("timeout", age_sec, "local_position_timeout")
                 self._publish_mavlink_status()
@@ -392,11 +491,9 @@ def run(argv: Sequence[str] | None = None) -> int:
                 return
 
             pose = ned_to_gazebo_pose(self._last_sample, z_offset_m=args.z_offset_m, min_z_m=args.min_z_m)
-            self._pose_commander.set_pose(model_name=args.model_name, pose=pose)
-            self._set_pose_count += 1
             self._last_pose = pose
             self._publish_pose(pose)
-            self._publish_status("mirroring", age_sec, "set_pose_sent")
+            self._publish_status("mirroring", age_sec, "mavlink_local_position_observed")
             self._publish_mavlink_status()
             self._publish_imu_status()
 
@@ -450,29 +547,40 @@ def run(argv: Sequence[str] | None = None) -> int:
                     self._raw_imu_count += 1
                     self._handle_imu_sample(sample_from_raw_imu(msg))
 
-        def _handle_mission_status(self, msg: String) -> None:
-            try:
-                payload = json.loads(msg.data)
-            except json.JSONDecodeError:
-                return
-            cmd = payload.get("cmd")
-            if not isinstance(cmd, dict):
-                return
-            self._mission_phase = str(payload.get("phase", ""))
-            self._mission_vx_mps = float(cmd.get("vx_mps") or 0.0)
-            self._mission_vy_mps = float(cmd.get("vy_mps") or 0.0)
-            self._last_mission_status_monotonic = time.monotonic()
-
         def _handle_constraint_list(self, msg: MarkerArray) -> None:
             filtered = MarkerArray()
             filtered.markers = filter_displayable_markers(msg.markers)
             self._replay_constraints_pub.publish(filtered)
 
+        def _handle_fallback_pose(self, msg: PoseStamped) -> None:
+            self._fallback_pose = PlanarPoseState(
+                x=float(msg.pose.position.x),
+                y=float(msg.pose.position.y),
+                z=float(msg.pose.position.z),
+                yaw=yaw_from_pose_orientation(msg.pose.orientation),
+            )
+            self._fallback_pose_monotonic = time.monotonic()
+            self._fallback_pose_count += 1
+
+        def _publish_fallback_pose_if_fresh(self, now: float) -> bool:
+            if self._fallback_pose is None:
+                return False
+            age_sec = now - self._fallback_pose_monotonic
+            if age_sec > args.timeout_sec:
+                return False
+            self._last_pose = self._fallback_pose
+            self._publish_pose(self._fallback_pose)
+            self._publish_status("mirroring", age_sec, "fallback_local_position_pose_observed")
+            self._publish_mavlink_status()
+            self._publish_imu_status()
+            return True
+
         def _publish_pose(self, pose: PlanarPoseState) -> None:
             fields = build_pose_stamped_fields(pose)
             message = PoseStamped()
-            message.header.stamp = self.get_clock().now().to_msg()
-            message.header.frame_id = "map"
+            stamp = self.get_clock().now().to_msg()
+            message.header.stamp = stamp
+            message.header.frame_id = args.pose_frame_id
             message.pose.position.x = fields["x"]
             message.pose.position.y = fields["y"]
             message.pose.position.z = fields["z"]
@@ -481,51 +589,46 @@ def run(argv: Sequence[str] | None = None) -> int:
             message.pose.orientation.z = fields["qz"]
             message.pose.orientation.w = fields["qw"]
             self._pose_pub.publish(message)
-            self._publish_replay_markers(message)
+            if not args.replay_base_frame_id:
+                return
+            transform = self._transform_from_fields(
+                build_replay_transform_fields(
+                    parent_frame_id=args.pose_frame_id,
+                    child_frame_id=args.replay_base_frame_id,
+                    pose=pose,
+                ),
+                stamp=stamp,
+            )
+            self._tf_pub.publish(TFMessage(transforms=[transform]))
 
-        def _publish_replay_markers(self, pose_msg: PoseStamped) -> None:
-            point = Point()
-            point.x = pose_msg.pose.position.x
-            point.y = pose_msg.pose.position.y
-            point.z = pose_msg.pose.position.z
-            if not self._path_points or (
-                abs(self._path_points[-1].x - point.x) > 0.02
-                or abs(self._path_points[-1].y - point.y) > 0.02
-                or abs(self._path_points[-1].z - point.z) > 0.02
-            ):
-                self._path_points.append(point)
-                self._path_points = self._path_points[-1000:]
+        def _publish_static_replay_tf(self) -> None:
+            stamp = self.get_clock().now().to_msg()
+            transforms = [
+                self._transform_from_fields(
+                    build_replay_transform_fields(
+                        parent_frame_id=spec.parent_frame_id,
+                        child_frame_id=spec.child_frame_id,
+                        pose=PlanarPoseState(x=spec.x, y=spec.y, z=spec.z, yaw=spec.yaw_rad),
+                    ),
+                    stamp=stamp,
+                )
+                for spec in self._static_transform_specs
+            ]
+            self._tf_static_pub.publish(TFMessage(transforms=transforms))
 
-            body = Marker()
-            body.header = pose_msg.header
-            body.ns = "navlab_uav"
-            body.id = 1
-            body.type = Marker.ARROW
-            body.action = Marker.ADD
-            body.pose = pose_msg.pose
-            body.scale.x = 0.45
-            body.scale.y = 0.12
-            body.scale.z = 0.12
-            body.color.r = 0.1
-            body.color.g = 0.45
-            body.color.b = 1.0
-            body.color.a = 1.0
-
-            path = Marker()
-            path.header = pose_msg.header
-            path.ns = "navlab_uav"
-            path.id = 2
-            path.type = Marker.LINE_STRIP
-            path.action = Marker.ADD
-            path.pose.orientation.w = 1.0
-            path.scale.x = 0.05
-            path.color.r = 1.0
-            path.color.g = 0.8
-            path.color.b = 0.1
-            path.color.a = 1.0
-            path.points = list(self._path_points)
-
-            self._replay_markers_pub.publish(MarkerArray(markers=[body, path]))
+        def _transform_from_fields(self, fields: dict[str, float | str], *, stamp) -> TransformStamped:
+            transform = TransformStamped()
+            transform.header.stamp = stamp
+            transform.header.frame_id = str(fields["parent_frame_id"])
+            transform.child_frame_id = str(fields["child_frame_id"])
+            transform.transform.translation.x = float(fields["x"])
+            transform.transform.translation.y = float(fields["y"])
+            transform.transform.translation.z = float(fields["z"])
+            transform.transform.rotation.x = float(fields["qx"])
+            transform.transform.rotation.y = float(fields["qy"])
+            transform.transform.rotation.z = float(fields["qz"])
+            transform.transform.rotation.w = float(fields["qw"])
+            return transform
 
         def _handle_imu_stamp_source(self, message: LaserScan) -> None:
             stamp = message.header.stamp
@@ -572,50 +675,16 @@ def run(argv: Sequence[str] | None = None) -> int:
                 )
             )
 
-        def _tick_simulated_pose(self, now: float) -> bool:
-            if not args.simulate_pose_from_mission_status:
-                return False
-            mission_age_sec = now - self._last_mission_status_monotonic
-            if self._last_mission_status_monotonic <= 0.0 or mission_age_sec > max(args.timeout_sec, 10.0):
-                return False
-
-            previous = self._sim_pose or self._last_pose or PlanarPoseState(x=0.0, y=0.0, z=0.1, yaw=0.0)
-            dt = max(0.0, min(0.25, now - self._sim_last_tick_monotonic))
-            self._sim_last_tick_monotonic = now
-            airborne_phase = self._mission_phase not in {"", "wait_ready", "guided", "arm"}
-            target_z = args.sim_takeoff_alt_m if airborne_phase else 0.1
-            if previous.z < target_z:
-                next_z = min(target_z, previous.z + args.sim_climb_rate_mps * dt)
-            elif previous.z > target_z:
-                next_z = max(target_z, previous.z - args.sim_climb_rate_mps * dt)
-            else:
-                next_z = previous.z
-            next_pose = PlanarPoseState(
-                x=previous.x + self._mission_vx_mps * dt,
-                y=previous.y + self._mission_vy_mps * dt,
-                z=max(args.min_z_m, next_z),
-                yaw=previous.yaw,
-            )
-            self._sim_pose = next_pose
-            self._last_pose = next_pose
-            self._pose_commander.set_pose(model_name=args.model_name, pose=next_pose)
-            self._set_pose_count += 1
-            self._publish_pose(next_pose)
-            self._publish_status("simulated_mission_pose", 0.0, f"mission_phase_{self._mission_phase or 'unknown'}")
-            return True
-
         def _imu_stamp(self):
-            if self._last_imu_stamp_source_ns is None:
-                return self.get_clock().now().to_msg()
-
-            candidate_ns = anchored_sim_stamp_nanoseconds(
-                anchor_stamp_ns=self._last_imu_stamp_source_ns,
-                anchor_monotonic=self._last_imu_stamp_source_monotonic,
-                now_monotonic=time.monotonic(),
-            )
-            stamp_ns = next_monotonic_stamp_nanoseconds(candidate_ns, self._last_imu_output_stamp_ns)
-            self._last_imu_output_stamp_ns = stamp_ns
             stamp = self.get_clock().now().to_msg()
+            stamp_ns = next_imu_output_stamp_nanoseconds(
+                stamp_source_ns=self._last_imu_stamp_source_ns,
+                stamp_source_monotonic=self._last_imu_stamp_source_monotonic,
+                now_monotonic=time.monotonic(),
+                node_clock_ns=stamp_fields_to_nanoseconds(stamp.sec, stamp.nanosec),
+                previous_output_ns=self._last_imu_output_stamp_ns,
+            )
+            self._last_imu_output_stamp_ns = stamp_ns
             stamp.sec = int(stamp_ns // 1_000_000_000)
             stamp.nanosec = int(stamp_ns % 1_000_000_000)
             return stamp
@@ -638,7 +707,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             pose = self._last_pose
             status = PoseMirrorStatus(
                 state=state,
-                local_position_present=self._last_sample is not None,
+                local_position_present=self._last_sample is not None or self._fallback_pose is not None,
                 local_position_age_ms=-1.0 if math.isinf(age_sec) else age_sec * 1000.0,
                 set_pose_count=self._set_pose_count,
                 last_gazebo_x=None if pose is None else pose.x,

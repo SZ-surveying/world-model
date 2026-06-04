@@ -57,6 +57,25 @@ class CompanionLauncher:
                 run_scan_features,
                 [*config.scan_features.args],
             )
+        if config.gazebo_truth_bridge.autostart:
+            self._start(
+                "gazebo_truth_pose_bridge",
+                [
+                    "ros2",
+                    "run",
+                    "ros_gz_bridge",
+                    "parameter_bridge",
+                    *config.gazebo_truth_bridge.args,
+                ],
+            )
+        if config.gazebo_truth_odom.autostart:
+            from navlab.companion.nodes.gazebo_truth_odom import run as run_gazebo_truth_odom
+
+            self._start_function(
+                "gazebo_truth_odom_publisher",
+                run_gazebo_truth_odom,
+                [*config.gazebo_truth_odom.args],
+            )
         if config.pose_mirror.autostart:
             from navlab.companion.nodes.pose_mirror import run as run_pose_mirror
 

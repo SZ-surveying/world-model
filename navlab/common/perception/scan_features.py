@@ -37,6 +37,10 @@ def compute_scan_features(
     angle_increment: float | None = None,
     range_min: float | None = None,
     range_max: float | None = None,
+    front_center_deg: float = 0.0,
+    left_center_deg: float = 90.0,
+    right_center_deg: float = -90.0,
+    rear_center_deg: float = 180.0,
     front_half_width_deg: float = 15.0,
     side_half_width_deg: float = 20.0,
     rear_half_width_deg: float = 20.0,
@@ -64,15 +68,13 @@ def compute_scan_features(
         angle = angle_min + angle_increment * index
         angle_deg = degrees(angle)
 
-        if _angle_in_sector(angle_deg, 0.0, front_half_width_deg):
+        if _angle_in_sector(angle_deg, front_center_deg, front_half_width_deg):
             front_min = value if front_min is None else min(front_min, value)
-        if _angle_in_sector(angle_deg, 90.0, side_half_width_deg):
+        if _angle_in_sector(angle_deg, left_center_deg, side_half_width_deg):
             left_min = value if left_min is None else min(left_min, value)
-        if _angle_in_sector(angle_deg, -90.0, side_half_width_deg):
+        if _angle_in_sector(angle_deg, right_center_deg, side_half_width_deg):
             right_min = value if right_min is None else min(right_min, value)
-        if _angle_in_sector(angle_deg, 180.0, rear_half_width_deg) or _angle_in_sector(
-            angle_deg, -180.0, rear_half_width_deg
-        ):
+        if _angle_in_sector(angle_deg, rear_center_deg, rear_half_width_deg):
             rear_min = value if rear_min is None else min(rear_min, value)
 
         if nearest_range is None or value < nearest_range:

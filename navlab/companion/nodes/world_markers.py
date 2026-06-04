@@ -7,10 +7,11 @@ from pathlib import Path
 
 from navlab.sim.world.world_markers import MarkerPose, MarkerSpec, load_world_marker_specs, load_world_model_pose
 
-DEFAULT_WORLD_FILE = Path("/workspace/docker/worlds/uav_obstacle_5m.sdf")
+DEFAULT_WORLD_FILE = Path("/workspace/docker/worlds/navlab_iq_quad_figure8.sdf")
 DEFAULT_TOPIC = "/sim/markers"
 DEFAULT_POSE_TOPIC = "/sim/uav_pose"
-_UAV_NAMESPACES = {"uav_body_tail_marker", "uav_body_nose_marker"}
+DEFAULT_ROOT_MODEL_NAME = "uav_start_marker"
+DEFAULT_REPLAY_FRAME_ID = "navlab_world"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="PoseStamped topic used to place the UAV markers.",
     )
     parser.add_argument(
+        "--frame-id",
+        default=DEFAULT_REPLAY_FRAME_ID,
+        help="Stable replay frame used for all scene markers.",
+    )
+    parser.add_argument(
+        "--root-model-name",
+        default=DEFAULT_ROOT_MODEL_NAME,
+        help="World model/include name whose pose anchors UAV marker offsets.",
+    )
+    parser.add_argument(
         "--rate",
         type=float,
         default=1.0,
@@ -65,6 +76,8 @@ def _marker_type(marker_spec: MarkerSpec, marker_cls: type) -> int:
         return marker_cls.ARROW
     if marker_spec.shape == "cube":
         return marker_cls.CUBE
+    if marker_spec.shape == "sphere":
+        return marker_cls.SPHERE
     if marker_spec.shape == "cylinder":
         return marker_cls.CYLINDER
     raise ValueError(f"unsupported marker shape: {marker_spec.shape}")
@@ -92,7 +105,7 @@ def _rotate_planar(x: float, y: float, yaw: float) -> tuple[float, float]:
 def _build_local_marker_offsets(specs: list[MarkerSpec], *, root_pose: MarkerPose) -> dict[int, _LocalMarkerOffset]:
     offsets: dict[int, _LocalMarkerOffset] = {}
     for spec in specs:
-        if spec.namespace not in _UAV_NAMESPACES:
+        if not spec.namespace.startswith("navlab_iq_quad_"):
             continue
         dx_world = spec.pose.x - root_pose.x
         dy_world = spec.pose.y - root_pose.y
@@ -150,7 +163,7 @@ def _apply_uav_pose(
 def run(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
     specs = load_world_marker_specs(args.world_file)
-    uav_root_pose = load_world_model_pose(args.world_file, "uav_start_marker")
+    uav_root_pose = load_world_model_pose(args.world_file, args.root_model_name)
     local_offsets = _build_local_marker_offsets(specs, root_pose=uav_root_pose)
 
     try:
@@ -195,7 +208,7 @@ def run(argv: list[str] | None = None) -> int:
                 resolved_spec = _apply_uav_pose(spec, current_pose=self._current_pose, local_offsets=local_offsets)
                 marker = Marker()
                 marker.header.stamp = now
-                marker.header.frame_id = resolved_spec.frame_id
+                marker.header.frame_id = args.frame_id
                 marker.ns = resolved_spec.namespace
                 marker.id = resolved_spec.marker_id
                 marker.type = _marker_type(resolved_spec, Marker)

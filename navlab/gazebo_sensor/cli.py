@@ -115,8 +115,9 @@ def run(argv: list[str] | None = None) -> int:
                 range_min_m=config.range_min_m,
                 range_max_m=config.range_max_m,
                 noise_stddev_m=config.range_noise_stddev_m,
+                noise_stddev_per_m=config.range_noise_stddev_per_m,
                 dropout_rate=config.dropout_rate,
-                random_seed=None,
+                random_seed=config.random_seed,
             )
             if samples:
                 self._latest_samples = samples
@@ -141,6 +142,9 @@ def run(argv: list[str] | None = None) -> int:
             status = emulator.status_dict()
             status["scan_source"] = "gazebo_ideal" if self._latest_scan_ideal_monotonic_sec else "static_fallback"
             status["scan_ideal_topic"] = config.scan_ideal_topic
+            status["range_noise_stddev_m"] = config.range_noise_stddev_m
+            status["range_noise_stddev_per_m"] = config.range_noise_stddev_per_m
+            status["dropout_rate"] = config.dropout_rate
             status["latest_scan_ideal_age_sec"] = (
                 None
                 if self._latest_scan_ideal_monotonic_sec is None

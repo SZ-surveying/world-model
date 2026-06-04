@@ -11,6 +11,8 @@ from navlab.common.logging import configure_sim_logging, logger
 from navlab.common.process_manager import ProcessManager
 from navlab.gazebo_sensor.config import X2SensorRuntimeConfig
 
+VIRTUAL_SERIAL_STARTUP_TIMEOUT_SEC = 10.0
+
 
 @dataclass(frozen=True, slots=True)
 class X2SensorLaunchConfig:
@@ -86,6 +88,15 @@ def build_vendor_driver_command(config: X2SensorLaunchConfig) -> list[str]:
     ]
 
 
+def wait_for_virtual_serial_link(path: Path, *, timeout_sec: float = VIRTUAL_SERIAL_STARTUP_TIMEOUT_SEC) -> None:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if path.exists():
+            return
+        time.sleep(0.05)
+    raise TimeoutError(f"Timed out waiting for virtual serial link {path}")
+
+
 class X2SensorRuntime:
     def __init__(self, config: X2SensorLaunchConfig) -> None:
         self._config = config
@@ -115,7 +126,7 @@ class X2SensorRuntime:
             logger.info("scan_source={} starts only the ideal scan bridge", self._config.scan_source)
             return
         self._manager.start_subprocess("x2_serial_emulator", build_emulator_command(self._config))
-        time.sleep(0.5)
+        wait_for_virtual_serial_link(self._config.virtual_serial_link)
         self._manager.start_subprocess("ydlidar_ros2_driver", build_vendor_driver_command(self._config))
 
     def _handle_signal(self, signum: int, _frame: object) -> None:

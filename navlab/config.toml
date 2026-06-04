@@ -12,18 +12,41 @@ imu_source_label = "fcu_mavlink_navlab"
 autostart = true
 args = [
   "--world-file",
-  "/workspace/docker/worlds/uav_obstacle_5m.sdf",
+  "/workspace/docker/worlds/navlab_iq_quad_figure8.sdf",
   "--topic",
   "/sim/markers",
   "--pose-topic",
   "/sim/uav_pose",
+  "--frame-id",
+  "navlab_world",
+  "--root-model-name",
+  "navlab_iq_quad",
   "--rate",
   "1",
 ]
 
 [companion.runtime.scan_features]
 autostart = true
-args = []
+args = ["--front-center-deg", "0", "--rear-center-deg", "180"]
+
+[companion.runtime.gazebo_truth_bridge]
+autostart = true
+args = [
+  "/world/navlab_iq_quad_figure8/dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V",
+]
+
+[companion.runtime.gazebo_truth_odom]
+autostart = true
+args = [
+  "--input-topic",
+  "/world/navlab_iq_quad_figure8/dynamic_pose/info",
+  "--odom-topic",
+  "/gazebo/truth/odom",
+  "--status-topic",
+  "/gazebo/truth/status",
+  "--transform-index",
+  "0",
+]
 
 [companion.runtime.pose_mirror]
 autostart = true
@@ -35,8 +58,17 @@ args = [
   "/navlab/fcu_imu/status",
   "--imu-frame-id",
   "imu_link",
+  "--fallback-pose-topic",
+  "/navlab/fcu/local_position_pose",
+  "--pose-frame-id",
+  "navlab_world",
+  "--map-frame-id",
+  "map",
+  "--sensor-base-frame-id",
+  "base_link",
+  "--laser-frame-id",
+  "laser_frame",
   "--synthetic-imu-when-mavlink-missing",
-  "--simulate-pose-from-mission-status",
   "--rate-hz",
   "10",
 ]
@@ -48,18 +80,48 @@ args = ["--allow-raw-imu"]
 
 [companion.runtime.external_nav_sender]
 autostart = true
-endpoint = "tcp:mavlink-router:5760"
-args = ["--rate-hz", "20"]
+endpoint = "tcp:127.0.0.1:5762"
+args = [
+  "--rate-hz",
+  "20",
+  "--use-fcu-roll-pitch",
+  "--local-position-pose-topic",
+  "/navlab/fcu/local_position_pose",
+]
 
 [companion.runtime.mission]
 autostart = false
-endpoint = "tcp:mavlink-router:5760"
-args = ["--simulate-mode-arm"]
+endpoint = "tcp:127.0.0.1:5763"
+args = [
+  "--takeoff-alt-m",
+  "0.45",
+  "--min-airborne-alt-m",
+  "0.10",
+  "--hover-settle-sec",
+  "2.0",
+  "--forward-speed-mps",
+  "0.30",
+  "--avoid-forward-speed-mps",
+  "0.25",
+  "--obstacle-detect-distance-m",
+  "2.3",
+  "--obstacle-avoid-distance-m",
+  "1.2",
+  "--scan-dwell-sec",
+  "1.0",
+  "--pass-x-m",
+  "1.25",
+  "--return-y-m",
+  "0.65",
+  "--final-hold-sec",
+  "2.0",
+  "--force-arm",
+]
 
 [gazebo_sensor.x2_protocol]
 enabled = false
 scan_source = "x2_virtual_serial"
-profile = "profiles/x2-vendor-sim.yaml"
+profile = "/workspace/profiles/x2-vendor-sim.yaml"
 virtual_serial_link = "/tmp/navlab_x2"
 scan_ideal_topic = "/scan_ideal"
 scan_topic = "/scan"
@@ -68,9 +130,12 @@ sample_rate_hz = 3000.0
 scan_frequency_hz = 7.0
 scan_frequency_min_hz = 4.0
 scan_frequency_max_hz = 8.0
+scan_frequency_jitter_hz = 0.0
 range_min_m = 0.1
 range_max_m = 8.0
 static_range_m = 1.5
 range_noise_stddev_m = 0.0
+range_noise_stddev_per_m = 0.0
 dropout_rate = 0.0
 auto_start = true
+random_seed = ""

@@ -92,18 +92,20 @@ COMPOSE_PROFILE_SERVICES: dict[str, tuple[str, ...]] = {
 }
 
 DEFAULT_GAZEBO_CONTAINER_NAME = "gazebo"
-DEFAULT_GAZEBO_WORLD = "/workspace/worlds/uav_obstacle_5m.sdf"
+DEFAULT_GAZEBO_WORLD = "/workspace/worlds/navlab_iq_quad_figure8.sdf"
 DEFAULT_FAST_LIO_CONTAINER_NAME = "fast-lio"
 DEFAULT_FAST_LIO_CONFIG_PATH = "/workspace/profiles/fast-lio/config.yaml"
 DEFAULT_NAVLAB_TAG_STRATEGY = "latest"
-DEFAULT_NAVLAB_DOCKERFILE = "docker/Dockerfile.companion"
 DEFAULT_NAVLAB_CONTEXT = "."
+DEFAULT_NAVLAB_COMPANION_DOCKERFILE = "docker/Dockerfile.companion"
 DEFAULT_NAVLAB_COMPANION_TARGET = "navlab-companion"
 DEFAULT_NAVLAB_COMPANION_REPOSITORY = "world-model/navlab-companion"
 DEFAULT_NAVLAB_COMPANION_IMAGE = f"{DEFAULT_NAVLAB_COMPANION_REPOSITORY}:latest"
+DEFAULT_NAVLAB_SLAM_DOCKERFILE = "docker/Dockerfile.slam"
 DEFAULT_NAVLAB_SLAM_TARGET = "navlab-slam-cartographer"
 DEFAULT_NAVLAB_SLAM_REPOSITORY = "world-model/navlab-slam-cartographer"
 DEFAULT_NAVLAB_SLAM_IMAGE = f"{DEFAULT_NAVLAB_SLAM_REPOSITORY}:latest"
+DEFAULT_NAVLAB_GAZEBO_SENSOR_DOCKERFILE = "docker/Dockerfile.gazebo-sensor"
 DEFAULT_NAVLAB_GAZEBO_SENSOR_TARGET = "navlab-gazebo-sensor"
 DEFAULT_NAVLAB_GAZEBO_SENSOR_REPOSITORY = "world-model/navlab-gazebo-sensor"
 DEFAULT_NAVLAB_GAZEBO_SENSOR_IMAGE = f"{DEFAULT_NAVLAB_GAZEBO_SENSOR_REPOSITORY}:latest"
@@ -231,6 +233,7 @@ def _resolve_navlab_image_config(
     images: dict[str, Any],
     key: str,
     *,
+    default_dockerfile: str,
     default_target: str,
     default_repository: str,
 ) -> NavLabImageConfig:
@@ -241,7 +244,7 @@ def _resolve_navlab_image_config(
         raise ValueError(f"Invalid [navlab.images.{key}] section: expected a table")
 
     return NavLabImageConfig(
-        dockerfile=_resolve_router_value(raw_image, "dockerfile", DEFAULT_NAVLAB_DOCKERFILE),
+        dockerfile=_resolve_router_value(raw_image, "dockerfile", default_dockerfile),
         context=_resolve_router_value(raw_image, "context", DEFAULT_NAVLAB_CONTEXT),
         target=_resolve_router_value(raw_image, "target", default_target),
         repository=_resolve_router_value(raw_image, "repository", default_repository),
@@ -270,18 +273,21 @@ def load_navlab_images_config(runtime: RuntimeConfig) -> NavLabImagesConfig:
         companion=_resolve_navlab_image_config(
             raw_images,
             "companion",
+            default_dockerfile=DEFAULT_NAVLAB_COMPANION_DOCKERFILE,
             default_target=DEFAULT_NAVLAB_COMPANION_TARGET,
             default_repository=DEFAULT_NAVLAB_COMPANION_REPOSITORY,
         ),
         slam=_resolve_navlab_image_config(
             raw_images,
             "slam",
+            default_dockerfile=DEFAULT_NAVLAB_SLAM_DOCKERFILE,
             default_target=DEFAULT_NAVLAB_SLAM_TARGET,
             default_repository=DEFAULT_NAVLAB_SLAM_REPOSITORY,
         ),
         gazebo_sensor=_resolve_navlab_image_config(
             raw_images,
             "gazebo_sensor",
+            default_dockerfile=DEFAULT_NAVLAB_GAZEBO_SENSOR_DOCKERFILE,
             default_target=DEFAULT_NAVLAB_GAZEBO_SENSOR_TARGET,
             default_repository=DEFAULT_NAVLAB_GAZEBO_SENSOR_REPOSITORY,
         ),

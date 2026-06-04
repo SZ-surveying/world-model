@@ -34,7 +34,7 @@ class CartographerIndoorNode : public rclcpp::Node {
     odom_pub_ = create_publisher<nav_msgs::msg::Odometry>("/odom", 10);
 
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
-        "/scan", 10,
+        "/scan", rclcpp::SensorDataQoS(),
         std::bind(&CartographerIndoorNode::handle_scan, this, std::placeholders::_1));
 
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(

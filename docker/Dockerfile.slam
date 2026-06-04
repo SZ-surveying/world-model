@@ -1,0 +1,20 @@
+FROM remote-sitl-lab/ros-jazzy-base:latest AS navlab-slam-cartographer
+
+RUN apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update && \
+  apt-get install -y --no-install-recommends \
+    ros-jazzy-cartographer-ros && \
+  rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/navlab_ws
+
+COPY navlab/slam/ros /opt/navlab_ws/navlab_slam_ros
+COPY x3/src/ydlidar_interfaces /opt/navlab_ws/x3/src/ydlidar_interfaces
+
+RUN bash -lc "\
+  source /opt/ros/jazzy/setup.bash && \
+  colcon --log-base /tmp/navlab_slam-log build \
+    --base-paths navlab_slam_ros x3/src \
+    --packages-select ydlidar_interfaces fake_external_nav imu_bridge cartographer_indoor external_nav_bridge indoor_bringup \
+    --build-base /tmp/navlab_slam-build \
+    --install-base /opt/navlab_ws/install \
+    --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3"

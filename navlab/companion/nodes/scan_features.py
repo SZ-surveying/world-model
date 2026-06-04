@@ -28,6 +28,30 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Nearest PointStamped output topic.",
     )
     parser.add_argument(
+        "--front-center-deg",
+        type=float,
+        default=0.0,
+        help="Front sector center in LaserScan degrees.",
+    )
+    parser.add_argument(
+        "--left-center-deg",
+        type=float,
+        default=90.0,
+        help="Left sector center in LaserScan degrees.",
+    )
+    parser.add_argument(
+        "--right-center-deg",
+        type=float,
+        default=-90.0,
+        help="Right sector center in LaserScan degrees.",
+    )
+    parser.add_argument(
+        "--rear-center-deg",
+        type=float,
+        default=180.0,
+        help="Rear sector center in LaserScan degrees.",
+    )
+    parser.add_argument(
         "--front-half-width-deg",
         type=float,
         default=15.0,
@@ -125,6 +149,10 @@ def run(argv: list[str] | None = None) -> int:
                 angle_increment=message.angle_increment,
                 range_min=message.range_min,
                 range_max=message.range_max,
+                front_center_deg=args.front_center_deg,
+                left_center_deg=args.left_center_deg,
+                right_center_deg=args.right_center_deg,
+                rear_center_deg=args.rear_center_deg,
                 front_half_width_deg=args.front_half_width_deg,
                 side_half_width_deg=args.side_half_width_deg,
                 rear_half_width_deg=args.rear_half_width_deg,

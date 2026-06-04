@@ -14,7 +14,10 @@ from navlab.sim.status import DEFAULT_SIM_LOG_TOPIC, encode_sim_log
 
 os.environ.setdefault("MAVLINK20", "1")
 
-XY_VELOCITY_Z_POSITION_TYPE_MASK = 3555
+LOCAL_POSITION_YAW_TYPE_MASK = 2552
+DEFAULT_ORIGIN_LAT_DEG = -35.363262
+DEFAULT_ORIGIN_LON_DEG = 149.165237
+DEFAULT_ORIGIN_ALT_M = 584.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,9 +41,10 @@ class MissionConfig:
     hover_settle_sec: float = 4.0
     forward_speed_mps: float = 0.15
     avoid_forward_speed_mps: float = 0.05
-    avoid_lateral_speed_mps: float = 0.15
-    obstacle_seen_distance_m: float = 2.0
-    avoid_y_m: float = 2.6
+    obstacle_detect_distance_m: float = 5.2
+    obstacle_avoid_distance_m: float = 2.0
+    scan_yaw_rad: float = math.radians(45.0)
+    scan_dwell_sec: float = 1.5
     pass_x_m: float = 6.5
     return_y_m: float = 0.1
     final_hold_sec: float = 5.0
@@ -53,10 +57,121 @@ class MissionDecision:
     reason: str
     vx_mps: float
     vy_mps: float
+    yaw_rad: float | None = None
     should_set_guided: bool = False
     should_arm: bool = False
     should_takeoff: bool = False
     terminal: bool = False
+
+
+@dataclass(slots=True)
+class ReactiveAvoidancePlanner:
+    mode: str = "track"
+    mode_started_monotonic: float = 0.0
+    left_clearance_m: float | None = None
+    right_clearance_m: float | None = None
+    selected_yaw_rad: float | None = None
+    selected_side: str = ""
+
+    def decide(self, inputs: MissionInputs, config: MissionConfig, *, now_monotonic: float) -> MissionDecision:
+        base = decide_obstacle_mission(inputs, config)
+        if base.phase in {"wait_ready", "guided", "arm", "takeoff", "hover_settle"}:
+            return base
+        if self.mode == "track" and base.phase in {"final_hold", "complete"}:
+            return base
+
+        x = inputs.current_x or 0.0
+        y = inputs.current_y or 0.0
+        front_min = inputs.front_min
+        obstacle_close = front_min is not None and front_min <= config.obstacle_avoid_distance_m
+
+        if self.mode == "track" and obstacle_close:
+            self._switch("scan_left", now_monotonic)
+            self.left_clearance_m = None
+            self.right_clearance_m = None
+            self.selected_yaw_rad = None
+            self.selected_side = ""
+
+        if self.mode == "scan_left":
+            if now_monotonic - self.mode_started_monotonic < config.scan_dwell_sec:
+                return MissionDecision("scan_left", "running", "scan_left_for_clearance", 0.0, 0.0, config.scan_yaw_rad)
+            self.left_clearance_m = front_min
+            self._switch("scan_right", now_monotonic)
+
+        if self.mode == "scan_right":
+            if now_monotonic - self.mode_started_monotonic < config.scan_dwell_sec:
+                return MissionDecision(
+                    "scan_right",
+                    "running",
+                    "scan_right_for_clearance",
+                    0.0,
+                    0.0,
+                    -config.scan_yaw_rad,
+                )
+            self.right_clearance_m = front_min
+            self.selected_yaw_rad = choose_scan_yaw(
+                left_clearance_m=self.left_clearance_m,
+                right_clearance_m=self.right_clearance_m,
+                scan_yaw_rad=config.scan_yaw_rad,
+            )
+            self.selected_side = "left" if self.selected_yaw_rad >= 0.0 else "right"
+            self._switch("avoid", now_monotonic)
+
+        if self.mode == "avoid":
+            yaw_rad = self.selected_yaw_rad if self.selected_yaw_rad is not None else config.scan_yaw_rad
+            if x >= config.pass_x_m:
+                self._switch("return_track", now_monotonic)
+            else:
+                return velocity_aligned_decision(
+                    phase="avoid",
+                    reason=f"avoid_{self.selected_side or 'selected'}",
+                    speed_mps=config.avoid_forward_speed_mps,
+                    yaw_rad=yaw_rad,
+                )
+
+        if self.mode == "return_track":
+            if abs(y) <= config.return_y_m:
+                self._switch("final", now_monotonic)
+            else:
+                yaw_rad = -config.scan_yaw_rad if y > 0.0 else config.scan_yaw_rad
+                return velocity_aligned_decision(
+                    phase="return_track",
+                    reason="return_to_track",
+                    speed_mps=config.avoid_forward_speed_mps,
+                    yaw_rad=yaw_rad,
+                )
+
+        if self.mode == "final":
+            return MissionDecision("complete", "complete", "mission_complete", 0.0, 0.0, terminal=True)
+
+        return velocity_aligned_decision(
+            phase="forward",
+            reason="forward_progress",
+            speed_mps=config.forward_speed_mps,
+            yaw_rad=0.0,
+        )
+
+    def _switch(self, mode: str, now_monotonic: float) -> None:
+        if self.mode != mode:
+            self.mode = mode
+            self.mode_started_monotonic = now_monotonic
+
+
+def choose_scan_yaw(*, left_clearance_m: float | None, right_clearance_m: float | None, scan_yaw_rad: float) -> float:
+    left = -math.inf if left_clearance_m is None else left_clearance_m
+    right = -math.inf if right_clearance_m is None else right_clearance_m
+    return scan_yaw_rad if left >= right else -scan_yaw_rad
+
+
+def velocity_aligned_decision(*, phase: str, reason: str, speed_mps: float, yaw_rad: float) -> MissionDecision:
+    return MissionDecision(
+        phase,
+        "running",
+        reason,
+        speed_mps * math.cos(yaw_rad),
+        speed_mps * math.sin(yaw_rad),
+        yaw_rad=yaw_rad,
+    )
 
 
 def decide_obstacle_mission(inputs: MissionInputs, config: MissionConfig) -> MissionDecision:
@@ -73,32 +188,22 @@ def decide_obstacle_mission(inputs: MissionInputs, config: MissionConfig) -> Mis
         return MissionDecision("hover_settle", "running", "hover_settle", 0.0, 0.0)
 
     x = inputs.current_x or 0.0
-    y = inputs.current_y or 0.0
     front_min = inputs.front_min
-    obstacle_seen = front_min is not None and front_min <= config.obstacle_seen_distance_m
+    obstacle_close = front_min is not None and front_min <= config.obstacle_avoid_distance_m
 
-    if x >= config.pass_x_m and y > config.return_y_m:
-        return MissionDecision(
-            "return_track",
-            "running",
-            "return_to_track",
-            config.avoid_forward_speed_mps,
-            -config.avoid_lateral_speed_mps,
-        )
-    if y < config.avoid_y_m and (obstacle_seen or x >= 3.0):
-        return MissionDecision(
-            "avoid",
-            "running",
-            "avoid_left",
-            config.avoid_forward_speed_mps,
-            config.avoid_lateral_speed_mps,
-        )
+    if x >= config.pass_x_m:
+        if inputs.airborne_elapsed_sec < config.hover_settle_sec + config.final_hold_sec:
+            return MissionDecision("final_hold", "running", "final_hold", 0.0, 0.0)
+        return MissionDecision("complete", "complete", "mission_complete", 0.0, 0.0, terminal=True)
+    if obstacle_close:
+        return MissionDecision("scan_left", "running", "scan_left_for_clearance", 0.0, 0.0, config.scan_yaw_rad)
     if x < config.pass_x_m:
-        if y >= config.avoid_y_m:
-            return MissionDecision("pass_obstacle", "running", "pass_obstacle", config.forward_speed_mps, 0.0)
-        return MissionDecision("forward", "running", "forward_progress", config.forward_speed_mps, 0.0)
-    if inputs.airborne_elapsed_sec < config.hover_settle_sec + config.final_hold_sec:
-        return MissionDecision("final_hold", "running", "final_hold", 0.0, 0.0)
+        return velocity_aligned_decision(
+            phase="forward",
+            reason="forward_progress",
+            speed_mps=config.forward_speed_mps,
+            yaw_rad=0.0,
+        )
     return MissionDecision("complete", "complete", "mission_complete", 0.0, 0.0, terminal=True)
 
 
@@ -117,6 +222,7 @@ def encode_mission_status(
             "cmd": {
                 "vx_mps": decision.vx_mps,
                 "vy_mps": decision.vy_mps,
+                "yaw_rad": decision.yaw_rad,
             },
             "position": {
                 "x": inputs.current_x,
@@ -146,6 +252,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", default="GUIDED")
     parser.add_argument("--takeoff-alt-m", type=float, default=0.8)
     parser.add_argument("--min-airborne-alt-m", type=float, default=0.25)
+    parser.add_argument("--hover-settle-sec", type=float, default=4.0)
+    parser.add_argument("--forward-speed-mps", type=float, default=0.15)
+    parser.add_argument("--avoid-forward-speed-mps", type=float, default=0.05)
+    parser.add_argument("--obstacle-detect-distance-m", type=float, default=5.2)
+    parser.add_argument("--obstacle-avoid-distance-m", type=float, default=2.0)
+    parser.add_argument("--scan-yaw-deg", type=float, default=45.0)
+    parser.add_argument("--scan-dwell-sec", type=float, default=1.5)
+    parser.add_argument("--pass-x-m", type=float, default=6.5)
+    parser.add_argument("--return-y-m", type=float, default=0.1)
+    parser.add_argument("--final-hold-sec", type=float, default=5.0)
+    parser.add_argument("--origin-lat-deg", type=float, default=DEFAULT_ORIGIN_LAT_DEG)
+    parser.add_argument("--origin-lon-deg", type=float, default=DEFAULT_ORIGIN_LON_DEG)
+    parser.add_argument("--origin-alt-m", type=float, default=DEFAULT_ORIGIN_ALT_M)
+    parser.add_argument("--source-system", type=int, default=255)
+    parser.add_argument("--source-component", type=int, default=190)
     parser.add_argument("--status-topic", default="/navlab/mission/status")
     parser.add_argument("--sim-log-topic", default=DEFAULT_SIM_LOG_TOPIC)
     parser.add_argument("--scan-features-topic", default="/scan_features")
@@ -156,6 +277,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scan-timeout-sec", type=float, default=1.0)
     parser.add_argument("--status-timeout-sec", type=float, default=1.0)
     parser.add_argument("--setpoint-rate-hz", type=float, default=5.0)
+    parser.add_argument("--setpoint-lookahead-sec", type=float, default=2.0)
     parser.add_argument("--disable-arming-checks", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--force-arm", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--simulate-mode-arm", action=argparse.BooleanOptionalAction, default=False)
@@ -199,6 +321,8 @@ def _request_streams(connection, target_system: int, target_component: int) -> N
         (mavlink.MAVLINK_MSG_ID_LOCAL_POSITION_NED, 10.0),
         (mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT, 4.0),
         (mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE, 4.0),
+        (mavlink.MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN, 1.0),
+        (mavlink.MAVLINK_MSG_ID_HOME_POSITION, 1.0),
         (mavlink.MAVLINK_MSG_ID_STATUSTEXT, 2.0),
     ):
         _send_message_interval(connection, target_system, target_component, message_id, hz)
@@ -208,6 +332,31 @@ def _set_mode(connection, target_system: int, mode_number: int) -> None:
     from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
     connection.mav.set_mode_send(target_system, mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, mode_number)
+    connection.mav.command_long_send(
+        target_system,
+        mavlink.MAV_COMP_ID_AUTOPILOT1,
+        mavlink.MAV_CMD_DO_SET_MODE,
+        0,
+        mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+        mode_number,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+
+
+def _send_gcs_heartbeat(connection) -> None:
+    from pymavlink.dialects.v20 import ardupilotmega as mavlink
+
+    connection.mav.heartbeat_send(
+        mavlink.MAV_TYPE_GCS,
+        mavlink.MAV_AUTOPILOT_INVALID,
+        0,
+        0,
+        mavlink.MAV_STATE_ACTIVE,
+    )
 
 
 def _set_arming_check(connection, target_system: int, target_component: int, value: int) -> None:
@@ -219,6 +368,41 @@ def _set_arming_check(connection, target_system: int, target_component: int, val
         b"ARMING_CHECK",
         float(value),
         mavlink.MAV_PARAM_TYPE_INT32,
+    )
+
+
+def _set_ekf_origin(connection, target_system: int, lat_deg: float, lon_deg: float, alt_m: float) -> None:
+    connection.mav.set_gps_global_origin_send(
+        target_system,
+        int(lat_deg * 1e7),
+        int(lon_deg * 1e7),
+        int(alt_m * 1000.0),
+        int(time.monotonic() * 1_000_000),
+    )
+
+
+def _set_home_position(
+    connection,
+    target_system: int,
+    target_component: int,
+    lat_deg: float,
+    lon_deg: float,
+    alt_m: float,
+) -> None:
+    from pymavlink.dialects.v20 import ardupilotmega as mavlink
+
+    connection.mav.command_long_send(
+        target_system,
+        target_component,
+        mavlink.MAV_CMD_DO_SET_HOME,
+        0,
+        0,
+        0,
+        0,
+        0,
+        lat_deg,
+        lon_deg,
+        alt_m,
     )
 
 
@@ -258,13 +442,27 @@ def _command_takeoff(connection, target_system: int, target_component: int, alti
     )
 
 
-def _send_velocity_z_hold_setpoint(
+def position_target_from_velocity(
+    *,
+    current_x: float | None,
+    current_y: float | None,
+    vx_mps: float,
+    vy_mps: float,
+    lookahead_sec: float,
+) -> tuple[float, float]:
+    x = 0.0 if current_x is None else current_x
+    y = 0.0 if current_y is None else current_y
+    return x + vx_mps * lookahead_sec, y + vy_mps * lookahead_sec
+
+
+def _send_local_position_yaw_setpoint(
     connection,
     target_system: int,
     target_component: int,
-    vx_mps: float,
-    vy_mps: float,
+    x_ned_m: float,
+    y_ned_m: float,
     z_ned_m: float,
+    yaw_rad: float,
 ) -> None:
     from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
@@ -273,19 +471,25 @@ def _send_velocity_z_hold_setpoint(
         target_system,
         target_component,
         mavlink.MAV_FRAME_LOCAL_NED,
-        XY_VELOCITY_Z_POSITION_TYPE_MASK,
-        0.0,
-        0.0,
+        LOCAL_POSITION_YAW_TYPE_MASK,
+        x_ned_m,
+        y_ned_m,
         z_ned_m,
-        vx_mps,
-        vy_mps,
         0.0,
         0.0,
         0.0,
         0.0,
         0.0,
+        0.0,
+        yaw_rad,
         0.0,
     )
+
+
+def yaw_for_velocity(vx_mps: float, vy_mps: float, fallback_yaw_rad: float) -> float:
+    if math.hypot(vx_mps, vy_mps) < 0.02:
+        return fallback_yaw_rad
+    return math.atan2(vy_mps, vx_mps)
 
 
 def run(argv: Sequence[str] | None = None) -> int:
@@ -309,7 +513,12 @@ def run(argv: Sequence[str] | None = None) -> int:
     class MavlinkObstacleMissionController(Node):
         def __init__(self) -> None:
             super().__init__("mavlink_obstacle_mission_controller")
-            self._connection = mavutil.mavlink_connection(args.endpoint, dialect="ardupilotmega")
+            self._connection = mavutil.mavlink_connection(
+                args.endpoint,
+                source_system=args.source_system,
+                source_component=args.source_component,
+                dialect="ardupilotmega",
+            )
             self._status_pub = self.create_publisher(String, args.status_topic, 10)
             self._sim_log_pub = self.create_publisher(String, args.sim_log_topic, 10)
             self.create_subscription(
@@ -341,19 +550,41 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._airborne_seen = False
             self._airborne_started: float | None = None
             self._next_request = 0.0
+            self._next_heartbeat = 0.0
+            self._next_origin_command = 0.0
             self._next_mode_command = 0.0
             self._next_arm_command = 0.0
             self._next_takeoff_command = 0.0
             self._next_setpoint = 0.0
+            self._last_setpoint_yaw_rad = 0.0
             self._setpoints_sent = 0
             self._obstacle_detected = False
             self._avoidance_setpoint_sent = False
+            self._scan_left_seen = False
+            self._scan_right_seen = False
             self._phases_seen: set[str] = set()
             self._message_counts: dict[str, int] = {}
             self._command_acks: list[dict[str, int]] = []
+            self._statustext: list[dict[str, object]] = []
+            self._sent_commands: dict[str, int] = {}
             self._ekf_flags: list[int] = []
+            self._gps_global_origin_seen = False
+            self._home_position_seen = False
             self._started = time.monotonic()
-            self._config = MissionConfig(takeoff_alt_m=args.takeoff_alt_m)
+            self._config = MissionConfig(
+                takeoff_alt_m=args.takeoff_alt_m,
+                hover_settle_sec=args.hover_settle_sec,
+                forward_speed_mps=args.forward_speed_mps,
+                avoid_forward_speed_mps=args.avoid_forward_speed_mps,
+                obstacle_detect_distance_m=args.obstacle_detect_distance_m,
+                obstacle_avoid_distance_m=args.obstacle_avoid_distance_m,
+                scan_yaw_rad=math.radians(args.scan_yaw_deg),
+                scan_dwell_sec=args.scan_dwell_sec,
+                pass_x_m=args.pass_x_m,
+                return_y_m=args.return_y_m,
+                final_hold_sec=args.final_hold_sec,
+            )
+            self._planner = ReactiveAvoidancePlanner(mode_started_monotonic=time.monotonic())
             self.create_timer(0.05, self._tick)
             self.get_logger().info(f"stage1.5 obstacle mission controller started endpoint={args.endpoint}")
 
@@ -403,39 +634,96 @@ def run(argv: Sequence[str] | None = None) -> int:
                 rclpy.try_shutdown()
                 return
             self._drain_mavlink()
+            if now >= self._next_heartbeat:
+                _send_gcs_heartbeat(self._connection)
+                self._next_heartbeat = now + 1.0
             if self._target_system is not None and self._target_component is not None and now >= self._next_request:
                 _request_streams(self._connection, self._target_system, self._target_component)
                 if args.disable_arming_checks:
                     _set_arming_check(self._connection, self._target_system, self._target_component, 0)
                 self._next_request = now + 2.0
+            target_known = self._target_system is not None and self._target_component is not None
+            if target_known and now >= self._next_origin_command:
+                if not self._gps_global_origin_seen:
+                    _set_ekf_origin(
+                        self._connection,
+                        self._target_system,
+                        args.origin_lat_deg,
+                        args.origin_lon_deg,
+                        args.origin_alt_m,
+                    )
+                    self._count_sent_command("set_gps_global_origin")
+                if not self._home_position_seen:
+                    _set_home_position(
+                        self._connection,
+                        self._target_system,
+                        self._target_component,
+                        args.origin_lat_deg,
+                        args.origin_lon_deg,
+                        args.origin_alt_m,
+                    )
+                    self._count_sent_command("set_home_position")
+                self._next_origin_command = now + 2.0
 
             inputs = self._build_inputs(now)
-            decision = decide_obstacle_mission(inputs, self._config)
+            decision = self._planner.decide(inputs, self._config, now_monotonic=now)
             self._phases_seen.add(decision.phase)
-            if inputs.front_min is not None and inputs.front_min <= self._config.obstacle_seen_distance_m:
+            if decision.phase == "scan_left":
+                self._scan_left_seen = True
+            if decision.phase == "scan_right":
+                self._scan_right_seen = True
+            if inputs.front_min is not None and inputs.front_min <= self._config.obstacle_detect_distance_m:
                 self._obstacle_detected = True
 
             if self._target_system is not None and self._target_component is not None:
                 if decision.should_set_guided and now >= self._next_mode_command:
                     _set_mode(self._connection, self._target_system, self._mode_number)
+                    self._count_sent_command("set_mode_guided")
                     self._next_mode_command = now + 1.0
                 if decision.should_arm and now >= self._next_arm_command:
                     _command_arm(self._connection, self._target_system, self._target_component, args.force_arm)
+                    self._count_sent_command("arm")
                     self._next_arm_command = now + 2.0
                 if decision.should_takeoff and now >= self._next_takeoff_command:
                     _command_takeoff(self._connection, self._target_system, self._target_component, args.takeoff_alt_m)
+                    self._count_sent_command("takeoff")
                     self._next_takeoff_command = now + 2.0
                 if inputs.airborne_seen and now >= self._next_setpoint:
-                    _send_velocity_z_hold_setpoint(
+                    yaw_rad = decision.yaw_rad
+                    if yaw_rad is None:
+                        yaw_rad = yaw_for_velocity(decision.vx_mps, decision.vy_mps, self._last_setpoint_yaw_rad)
+                    self._last_setpoint_yaw_rad = yaw_rad
+                    decision = MissionDecision(
+                        phase=decision.phase,
+                        mission_state=decision.mission_state,
+                        reason=decision.reason,
+                        vx_mps=decision.vx_mps,
+                        vy_mps=decision.vy_mps,
+                        yaw_rad=yaw_rad,
+                        should_set_guided=decision.should_set_guided,
+                        should_arm=decision.should_arm,
+                        should_takeoff=decision.should_takeoff,
+                        terminal=decision.terminal,
+                    )
+                    target_x, target_y = position_target_from_velocity(
+                        current_x=inputs.current_x,
+                        current_y=inputs.current_y,
+                        vx_mps=decision.vx_mps,
+                        vy_mps=decision.vy_mps,
+                        lookahead_sec=args.setpoint_lookahead_sec,
+                    )
+                    _send_local_position_yaw_setpoint(
                         self._connection,
                         self._target_system,
                         self._target_component,
-                        decision.vx_mps,
-                        decision.vy_mps,
+                        target_x,
+                        target_y,
                         -args.takeoff_alt_m,
+                        decision.yaw_rad,
                     )
                     self._setpoints_sent += 1
-                    if decision.phase == "avoid":
+                    self._count_sent_command("local_position_setpoint")
+                    if decision.phase in {"avoid", "scan_left", "scan_right"}:
                         self._avoidance_setpoint_sent = True
                     self._next_setpoint = now + (1.0 / args.setpoint_rate_hz)
 
@@ -459,6 +747,9 @@ def run(argv: Sequence[str] | None = None) -> int:
                 elif msg_type == "COMMAND_ACK":
                     if len(self._command_acks) < 80:
                         self._command_acks.append({"command": int(msg.command), "result": int(msg.result)})
+                elif msg_type == "STATUSTEXT":
+                    if len(self._statustext) < 80:
+                        self._statustext.append({"severity": int(msg.severity), "text": str(msg.text)})
                 elif msg_type == "LOCAL_POSITION_NED":
                     self._current_x = float(msg.x)
                     self._current_y = float(msg.y)
@@ -473,6 +764,10 @@ def run(argv: Sequence[str] | None = None) -> int:
                         self._airborne_seen = True
                 elif msg_type == "EKF_STATUS_REPORT":
                     self._ekf_flags.append(int(msg.flags))
+                elif msg_type == "GPS_GLOBAL_ORIGIN":
+                    self._gps_global_origin_seen = True
+                elif msg_type == "HOME_POSITION":
+                    self._home_position_seen = True
                 if self._airborne_seen and self._airborne_started is None:
                     self._airborne_started = time.monotonic()
 
@@ -524,10 +819,14 @@ def run(argv: Sequence[str] | None = None) -> int:
                 front_min=inputs.front_min,
                 cmd_vx_mps=decision.vx_mps,
                 cmd_vy_mps=decision.vy_mps,
+                yaw_rad=decision.yaw_rad,
                 obstacle_detected=self._obstacle_detected,
                 setpoints_sent_count=self._setpoints_sent,
             )
             self._sim_log_pub.publish(sim_log)
+
+        def _count_sent_command(self, name: str) -> None:
+            self._sent_commands[name] = self._sent_commands.get(name, 0) + 1
 
         def _write_summary(self, *, ok: bool, reason: str) -> None:
             if not args.summary_file:
@@ -538,11 +837,19 @@ def run(argv: Sequence[str] | None = None) -> int:
                 "setpoints_sent_count": self._setpoints_sent,
                 "obstacle_detected": self._obstacle_detected,
                 "avoidance_setpoint_sent": self._avoidance_setpoint_sent,
+                "scan_left_seen": self._scan_left_seen,
+                "scan_right_seen": self._scan_right_seen,
+                "selected_avoidance_side": self._planner.selected_side,
+                "selected_avoidance_yaw_rad": self._planner.selected_yaw_rad,
                 "phases_seen": sorted(self._phases_seen),
                 "last_position": {"x": self._current_x, "y": self._current_y, "z_ned": self._current_z},
                 "message_counts": self._message_counts,
+                "sent_commands": dict(sorted(self._sent_commands.items())),
                 "command_acks": self._command_acks[-40:],
+                "statustext": self._statustext[-40:],
                 "ekf_flags_seen": sorted(set(self._ekf_flags)),
+                "gps_global_origin_seen": self._gps_global_origin_seen,
+                "home_position_seen": self._home_position_seen,
             }
             path = Path(args.summary_file)
             path.parent.mkdir(parents=True, exist_ok=True)

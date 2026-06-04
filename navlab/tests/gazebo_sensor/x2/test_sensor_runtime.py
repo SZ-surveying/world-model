@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 from navlab.gazebo_sensor.runtime import (
@@ -7,6 +9,7 @@ from navlab.gazebo_sensor.runtime import (
     build_emulator_command,
     build_scan_ideal_bridge_command,
     build_vendor_driver_command,
+    wait_for_virtual_serial_link,
 )
 
 
@@ -60,3 +63,29 @@ def test_x2_sensor_runtime_vendor_driver_uses_profile() -> None:
         "--params-file",
         "/workspace/profiles/x2-vendor-sim.yaml",
     ]
+
+
+def test_x2_sensor_runtime_waits_for_virtual_serial_link(tmp_path: Path) -> None:
+    link = tmp_path / "navlab_x2"
+
+    def create_link() -> None:
+        time.sleep(0.05)
+        link.write_text("ready", encoding="utf-8")
+
+    thread = threading.Thread(target=create_link)
+    thread.start()
+    wait_for_virtual_serial_link(link, timeout_sec=1.0)
+    thread.join(timeout=1.0)
+
+    assert link.exists()
+
+
+def test_x2_sensor_runtime_wait_for_virtual_serial_link_times_out(tmp_path: Path) -> None:
+    missing = tmp_path / "missing"
+
+    try:
+        wait_for_virtual_serial_link(missing, timeout_sec=0.01)
+    except TimeoutError as exc:
+        assert str(missing) in str(exc)
+    else:
+        raise AssertionError("expected virtual serial wait to time out")

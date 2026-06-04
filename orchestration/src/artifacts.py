@@ -23,6 +23,12 @@ def _copy_if_exists(source: Path, target: Path) -> None:
         shutil.copyfile(source, target)
 
 
+def _copy_session_log(*, session_log_dir: Path | None, log_name: str, artifact_dir: Path) -> None:
+    if session_log_dir is None:
+        return
+    _copy_if_exists(session_log_dir / log_name, artifact_dir / log_name)
+
+
 def _status(value: bool | None) -> str:
     if value is True:
         return "PASS"
@@ -65,10 +71,11 @@ def finalize_navlab_artifact(
     duration_sec: float,
     ros_domain_id: str,
     rosbag_profile: str,
+    session_log_dir: Path | None = None,
 ) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    _copy_if_exists(artifact_dir / "navlab_stack_tail.log", artifact_dir / "sitl.log")
-    _copy_if_exists(artifact_dir / "navlab_stack_tail.log", artifact_dir / "external_nav_bridge.log")
+    _copy_session_log(session_log_dir=session_log_dir, log_name="sitl.log", artifact_dir=artifact_dir)
+    _copy_session_log(session_log_dir=session_log_dir, log_name="router.log", artifact_dir=artifact_dir)
     with (artifact_dir / "run_config.toml").open("wb") as output:
         tomli_w.dump(
             {
@@ -85,6 +92,8 @@ def finalize_navlab_artifact(
                 "inputs": {
                     "odom_source": "gazebo_scan_fcu_imu_cartographer",
                     "control_mode": "companion_mavlink_hover_forward_avoid",
+                    "control_authority": "sitl_mavlink_only",
+                    "gazebo_direct_set_pose": False,
                     "rosbag_profile": rosbag_profile,
                 },
                 "host": {
@@ -95,6 +104,8 @@ def finalize_navlab_artifact(
                     "summary_md": str(artifact_dir / "summary.md"),
                     "rosbag": str(artifact_dir / "rosbag" / "rosbag_0.mcap"),
                     "sitl_log": str(artifact_dir / "sitl.log"),
+                    "router_log": str(artifact_dir / "router.log"),
+                    "stack_tail_log": str(artifact_dir / "navlab_stack_tail.log"),
                     "external_nav_bridge_log": str(artifact_dir / "external_nav_bridge.log"),
                 },
             },
@@ -113,8 +124,10 @@ def _write_summary_md(artifact_dir: Path) -> None:
             ("imu_status", "IMU"),
             ("external_nav_status", "ExternalNav"),
             ("cartographer_status", "Cartographer"),
+            ("lidar_chain", "Lidar Chain"),
             ("x2_status", "X2 Sensor"),
             ("scan_publisher", "Scan Publisher"),
+            ("observation_mode", "Observation Mode"),
         )
     ]
     rendered = _summary_template().render(

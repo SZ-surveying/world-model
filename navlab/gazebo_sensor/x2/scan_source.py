@@ -23,6 +23,7 @@ def resample_ideal_scan_to_x2_samples(
     range_min_m: float,
     range_max_m: float,
     noise_stddev_m: float = 0.0,
+    noise_stddev_per_m: float = 0.0,
     dropout_rate: float = 0.0,
     random_seed: int | None = None,
 ) -> tuple[X2Sample, ...]:
@@ -34,6 +35,8 @@ def resample_ideal_scan_to_x2_samples(
         raise ValueError("angle_increment_rad must be finite and non-zero")
     if noise_stddev_m < 0:
         raise ValueError("noise_stddev_m must be non-negative")
+    if noise_stddev_per_m < 0:
+        raise ValueError("noise_stddev_per_m must be non-negative")
     if not 0 <= dropout_rate <= 1:
         raise ValueError("dropout_rate must be in [0, 1]")
 
@@ -54,6 +57,7 @@ def resample_ideal_scan_to_x2_samples(
             range_max_m=range_max_m,
             rng=rng,
             noise_stddev_m=noise_stddev_m,
+            noise_stddev_per_m=noise_stddev_per_m,
             dropout_rate=dropout_rate,
         )
         samples.append(X2Sample(angle_deg=angle_deg, range_m=range_m))
@@ -61,8 +65,8 @@ def resample_ideal_scan_to_x2_samples(
 
 
 def _x2_angle_deg_to_ros_rad(angle_deg: float) -> float:
-    angle_rad = math.radians(angle_deg % 360.0)
-    if angle_rad > math.pi:
+    angle_rad = math.radians((angle_deg - 180.0) % 360.0)
+    if angle_rad >= math.pi:
         angle_rad -= 2.0 * math.pi
     return angle_rad
 
@@ -87,6 +91,7 @@ def _normalize_range(
     range_max_m: float,
     rng: Any,
     noise_stddev_m: float,
+    noise_stddev_per_m: float,
     dropout_rate: float,
 ) -> float:
     if dropout_rate > 0 and rng.random() < dropout_rate:
@@ -94,7 +99,8 @@ def _normalize_range(
     if not math.isfinite(value):
         return math.nan
     value = max(range_min_m, min(range_max_m, value))
-    if noise_stddev_m > 0:
-        value += rng.gauss(0.0, noise_stddev_m)
+    noise_stddev = noise_stddev_m + abs(value) * noise_stddev_per_m
+    if noise_stddev > 0:
+        value += rng.gauss(0.0, noise_stddev)
         value = max(range_min_m, min(range_max_m, value))
     return value

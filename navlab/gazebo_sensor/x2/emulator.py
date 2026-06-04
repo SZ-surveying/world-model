@@ -5,6 +5,7 @@ import json
 import math
 import os
 import pty
+import random
 import termios
 import time
 import tty
@@ -40,11 +41,15 @@ COMMAND_NAMES = {
 class X2SerialEmulatorConfig:
     virtual_serial_link: Path = DEFAULT_VIRTUAL_SERIAL_LINK
     scan_frequency_hz: float = DEFAULT_SCAN_FREQUENCY_HZ
+    scan_frequency_min_hz: float = 4.0
+    scan_frequency_max_hz: float = 8.0
+    scan_frequency_jitter_hz: float = 0.0
     sample_rate_hz: float = DEFAULT_SAMPLE_RATE_HZ
     range_min_m: float = DEFAULT_RANGE_MIN_M
     range_max_m: float = DEFAULT_RANGE_MAX_M
     status_topic: str = DEFAULT_STATUS_TOPIC
     replace_existing_link: bool = True
+    random_seed: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,9 +59,14 @@ class X2SerialEmulatorStatus:
     virtual_serial_link: str
     slave_path: str | None
     scan_frequency_hz: float
+    scan_frequency_min_hz: float
+    scan_frequency_max_hz: float
+    scan_frequency_jitter_hz: float
+    latest_scan_frequency_hz: float
     sample_rate_hz: float
     range_min_m: float
     range_max_m: float
+    random_seed: int | None
     packet_count: int
     byte_count: int
     command_count: int
@@ -87,6 +97,29 @@ def samples_per_scan(*, sample_rate_hz: float, scan_frequency_hz: float) -> int:
     return max(1, round(sample_rate_hz / scan_frequency_hz))
 
 
+def jittered_scan_frequency_hz(
+    *,
+    base_hz: float,
+    min_hz: float,
+    max_hz: float,
+    jitter_hz: float,
+    rng: random.Random,
+) -> float:
+    if not math.isfinite(base_hz) or base_hz <= 0:
+        raise ValueError("base_hz must be positive")
+    if not math.isfinite(min_hz) or min_hz <= 0:
+        raise ValueError("min_hz must be positive")
+    if not math.isfinite(max_hz) or max_hz <= 0:
+        raise ValueError("max_hz must be positive")
+    if min_hz > max_hz:
+        raise ValueError("min_hz must be <= max_hz")
+    if jitter_hz < 0:
+        raise ValueError("jitter_hz must be non-negative")
+    if jitter_hz == 0:
+        return min(max(base_hz, min_hz), max_hz)
+    return min(max(base_hz + rng.uniform(-jitter_hz, jitter_hz), min_hz), max_hz)
+
+
 class X2SerialEmulator:
     def __init__(self, config: X2SerialEmulatorConfig | None = None) -> None:
         self.config = config or X2SerialEmulatorConfig()
@@ -100,6 +133,8 @@ class X2SerialEmulator:
         self._last_command: str | None = None
         self._last_command_byte: int | None = None
         self._updated_monotonic_sec = time.monotonic()
+        self._rng = random.Random(self.config.random_seed)
+        self._latest_scan_frequency_hz = self.config.scan_frequency_hz
 
     @property
     def slave_path(self) -> str | None:
@@ -190,9 +225,16 @@ class X2SerialEmulator:
     def write_scan_once(self, samples: tuple[X2Sample, ...], *, require_scanning: bool = True) -> int:
         if require_scanning and not self.is_scanning:
             return 0
+        self._latest_scan_frequency_hz = jittered_scan_frequency_hz(
+            base_hz=self.config.scan_frequency_hz,
+            min_hz=self.config.scan_frequency_min_hz,
+            max_hz=self.config.scan_frequency_max_hz,
+            jitter_hz=self.config.scan_frequency_jitter_hz,
+            rng=self._rng,
+        )
         packets = encode_scan_packets(
             samples,
-            scan_frequency_hz=self.config.scan_frequency_hz,
+            scan_frequency_hz=self._latest_scan_frequency_hz,
             range_min_m=self.config.range_min_m,
             range_max_m=self.config.range_max_m,
         )
@@ -216,9 +258,14 @@ class X2SerialEmulator:
             virtual_serial_link=str(self.config.virtual_serial_link),
             slave_path=self._slave_path,
             scan_frequency_hz=self.config.scan_frequency_hz,
+            scan_frequency_min_hz=self.config.scan_frequency_min_hz,
+            scan_frequency_max_hz=self.config.scan_frequency_max_hz,
+            scan_frequency_jitter_hz=self.config.scan_frequency_jitter_hz,
+            latest_scan_frequency_hz=self._latest_scan_frequency_hz,
             sample_rate_hz=self.config.sample_rate_hz,
             range_min_m=self.config.range_min_m,
             range_max_m=self.config.range_max_m,
+            random_seed=self.config.random_seed,
             packet_count=self._packet_count,
             byte_count=self._byte_count,
             command_count=self._command_count,

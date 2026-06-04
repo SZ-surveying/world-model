@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from math import cos, inf, sin
+from math import atan2, cos, hypot, inf, sin
 from pathlib import Path
 
 from navlab.common.perception.contract import DEFAULT_SCAN_CONTRACT, ScanContract
@@ -51,45 +51,131 @@ class WorldObstacleBox:
     scale: MarkerScale
 
 
-def _build_uav_body_markers(uav_marker: MarkerSpec) -> list[MarkerSpec]:
-    half_length = uav_marker.scale.x / 2.0
-    nose_length = 0.2
-    tail_length = max(uav_marker.scale.x - nose_length, 0.0)
-    tail_center_x = uav_marker.pose.x - (nose_length / 2.0)
-    nose_center_x = uav_marker.pose.x + (half_length - nose_length / 2.0)
+def _uav_part(
+    *,
+    marker_id: int,
+    namespace: str,
+    shape: str,
+    root_pose: MarkerPose,
+    dx: float,
+    dy: float,
+    dz: float,
+    scale: MarkerScale,
+    color: MarkerColor,
+    yaw: float = 0.0,
+    pitch: float = 0.0,
+    roll: float = 0.0,
+) -> MarkerSpec:
+    return MarkerSpec(
+        marker_id=marker_id,
+        namespace=namespace,
+        shape=shape,
+        pose=MarkerPose(
+            x=root_pose.x + dx,
+            y=root_pose.y + dy,
+            z=root_pose.z + dz,
+            roll=root_pose.roll + roll,
+            pitch=root_pose.pitch + pitch,
+            yaw=root_pose.yaw + yaw,
+        ),
+        scale=scale,
+        color=color,
+        frame_id="map",
+    )
+
+
+def _arm_yaw_and_length(start: tuple[float, float], end: tuple[float, float]) -> tuple[float, float, float, float]:
+    center_x = (start[0] + end[0]) / 2.0
+    center_y = (start[1] + end[1]) / 2.0
+    return center_x, center_y, atan2(end[1] - start[1], end[0] - start[0]), hypot(end[0] - start[0], end[1] - start[1])
+
+
+def _build_navlab_iq_quad_markers(root_marker: MarkerSpec) -> list[MarkerSpec]:
+    root_pose = root_marker.pose
+    rotor_specs = [
+        ("rotor_0", 0.13, -0.22, MarkerColor(0.08, 0.22, 0.95, 0.82)),
+        ("rotor_1", -0.13, 0.20, MarkerColor(0.08, 0.22, 0.95, 0.82)),
+        ("rotor_2", 0.13, 0.22, MarkerColor(0.05, 0.75, 0.22, 0.82)),
+        ("rotor_3", -0.13, -0.20, MarkerColor(0.05, 0.75, 0.22, 0.82)),
+    ]
+    arm_a = _arm_yaw_and_length((0.13, -0.22), (-0.13, 0.20))
+    arm_b = _arm_yaw_and_length((0.13, 0.22), (-0.13, -0.20))
+    marker_id = root_marker.marker_id
     return [
-        MarkerSpec(
-            marker_id=uav_marker.marker_id,
-            namespace="uav_body_tail_marker",
-            shape="cube",
-            pose=MarkerPose(
-                x=tail_center_x,
-                y=uav_marker.pose.y,
-                z=uav_marker.pose.z,
-                roll=uav_marker.pose.roll,
-                pitch=uav_marker.pose.pitch,
-                yaw=uav_marker.pose.yaw,
-            ),
-            scale=MarkerScale(tail_length, uav_marker.scale.y, uav_marker.scale.z),
-            color=MarkerColor(0.1, 0.35, 0.85, 1.0),
-            frame_id=uav_marker.frame_id,
+        _uav_part(
+            marker_id=marker_id,
+            namespace="navlab_iq_quad_body",
+            shape="sphere",
+            root_pose=root_pose,
+            dx=0.0,
+            dy=0.0,
+            dz=0.025,
+            scale=MarkerScale(0.34, 0.22, 0.12),
+            color=MarkerColor(0.10, 0.22, 0.42, 1.0),
         ),
-        MarkerSpec(
-            marker_id=uav_marker.marker_id + 1,
-            namespace="uav_body_nose_marker",
+        _uav_part(
+            marker_id=marker_id + 1,
+            namespace="navlab_iq_quad_arm_a",
             shape="cube",
-            pose=MarkerPose(
-                x=nose_center_x,
-                y=uav_marker.pose.y,
-                z=uav_marker.pose.z,
-                roll=uav_marker.pose.roll,
-                pitch=uav_marker.pose.pitch,
-                yaw=uav_marker.pose.yaw,
-            ),
-            scale=MarkerScale(nose_length, uav_marker.scale.y, uav_marker.scale.z),
-            color=MarkerColor(0.96, 0.82, 0.32, 1.0),
-            frame_id=uav_marker.frame_id,
+            root_pose=root_pose,
+            dx=arm_a[0],
+            dy=arm_a[1],
+            dz=0.025,
+            yaw=arm_a[2],
+            scale=MarkerScale(arm_a[3], 0.025, 0.025),
+            color=MarkerColor(0.05, 0.05, 0.05, 0.9),
         ),
+        _uav_part(
+            marker_id=marker_id + 2,
+            namespace="navlab_iq_quad_arm_b",
+            shape="cube",
+            root_pose=root_pose,
+            dx=arm_b[0],
+            dy=arm_b[1],
+            dz=0.025,
+            yaw=arm_b[2],
+            scale=MarkerScale(arm_b[3], 0.025, 0.025),
+            color=MarkerColor(0.05, 0.05, 0.05, 0.9),
+        ),
+        *[
+            _uav_part(
+                marker_id=marker_id + 3 + index,
+                namespace=f"navlab_iq_quad_{name}_disc",
+                shape="cylinder",
+                root_pose=root_pose,
+                dx=x,
+                dy=y,
+                dz=0.023,
+                scale=MarkerScale(0.22, 0.22, 0.008),
+                color=color,
+            )
+            for index, (name, x, y, color) in enumerate(rotor_specs)
+        ],
+        _uav_part(
+            marker_id=marker_id + 7,
+            namespace="navlab_iq_quad_x2_lidar",
+            shape="cylinder",
+            root_pose=root_pose,
+            dx=0.05,
+            dy=0.0,
+            dz=0.10,
+            scale=MarkerScale(0.08, 0.08, 0.04),
+            color=MarkerColor(0.02, 0.02, 0.02, 1.0),
+        ),
+        *[
+            _uav_part(
+                marker_id=marker_id + 8 + index,
+                namespace=f"navlab_iq_quad_{name}_motor",
+                shape="cylinder",
+                root_pose=root_pose,
+                dx=x,
+                dy=y,
+                dz=0.015,
+                scale=MarkerScale(0.055, 0.055, 0.045),
+                color=MarkerColor(0.02, 0.02, 0.02, 1.0),
+            )
+            for index, (name, x, y, _color) in enumerate(rotor_specs)
+        ],
     ]
 
 
@@ -132,6 +218,23 @@ def load_world_marker_specs(world_file: str | Path) -> list[MarkerSpec]:
 
     specs: list[MarkerSpec] = []
     marker_id = 0
+    for include in world.findall("include"):
+        name = include.findtext("name") or ""
+        uri = include.findtext("uri") or ""
+        if name != "navlab_iq_quad" and uri != "model://navlab_iq_quad":
+            continue
+        specs.append(
+            MarkerSpec(
+                marker_id=marker_id,
+                namespace="navlab_iq_quad",
+                shape="navlab_iq_quad",
+                pose=_parse_pose(include.findtext("pose")),
+                scale=MarkerScale(1.0, 1.0, 1.0),
+                color=MarkerColor(1.0, 1.0, 1.0, 1.0),
+            )
+        )
+        marker_id += 1
+
     for model in world.findall("model"):
         name = model.get("name", "")
 
@@ -159,8 +262,8 @@ def load_world_marker_specs(world_file: str | Path) -> list[MarkerSpec]:
 
     expanded_specs: list[MarkerSpec] = []
     for spec in specs:
-        if spec.namespace == "uav_start_marker" and spec.shape == "cube":
-            expanded_specs.extend(_build_uav_body_markers(spec))
+        if spec.namespace == "navlab_iq_quad" and spec.shape == "navlab_iq_quad":
+            expanded_specs.extend(_build_navlab_iq_quad_markers(spec))
         else:
             expanded_specs.append(spec)
 
@@ -187,6 +290,12 @@ def load_world_model_pose(world_file: str | Path, model_name: str) -> MarkerPose
     for model in world.findall("model"):
         if model.get("name", "") == model_name:
             return _parse_pose(model.findtext("pose"))
+
+    for include in world.findall("include"):
+        name = include.findtext("name") or ""
+        uri = include.findtext("uri") or ""
+        if name == model_name or uri == f"model://{model_name}":
+            return _parse_pose(include.findtext("pose"))
 
     raise ValueError(f"model '{model_name}' not found in {world_file}")
 

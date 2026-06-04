@@ -400,6 +400,7 @@ companion = [
     { name = "catkin-pkg" },
     { name = "empy" },
     { name = "lark" },
+    { name = "numpy" },
     { name = "pymavlink" },
     { name = "pyyaml" },
 ]
@@ -425,6 +426,7 @@ companion = [
     { name = "catkin-pkg", specifier = ">=1.1.0" },
     { name = "empy", specifier = "==3.3.4" },
     { name = "lark", specifier = ">=1.3.1" },
+    { name = "numpy", specifier = ">=2.4.5" },
     { name = "pymavlink", specifier = ">=2.4.49" },
     { name = "pyyaml", specifier = ">=6.0.2" },
 ]

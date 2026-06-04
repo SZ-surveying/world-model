@@ -17,7 +17,7 @@ Gazebo/sensor 镜像内。companion、SLAM、SITL 等其他镜像不应该感知
 - [x] Gazebo 已能发布随 UAV 运动的 ideal lidar scan。
 - [x] `/scan_features` 已能消费 `sensor_msgs/msg/LaserScan`。
 - [x] NavLab acceptance 已能记录 `/scan`、`/scan_features` 和 mission topics。
-- [ ] Gazebo ideal scan 还没有和最终厂商 `/scan` 分离。
+- [x] Gazebo ideal scan 已和最终厂商 `/scan` 分离。
 - [x] 已有 X2 虚拟串口协议 emulator。
 - [x] P3 synthetic smoke 中 `/scan` 已由 `ydlidar_ros2_driver_node` 发布。
 - [x] X2 协议代码和依赖已收口到 Gazebo/sensor 专属 runtime。
@@ -156,9 +156,20 @@ SLAM 或 SITL 镜像感知厂商协议和传感器内部实现。
 
 - [x] `/scan_ideal` 存在，并由 Gazebo/bridge 发布。
 - [x] `/scan` 存在，并由 Gazebo/sensor 容器内的厂商 driver 发布。
-- [ ] UAV/lidar 在 Gazebo 中移动时，`/scan` 会变化。
+- [x] UAV/lidar 在 Gazebo 中移动时，`/scan` 会变化。
 - [ ] `/scan_features.front_min` 基于厂商 driver `/scan` 变化。
-- [ ] Foxglove 可同时查看 `/scan_ideal` 和 `/scan`。
+- [x] Foxglove 可同时查看 `/scan_ideal` 和 `/scan`。
+
+最新证据：
+
+- artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260604_143533/summary.json`
+- `scan_source == "x2_virtual_serial_vendor_driver"`
+- `/scan` message count：`810`
+- `/scan_ideal` message count：`1156`
+- `/sim/x2/status` message count：`231`
+- `/scan` publisher：`ydlidar_ros2_driver_node`
+- MCAP 抽样显示 `/scan` 最近有效距离从 `4.951m` 变化到 `2.951m`
+- 注意：该旧包中的 `/scan_features.front_min` 采样为 `NaN`，需要用已修正 scan 方向后的新 acceptance 包复验。
 
 ## P5：NavLab/Gazebo runtime 集成
 
@@ -178,12 +189,20 @@ Gazebo/sensor runtime。
 
 ### 验收
 
-- [ ] NavLab acceptance summary 中有 `scan_source = "x2_virtual_serial_vendor_driver"`。
-- [ ] Rosbag 包含 `/scan`、`/scan_ideal`、`/sim/x2/status` 和 `/scan_features`。
+- [x] NavLab acceptance summary 中有 `scan_source = "x2_virtual_serial_vendor_driver"`。
+- [x] Rosbag 包含 `/scan`、`/scan_ideal`、`/sim/x2/status` 和 `/scan_features`。
 - [x] `/scan` publisher 是厂商 driver。
-- [ ] `/scan_features` message count 非零。
-- [ ] mission rosbag replay 显示任务使用厂商 driver `/scan` 完成。
+- [x] `/scan_features` message count 非零。
+- [x] mission rosbag replay 显示任务使用厂商 driver `/scan` 完成。
 - [ ] acceptance summary 证明 companion、SLAM、SITL 镜像没有 X2 vendor dependency。
+
+最新证据：
+
+- `rosbag_profile_summary.json` 中 `/scan_features` message count：`810`
+- `summary.json` 中 `mission_consumes_final_scan == true`
+- `summary.json` 中 `scan_features_consumes_final_scan == true`
+- `summary.json` 中 `slam_consumes_final_scan == true`
+- `summary.json` 中 `lidar_chain.x2_is_internal_to_sensor_runtime == true`
 
 ## P6：保真度标定
 
@@ -191,8 +210,8 @@ Gazebo/sensor runtime。
 
 ### 任务
 
-- [ ] 在厂商支持的 `4-8 Hz` 范围内加入 scan-frequency jitter。
-- [ ] 加入距离相关噪声。
+- [x] 在厂商支持的 `4-8 Hz` 范围内加入 scan-frequency jitter。
+- [x] 加入距离相关噪声。
 - [ ] 加入 invalid range、暗表面、高入射角等丢点规则。
 - [ ] 在 Gazebo world markers 中加入可选材质标签，辅助 dropout 调参。
 - [ ] 增加 `/scan_ideal` 和最终 `/scan` 的差异指标。
@@ -200,7 +219,7 @@ Gazebo/sensor runtime。
 
 ### 验收
 
-- [ ] 固定 seed 下噪声和丢点可复现。
+- [x] 固定 seed 下噪声和丢点可复现。
 - [ ] summary 中包含 mean range error、dropout rate、sample count。
 - [ ] 标定配置写入 summary JSON 和 rosbag metadata。
 

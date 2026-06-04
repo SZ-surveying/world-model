@@ -28,6 +28,8 @@ class ExternalNavBridgeNode : public rclcpp::Node {
         declare_parameter<std::string>("output_frame_id", "external_nav");
     output_child_frame_id_ =
         declare_parameter<std::string>("output_child_frame_id", "base_link");
+    input_odom_topic_ =
+        declare_parameter<std::string>("input_odom_topic", "/odom");
     ap_tf_topic_ = declare_parameter<std::string>("ap_tf_topic", "/ap/tf");
     ap_tf_parent_frame_ =
         declare_parameter<std::string>("ap_tf_parent_frame", "odom");
@@ -51,7 +53,7 @@ class ExternalNavBridgeNode : public rclcpp::Node {
     ap_tf_pub_ = create_publisher<tf2_msgs::msg::TFMessage>(ap_tf_topic_, 10);
 
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-        "/odom", 10,
+        input_odom_topic_, 10,
         std::bind(&ExternalNavBridgeNode::handle_odom, this, std::placeholders::_1));
 
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
@@ -66,7 +68,8 @@ class ExternalNavBridgeNode : public rclcpp::Node {
         500ms, std::bind(&ExternalNavBridgeNode::publish_status, this));
 
     RCLCPP_INFO(get_logger(),
-                "external_nav_bridge started; waiting for /odom%s%s coordinate_mode=%s",
+                "external_nav_bridge started; waiting for %s%s%s coordinate_mode=%s",
+                input_odom_topic_.c_str(),
                 require_imu_for_output_ ? " and /imu/data" : "",
                 require_height_for_output_ ? " and /height/estimate" : "",
                 coordinate_mode_.c_str());
@@ -294,6 +297,7 @@ class ExternalNavBridgeNode : public rclcpp::Node {
         << "\",";
     oss << "\"ready\":" << (ready ? "true" : "false") << ",";
     oss << "\"odom\":{";
+    oss << "\"input_topic\":\"" << input_odom_topic_ << "\",";
     oss << "\"present\":" << (last_odom_ ? "true" : "false") << ",";
     oss << "\"fresh\":" << (odom_fresh ? "true" : "false") << ",";
     oss << "\"frame_ok\":" << (frame_ok ? "true" : "false") << ",";
@@ -340,6 +344,7 @@ class ExternalNavBridgeNode : public rclcpp::Node {
   bool require_height_for_output_;
   std::string output_frame_id_;
   std::string output_child_frame_id_;
+  std::string input_odom_topic_;
   std::string ap_tf_topic_;
   std::string ap_tf_parent_frame_;
   std::string ap_tf_child_frame_;

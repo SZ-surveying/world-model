@@ -215,10 +215,12 @@ TRI_PACKMAXNODES = 80
 每一圈流程：
 
 1. 将 `/scan_ideal` 插值或重采样到 `samples_per_scan` 个 raw samples。
-2. 在编码前应用可选噪声、丢点、材质规则。
-3. 按每包最多 `80` 点拆包。
-4. 编码 `FSA`、`LSA`、`LSN`、`CT`、`Si`、`CS`。
-5. 把 packet bytes 写入 PTY。
+2. 在 raw X2 angle 和 Gazebo/ROS ideal angle 之间补偿厂商 driver 的 180 度输出偏置，
+   保证最终 `/scan` 中 `0 deg` 是雷达/无人机正前方。
+3. 在编码前应用可选噪声、丢点、材质规则。
+4. 按每包最多 `80` 点拆包。
+5. 编码 `FSA`、`LSA`、`LSN`、`CT`、`Si`、`CS`。
+6. 把 packet bytes 写入 PTY。
 
 第一版可以按每圈 burst 写包。后续再做更接近 `115200` baud 的 byte pacing。
 

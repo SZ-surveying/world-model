@@ -103,6 +103,11 @@ def generate_launch_description():
                 description="Require fresh /imu/data before external nav output",
             ),
             DeclareLaunchArgument(
+                "external_nav_input_odom_topic",
+                default_value="/odom",
+                description="Input odometry topic consumed by external_nav_bridge",
+            ),
+            DeclareLaunchArgument(
                 "require_height_for_external_nav",
                 default_value="false",
                 description="Require fresh /height/estimate before external nav output",
@@ -228,6 +233,9 @@ def generate_launch_description():
                 parameters=[
                     external_nav_params,
                     {
+                        "input_odom_topic": LaunchConfiguration(
+                            "external_nav_input_odom_topic"
+                        ),
                         "require_imu_for_output": LaunchConfiguration(
                             "require_imu_for_external_nav"
                         ),

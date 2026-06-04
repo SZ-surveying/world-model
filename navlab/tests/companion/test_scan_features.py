@@ -44,3 +44,14 @@ def test_scan_features_match_x3_sector_summary_layout() -> None:
     assert isclose(report.nearest_y or 0.0, 0.0, abs_tol=1e-6)
     assert report.valid_count == 4
     assert report.total_count == DEFAULT_SCAN_CONTRACT.beam_count
+
+
+def test_scan_features_keeps_ros_front_at_zero_degrees() -> None:
+    ranges = _empty_ranges()
+    ranges[0] = 5.0
+    ranges[DEFAULT_SCAN_CONTRACT.beam_count // 2] = 2.5
+
+    report = compute_scan_features(ranges)
+
+    assert report.front_min == 2.5
+    assert report.rear_min == 5.0

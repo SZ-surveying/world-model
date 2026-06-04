@@ -18,18 +18,19 @@ def test_x2_sensor_code_lives_under_sensor_package() -> None:
 
 
 def test_gazebo_sensor_docker_target_owns_vendor_driver_dependency() -> None:
-    dockerfile = Path("docker/Dockerfile.companion").read_text(encoding="utf-8")
+    companion_dockerfile = Path("docker/Dockerfile.companion").read_text(encoding="utf-8")
+    dockerfile = Path("docker/Dockerfile.gazebo-sensor").read_text(encoding="utf-8")
 
     assert "AS navlab-gazebo-sensor" in dockerfile
     assert "AS gazebo-sensor-python-builder" in dockerfile
 
     sensor_stage = dockerfile.split("FROM remote-sitl-lab/ros-jazzy-base:latest AS navlab-gazebo-sensor", 1)[1]
-    earlier_stages = dockerfile.split("FROM remote-sitl-lab/ros-jazzy-base:latest AS navlab-gazebo-sensor", 1)[0]
 
     assert "third_party/YDLidar-SDK" in sensor_stage
     assert "third_party/ydlidar_ros2_driver" in sensor_stage
     assert "ros-jazzy-ros-gz-bridge" in sensor_stage
-    assert "third_party/ydlidar_ros2_driver" not in earlier_stages
+    assert "navlab-gazebo-sensor" not in companion_dockerfile
+    assert "third_party/ydlidar_ros2_driver" not in companion_dockerfile
 
 
 def test_vendor_driver_uses_jazzy_compatible_parameter_declarations() -> None:
@@ -70,3 +71,8 @@ def test_x2_sensor_runtime_config_reads_project_x2_protocol_section() -> None:
     assert config.dropout_rate == 0.0
     assert config.auto_start is True
     assert config.emulator_config().virtual_serial_link == config.virtual_serial_link
+
+
+def test_replay_meshes_are_not_part_of_default_replay_path() -> None:
+    assert not Path("docker/navlab_models/iris_with_standoffs").exists()
+    assert not Path("docker/navlab_replay_meshes").exists()

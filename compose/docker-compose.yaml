@@ -7,11 +7,12 @@ services:
   sitl:
     <<: *nn_user
     image: "${SITL_IMAGE:-remote-sitl-lab/ardupilot-sitl:stage1-f10500ae45aa}"
+    network_mode: "service:gazebo"
     environment:
       SESSION_ID: "${SESSION_ID:-manual}"
       SITL_UPSTREAM_ENDPOINT: "${SITL_UPSTREAM_ENDPOINT:-mavlink-router:14550}"
       SITL_ROUTER_ONLY: "${SITL_ROUTER_ONLY:-false}"
-      SITL_MODEL: "${SITL_MODEL:-quad}"
+      SITL_MODEL: "${SITL_MODEL:-JSON}"
       SITL_SPEEDUP: "${SITL_SPEEDUP:-1}"
       SITL_INSTANCE: "${SITL_INSTANCE:-0}"
       SITL_HOME: "${SITL_HOME:-}"
@@ -29,10 +30,10 @@ services:
       start_period: 20s
     profiles: [ "base_env" ]
     depends_on:
+      gazebo:
+        condition: service_started
       mavlink-router:
         condition: service_healthy
-    networks:
-      - mavlink-lab
 
   mavlink-router:
     <<: *nn_user
@@ -63,11 +64,11 @@ services:
       SESSION_ID: "${SESSION_ID:-manual}"
       ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
       RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-      WORLD: "${GAZEBO_WORLD:-/workspace/worlds/uav_obstacle_5m.sdf}"
+      WORLD: "${GAZEBO_WORLD:-/workspace/worlds/navlab_iq_quad_figure8.sdf}"
     volumes:
       - ./artifacts/ros:/artifacts/ros
       - ./docker/worlds:/workspace/worlds:ro
-      - ./docker/models:/workspace/models:ro
+      - ./docker/navlab_models:/workspace/models:ro
       - ./docker/entrypoints/start-gazebo.sh:/usr/local/bin/start-gazebo.sh:ro
     command: [ "bash", "/usr/local/bin/start-gazebo.sh" ]
     profiles: [ "base_env", "x2_sensor" ]
@@ -78,6 +79,7 @@ services:
     <<: *nn_user
     image: "${NAVLAB_GAZEBO_SENSOR_IMAGE:-world-model/navlab-gazebo-sensor:latest}"
     network_mode: "service:gazebo"
+    working_dir: /workspace
     environment:
       SESSION_ID: "${SESSION_ID:-manual}"
       ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"

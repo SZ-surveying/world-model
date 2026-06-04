@@ -11,7 +11,7 @@ def test_x2_protocol_config_loads_vendor_defaults() -> None:
     config = load_x2_protocol_config()
 
     assert config.enabled.value is False
-    assert config.profile.value == "profiles/x2-vendor-sim.yaml"
+    assert config.profile.value == "/workspace/profiles/x2-vendor-sim.yaml"
     assert config.virtual_serial_link.value == "/tmp/navlab_x2"
     assert config.scan_ideal_topic.value == "/scan_ideal"
     assert config.scan_topic.value == "/scan"
@@ -20,8 +20,11 @@ def test_x2_protocol_config_loads_vendor_defaults() -> None:
     assert config.scan_frequency_hz.value == 7.0
     assert config.scan_frequency_min_hz.value == 4.0
     assert config.scan_frequency_max_hz.value == 8.0
+    assert config.scan_frequency_jitter_hz.value == 0.0
     assert config.range_min_m.value == 0.1
     assert config.range_max_m.value == 8.0
+    assert config.range_noise_stddev_per_m.value == 0.0
+    assert config.random_seed.value == ""
 
 
 def test_x2_vendor_profile_matches_protocol_baseline() -> None:
@@ -39,3 +42,15 @@ def test_x2_vendor_profile_matches_protocol_baseline() -> None:
     assert params["range_max"] == 8.0
     assert params["isSingleChannel"] is True
     assert params["intensity"] is False
+
+
+def test_x2_runtime_config_passes_jitter_and_seed_to_emulator() -> None:
+    from navlab.gazebo_sensor.config import X2SensorRuntimeConfig
+
+    runtime = X2SensorRuntimeConfig.load()
+    emulator = runtime.emulator_config()
+
+    assert emulator.scan_frequency_min_hz == 4.0
+    assert emulator.scan_frequency_max_hz == 8.0
+    assert emulator.scan_frequency_jitter_hz == 0.0
+    assert emulator.random_seed is None

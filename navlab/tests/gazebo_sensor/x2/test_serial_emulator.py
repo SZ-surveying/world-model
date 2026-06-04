@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import random
 import time
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from navlab.gazebo_sensor.x2.emulator import (
     X2SerialEmulator,
     X2SerialEmulatorConfig,
     build_static_scan_samples,
+    jittered_scan_frequency_hz,
     samples_per_scan,
 )
 from navlab.gazebo_sensor.x2.protocol import LIDAR_CMD_SCAN, LIDAR_CMD_STOP, PH_BYTES
@@ -95,3 +97,43 @@ def test_x2_serial_emulator_does_not_write_when_not_scanning(tmp_path: Path) -> 
 
 def test_samples_per_scan_uses_x2_sample_rate_over_scan_frequency() -> None:
     assert samples_per_scan(sample_rate_hz=3000.0, scan_frequency_hz=7.0) == 429
+
+
+def test_jittered_scan_frequency_stays_inside_x2_bounds() -> None:
+    rng = random.Random(7)
+
+    values = [
+        jittered_scan_frequency_hz(
+            base_hz=7.0,
+            min_hz=4.0,
+            max_hz=8.0,
+            jitter_hz=3.0,
+            rng=rng,
+        )
+        for _ in range(20)
+    ]
+
+    assert min(values) >= 4.0
+    assert max(values) <= 8.0
+    assert len(set(values)) > 1
+
+
+def test_x2_serial_emulator_status_reports_jitter_config(tmp_path: Path) -> None:
+    link_path = tmp_path / "navlab_x2"
+    config = X2SerialEmulatorConfig(
+        virtual_serial_link=link_path,
+        scan_frequency_hz=7.0,
+        scan_frequency_min_hz=4.0,
+        scan_frequency_max_hz=8.0,
+        scan_frequency_jitter_hz=0.25,
+        random_seed=9,
+    )
+    samples = build_static_scan_samples(sample_count=4, range_m=1.0)
+    with X2SerialEmulator(config) as emulator:
+        emulator.start_scanning()
+        emulator.write_scan_once(samples)
+        status = emulator.status()
+
+    assert status.scan_frequency_jitter_hz == 0.25
+    assert status.random_seed == 9
+    assert 4.0 <= status.latest_scan_frequency_hz <= 8.0

@@ -1,62 +1,56 @@
 # 无人机世界模型项目文档
 
-这个目录只保留当前主线需要的文档：
+这个目录只保留当前主线需要的文档。当前重点不是旧的接口验收，而是：
 
-- Gazebo 最小仿真运动闭环
-- 室内无 GPS 激光 SLAM + ArduPilot SITL 阶段拆解
-- 阶段 1 `ExternalNav` 设计和 TODO
-
-旧的泛化架构、重复设计草案和过期 runbook 已经删除，避免后续填文档或执行任务时被旧口径干扰。
+- Gazebo 8 字形室内世界
+- X2 雷达协议级仿真
+- 无 GPS 真实 SLAM feedback
+- ArduPilot SITL ExternalNav
+- FCU 真实悬停
+- MCAP rosbag 和 Foxglove 回放
 
 ## 主导航
 
-### 室内无 GPS 场景
+### 室内无 GPS 主线
 
-- `docs/scenarios/indoor/task_breakdown_progress_tracking.md`: 当前任务拆解和进度跟踪
-- `docs/scenarios/indoor/stage1_sitl_external_nav_design.md`: 阶段 1 SITL ExternalNav 设计
-- `docs/scenarios/indoor/stage1_sitl_external_nav_todo.md`: 阶段 1 P0 / P1 / P2 TODO
-- `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_design.md`: 阶段 1.5 无 GPS companion + SITL + Gazebo 设计
-- `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_todo.md`: 阶段 1.5 phase TODO、rosbag 和 Foxglove 回放验收
+- `docs/scenarios/indoor/navlab_slam_hover_design.md`: 当前无 GPS SLAM feedback 悬停阶段设计
+- `docs/scenarios/indoor/navlab_slam_hover_todo.md`: 当前 phase TODO 和验收标准
+- `docs/scenarios/indoor/navlab_runtime_workflow.md`: 批处理 acceptance、topic、summary、rosbag 和 Foxglove 回放口径
 
-### 当前仿真路径
+### 仿真和传感器
 
-- `docs/sim/README.md`: 当前 Gazebo 仿真主线、`/scan -> /scan_features` 路径和 `0.5 m` 最小净空停止规则，明确不依赖 SLAM ROS workspace
-- `docs/sim/todo.md`: 当前仿真路线的已完成 / 未完成清单和验收标准
+- `docs/sim/README.md`: Gazebo 仿真和传感器主线说明
+- `docs/sim/todo.md`: 仿真路线 TODO
 - `docs/sim/x2_lidar_simulation_design.md`: X2 虚拟串口协议级仿真设计
-- `docs/sim/x2_lidar_protocol_todo.md`: X2 协议级仿真 phase TODO 和验收标准
-- `docs/sim/examples/*.yaml`: `auto` 模式 mission 输入样例
+- `docs/sim/x2_lidar_protocol_todo.md`: X2 协议级仿真 TODO 和验收标准
+- `docs/sim/examples/*.yaml`: 历史 mission 输入样例，仅作参考
 
 ### 工程重构
 
-- `docs/general/旧 Python 外壳_service_refactor_todo.md`: 旧 Python 外壳 按服务边界重构的 phase TODO、测试目录重排和 X2 Python/C++ 取舍说明
+- `docs/general/lab_env_service_refactor_todo.md`: Python 服务边界、目录重构和测试拆分记录
 
-## 当前推荐阅读顺序
+## 推荐阅读顺序
 
-1. `docs/sim/README.md`
-2. `docs/sim/todo.md`
-3. `docs/sim/x2_lidar_simulation_design.md`
-4. `docs/sim/x2_lidar_protocol_todo.md`
-5. `docs/general/旧 Python 外壳_service_refactor_todo.md`
-6. `docs/scenarios/indoor/task_breakdown_progress_tracking.md`
-7. `docs/scenarios/indoor/stage1_sitl_external_nav_design.md`
-8. `docs/scenarios/indoor/stage1_sitl_external_nav_todo.md`
-9. `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_design.md`
-10. `docs/scenarios/indoor/stage1_5_companion_sitl_gazebo_todo.md`
+1. `docs/scenarios/indoor/navlab_slam_hover_design.md`
+2. `docs/scenarios/indoor/navlab_runtime_workflow.md`
+3. `docs/scenarios/indoor/navlab_slam_hover_todo.md`
+4. `docs/sim/x2_lidar_simulation_design.md`
+5. `docs/sim/x2_lidar_protocol_todo.md`
+6. `docs/general/lab_env_service_refactor_todo.md`
 
 ## 当前目录结构
 
 ```text
 docs/
   README.md
+  decisions.md
   general/
-    旧 Python 外壳_service_refactor_todo.md
+    lab_env_service_refactor_todo.md
   scenarios/
     indoor/
-      task_breakdown_progress_tracking.md
-      stage1_sitl_external_nav_design.md
-      stage1_sitl_external_nav_todo.md
-      stage1_5_companion_sitl_gazebo_design.md
-      stage1_5_companion_sitl_gazebo_todo.md
+      navlab_slam_hover_design.md
+      navlab_slam_hover_todo.md
+      navlab_runtime_workflow.md
   sim/
     README.md
     todo.md
@@ -69,17 +63,11 @@ docs/
 
 ## 当前约束
 
-以下约束仍然成立，并会保留到新的通用文档体系里：
-
-- 机上的计算盒子只负责在线推理、规划、安全裁决和飞控桥接。
-- 数据整理、训练、离线评估和模型导出在源平台完成。
-- 机上部署的是已冻结的模型产物，而不是训练环境。
-- 世界模型不直接绕过规划和安全层控制飞控。
-
-## 设计原则
-
-- 先区分通用能力和场景特化能力。
-- 先搭文档结构，再逐步迁移内容。
-- 先仿真，后实机。
-- 先高层控制，后更深层控制。
-- 先安全边界，后模型能力。
+- Gazebo 只负责世界、物理和传感器。
+- SITL 等价于真实飞控。
+- companion 等价于机载计算盒子。
+- SLAM 必须消费 `/scan + /imu/data`，不能消费 Gazebo truth 或 FCU fused local position。
+- ExternalNav 验收必须来自 SLAM `/odom`。
+- Gazebo truth 只能用于诊断和误差对照。
+- 上游代码不能直接 `set_pose` 移动 Gazebo 无人机。
+- 每次 acceptance 必须输出 MCAP rosbag，方便 Foxglove 回放。

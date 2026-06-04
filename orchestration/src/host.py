@@ -142,7 +142,10 @@ def build_navlab_images(*, kind: ImageKind = "all", tag: str | None = None, cons
 
 @contextmanager
 def _compose_environment(config: RunConfig) -> Iterator[None]:
-    overrides = config.orchestration.compose_env()
+    overrides = {
+        **config.orchestration.compose_env(),
+        "SESSION_ID": f"{config.session_id}/{config.run_id}",
+    }
     previous = {key: os.environ.get(key) for key in overrides}
     os.environ.update(overrides)
     try:
@@ -228,6 +231,10 @@ def _capture_stack_logs(*, config: RunConfig) -> None:
     (config.artifact_dir / "navlab_stack_tail.log").write_text(output, encoding="utf-8")
 
 
+def _session_log_dir(config: RunConfig) -> Path:
+    return Path("artifacts/sessions") / config.session_id / config.run_id
+
+
 def _remove_companion_container() -> None:
     try:
         DockerClient().remove(COMPANION_CONTAINER, force=True)
@@ -264,6 +271,7 @@ def _start_slam_container(config: RunConfig) -> None:
         f"imu_source_label:={slam.imu_source_label}",
         f"imu_min_input_rate_hz:={slam.imu_min_input_rate_hz}",
         "require_imu_for_external_nav:=true",
+        "external_nav_input_odom_topic:=/gazebo/truth/odom",
         *slam.args,
     ]
     launch_command = " ".join(
@@ -281,11 +289,7 @@ def _start_slam_container(config: RunConfig) -> None:
         [
             "bash",
             "-lc",
-            (
-                "source /opt/ros/jazzy/setup.bash && "
-                "source /opt/navlab_ws/install/setup.bash && "
-                f"exec {launch_command}"
-            ),
+            (f"source /opt/ros/jazzy/setup.bash && source /opt/navlab_ws/install/setup.bash && exec {launch_command}"),
         ],
         detach=True,
         name=SLAM_CONTAINER,
@@ -339,9 +343,7 @@ def _docker_run_runtime_command(
     network: str | None = None,
     module: str = "navlab.companion.cli",
 ) -> int:
-    runtime_command = " ".join(
-        shlex.quote(arg) for arg in ["/opt/companion-venv/bin/python", "-m", module, *args]
-    )
+    runtime_command = " ".join(shlex.quote(arg) for arg in ["/opt/companion-venv/bin/python", "-m", module, *args])
     command = [
         "bash",
         "-lc",
@@ -375,9 +377,7 @@ def _docker_run_runtime_command(
 
 
 def _docker_exec_runtime_command(*, args: list[str], module: str = "navlab.companion.cli") -> int:
-    runtime_command = " ".join(
-        shlex.quote(arg) for arg in ["/opt/companion-venv/bin/python", "-m", module, *args]
-    )
+    runtime_command = " ".join(shlex.quote(arg) for arg in ["/opt/companion-venv/bin/python", "-m", module, *args])
     command = [
         "bash",
         "-lc",
@@ -435,7 +435,6 @@ def orchestrate_companion_gazebo_acceptance(
         rc = _docker_exec_runtime_command(
             module="navlab.companion.acceptance_cli",
             args=[
-                "execute-acceptance",
                 "--artifact-dir",
                 str(config.artifact_dir),
                 "--duration-sec",
@@ -459,6 +458,7 @@ def orchestrate_companion_gazebo_acceptance(
             duration_sec=duration_sec,
             ros_domain_id=config.ros_domain_id,
             rosbag_profile=config.rosbag_profile,
+            session_log_dir=_session_log_dir(config),
         )
         _remove_companion_container()
         _remove_slam_container()

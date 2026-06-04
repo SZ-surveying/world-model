@@ -5,6 +5,7 @@ external_nav_bridge_node:
     height_timeout_ms: 500
     require_imu_for_output: false
     require_height_for_output: false
+    input_odom_topic: /odom
     height_topic: /height/estimate
     max_height_covariance: 4.0
     output_frame_id: external_nav

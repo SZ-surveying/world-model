@@ -10,11 +10,14 @@ from navlab.companion.nodes.pose_mirror import (
     PoseMirrorStatus,
     anchored_sim_stamp_nanoseconds,
     build_pose_stamped_fields,
+    build_replay_transform_fields,
+    default_replay_static_transforms,
     encode_mavlink_telemetry_status,
     encode_pose_mirror_status,
     filter_displayable_markers,
     marker_has_displayable_geometry,
     ned_to_gazebo_pose,
+    next_imu_output_stamp_nanoseconds,
     next_monotonic_stamp_nanoseconds,
     stamp_fields_to_nanoseconds,
 )
@@ -47,6 +50,36 @@ def test_build_pose_stamped_fields_uses_yaw_quaternion() -> None:
     assert isclose(fields["qw"], 2**0.5 / 2)
 
 
+def test_replay_tf_helpers_connect_world_map_base_and_laser() -> None:
+    pose = ned_to_gazebo_pose(NedPoseSample(x_north_m=1.0, y_east_m=2.0, z_down_m=-0.5, yaw_rad=pi / 2))
+    dynamic = build_replay_transform_fields(
+        parent_frame_id="navlab_world",
+        child_frame_id="navlab_base_link",
+        pose=pose,
+    )
+    static = default_replay_static_transforms(
+        root_frame_id="navlab_world",
+        map_frame_id="map",
+        sensor_base_frame_id="base_link",
+        laser_frame_id="laser_frame",
+        imu_frame_id="imu_link",
+        laser_x_m=0.05,
+        laser_y_m=0.0,
+        laser_z_m=0.13,
+    )
+
+    assert dynamic["parent_frame_id"] == "navlab_world"
+    assert dynamic["child_frame_id"] == "navlab_base_link"
+    assert dynamic["x"] == 1.0
+    assert [(item.parent_frame_id, item.child_frame_id) for item in static] == [
+        ("navlab_world", "map"),
+        ("base_link", "laser_frame"),
+        ("base_link", "imu_link"),
+    ]
+    assert static[1].x == 0.05
+    assert static[1].z == 0.13
+
+
 def test_anchored_sim_stamp_uses_scan_time_domain_and_stays_monotonic() -> None:
     anchor_ns = stamp_fields_to_nanoseconds(12, 100)
     candidate = anchored_sim_stamp_nanoseconds(
@@ -58,6 +91,27 @@ def test_anchored_sim_stamp_uses_scan_time_domain_and_stays_monotonic() -> None:
     assert candidate == 12_250_000_100
     assert next_monotonic_stamp_nanoseconds(candidate_ns=99, previous_ns=100) == 101
     assert next_monotonic_stamp_nanoseconds(candidate_ns=200, previous_ns=100) == 200
+
+
+def test_imu_output_stamp_stays_monotonic_when_scan_anchor_arrives_late() -> None:
+    wall_clock_ns = stamp_fields_to_nanoseconds(100, 0)
+    first_stamp = next_imu_output_stamp_nanoseconds(
+        stamp_source_ns=None,
+        stamp_source_monotonic=0.0,
+        now_monotonic=10.0,
+        node_clock_ns=wall_clock_ns,
+        previous_output_ns=None,
+    )
+    anchored_stamp = next_imu_output_stamp_nanoseconds(
+        stamp_source_ns=stamp_fields_to_nanoseconds(99, 0),
+        stamp_source_monotonic=10.0,
+        now_monotonic=10.1,
+        node_clock_ns=stamp_fields_to_nanoseconds(100, 100),
+        previous_output_ns=first_stamp,
+    )
+
+    assert first_stamp == wall_clock_ns
+    assert anchored_stamp == wall_clock_ns + 1
 
 
 def test_marker_filter_removes_empty_line_list_markers() -> None:

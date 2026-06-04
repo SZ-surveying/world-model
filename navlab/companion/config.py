@@ -47,6 +47,8 @@ class RuntimeConfig:
     imu_source_label: str
     world_markers: NodeConfig
     scan_features: NodeConfig
+    gazebo_truth_bridge: NodeConfig
+    gazebo_truth_odom: NodeConfig
     pose_mirror: NodeConfig
     imu_bridge: NodeConfig
     external_nav_sender: NodeConfig
@@ -60,6 +62,8 @@ class RuntimeConfig:
         runtime = nested_section(companion, "runtime")
         world_markers = nested_section(runtime, "world_markers")
         scan_features = nested_section(runtime, "scan_features")
+        gazebo_truth_bridge = nested_section(runtime, "gazebo_truth_bridge")
+        gazebo_truth_odom = nested_section(runtime, "gazebo_truth_odom")
         pose_mirror = nested_section(runtime, "pose_mirror")
         imu_bridge = nested_section(runtime, "imu_bridge")
         external_nav_sender = nested_section(runtime, "external_nav_sender")
@@ -75,6 +79,20 @@ class RuntimeConfig:
                 autostart=as_bool(scan_features.get("autostart"), True),
                 args=as_args(scan_features.get("args")),
             ),
+            gazebo_truth_bridge=NodeConfig(
+                autostart=as_bool(gazebo_truth_bridge.get("autostart"), True),
+                args=as_args(
+                    gazebo_truth_bridge.get("args")
+                    or (
+                        "/world/navlab_iq_quad_figure8/dynamic_pose/info"
+                        "@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V",
+                    ),
+                ),
+            ),
+            gazebo_truth_odom=NodeConfig(
+                autostart=as_bool(gazebo_truth_odom.get("autostart"), True),
+                args=as_args(gazebo_truth_odom.get("args")),
+            ),
             pose_mirror=NodeConfig(
                 autostart=as_bool(pose_mirror.get("autostart"), True),
                 endpoint=as_str(pose_mirror.get("endpoint"), "tcp:mavlink-router:5760"),
@@ -87,12 +105,12 @@ class RuntimeConfig:
             ),
             external_nav_sender=NodeConfig(
                 autostart=as_bool(external_nav_sender.get("autostart"), True),
-                endpoint=as_str(external_nav_sender.get("endpoint"), "tcp:mavlink-router:5760"),
+                endpoint=as_str(external_nav_sender.get("endpoint"), "tcp:127.0.0.1:5762"),
                 args=as_args(external_nav_sender.get("args")),
             ),
             mission=NodeConfig(
                 autostart=as_bool(mission.get("autostart"), False),
-                endpoint=as_str(mission.get("endpoint"), "tcp:mavlink-router:5760"),
+                endpoint=as_str(mission.get("endpoint"), "tcp:127.0.0.1:5763"),
                 args=as_args(mission.get("args")),
             ),
         )

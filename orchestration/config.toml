@@ -14,25 +14,25 @@ target = "navlab-companion"
 repository = "world-model/navlab-companion"
 
 [navlab.images.slam]
-dockerfile = "docker/Dockerfile.companion"
+dockerfile = "docker/Dockerfile.slam"
 context = "."
 target = "navlab-slam-cartographer"
 repository = "world-model/navlab-slam-cartographer"
 
 [navlab.images.gazebo_sensor]
-dockerfile = "docker/Dockerfile.companion"
+dockerfile = "docker/Dockerfile.gazebo-sensor"
 context = "."
 target = "navlab-gazebo-sensor"
 repository = "world-model/navlab-gazebo-sensor"
 
 session_id = "navlab_companion_sitl_gazebo"
 ros_domain_id = "85"
-gazebo_world = "/workspace/worlds/uav_obstacle_5m.sdf"
+gazebo_world = "/workspace/worlds/navlab_iq_quad_figure8.sdf"
 rosbag_profile = "profiles/navlab-rosbag-topics.txt"
 
 [sitl]
 image = "remote-sitl-lab/ardupilot-sitl:stage1-f10500ae45aa"
-model = "quad"
+model = "JSON"
 speedup = "1"
 instance = "0"
 home = ""
@@ -41,10 +41,6 @@ router_only = "false"
 extra_args = [
   "--defaults",
   "/workspace/profiles/navlab-sitl-external-nav.parm",
-  "--serial1",
-  "none",
-  "--serial2",
-  "none",
 ]
 
 [sensor]
