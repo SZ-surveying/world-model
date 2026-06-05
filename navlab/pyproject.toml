@@ -14,7 +14,7 @@ companion = [
     "pymavlink>=2.4.49",
     "PyYAML>=6.0.2",
 ]
-gazebo-sensor = ["numpy>=2.4.5", "PyYAML>=6.0.2"]
+gazebo-sensor = ["numpy>=2.4.5", "pymavlink>=2.4.49", "PyYAML>=6.0.2"]
 dev = ["pytest>=8.4.2", "pyright>=1.1.408", "ruff>=0.15.11"]
 
 [tool.uv]

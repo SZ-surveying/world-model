@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from navlab.gazebo_sensor.config import load_x2_protocol_config
+from navlab.gazebo_sensor.config import (
+    DownRangefinderRuntimeConfig,
+    load_down_rangefinder_config,
+    load_x2_protocol_config,
+)
 
 
 def test_x2_protocol_config_loads_vendor_defaults() -> None:
@@ -42,6 +46,8 @@ def test_x2_vendor_profile_matches_protocol_baseline() -> None:
     assert params["range_max"] == 8.0
     assert params["isSingleChannel"] is True
     assert params["intensity"] is False
+    assert params["reversion"] is False
+    assert params["inverted"] is False
 
 
 def test_x2_runtime_config_passes_jitter_and_seed_to_emulator() -> None:
@@ -54,3 +60,38 @@ def test_x2_runtime_config_passes_jitter_and_seed_to_emulator() -> None:
     assert emulator.scan_frequency_max_hz == 8.0
     assert emulator.scan_frequency_jitter_hz == 0.0
     assert emulator.random_seed is None
+
+
+def test_down_rangefinder_config_loads_defaults_from_config_toml() -> None:
+    config = load_down_rangefinder_config()
+
+    assert config.enabled.value is True
+    assert config.scan_ideal_topic.value == "/rangefinder/down/scan_ideal"
+    assert config.range_topic.value == "/rangefinder/down/range"
+    assert config.status_topic.value == "/rangefinder/down/status"
+    assert config.endpoint.value == "udpout:mavlink-router:14550"
+    assert config.frame_id.value == "rangefinder_down_frame"
+    assert config.mavlink_orientation.value == "MAV_SENSOR_ROTATION_PITCH_270"
+    assert config.source_system.value == "1"
+    assert config.source_component.value == "158"
+    assert config.sensor_id.value == "1"
+    assert config.rate_hz.value == 20.0
+    assert config.min_distance_m.value == 0.05
+    assert config.max_distance_m.value == 6.0
+    assert config.covariance_cm.value == "2"
+    assert config.model_pose.value == "0 0 -0.02 0 1.5707963267948966 0"
+    assert config.model_update_rate_hz.value == 20.0
+    assert config.model_ray_count.value == "1"
+    assert config.model_noise_stddev_m.value == 0.0
+
+
+def test_down_rangefinder_runtime_config_is_fcu_peripheral_source() -> None:
+    config = DownRangefinderRuntimeConfig.load()
+
+    assert config.enabled is True
+    assert config.endpoint.startswith("udpout:")
+    assert config.mavlink_orientation == "MAV_SENSOR_ROTATION_PITCH_270"
+    assert config.source_system == 1
+    assert config.source_component == 158
+    assert config.sensor_id == 1
+    assert config.covariance_cm == 2

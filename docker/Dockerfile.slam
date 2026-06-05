@@ -14,7 +14,7 @@ RUN bash -lc "\
   source /opt/ros/jazzy/setup.bash && \
   colcon --log-base /tmp/navlab_slam-log build \
     --base-paths navlab_slam_ros x3/src \
-    --packages-select ydlidar_interfaces fake_external_nav imu_bridge cartographer_indoor external_nav_bridge indoor_bringup \
+    --packages-select ydlidar_interfaces navlab_fake_odom navlab_slam_imu_bridge navlab_cartographer_adapter navlab_external_nav_bridge navlab_slam_bringup \
     --build-base /tmp/navlab_slam-build \
     --install-base /opt/navlab_ws/install \
     --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3"

@@ -60,9 +60,10 @@ def test_replay_tf_helpers_connect_world_map_base_and_laser() -> None:
     static = default_replay_static_transforms(
         root_frame_id="navlab_world",
         map_frame_id="map",
-        sensor_base_frame_id="base_link",
-        laser_frame_id="laser_frame",
-        imu_frame_id="imu_link",
+        odom_frame_id="",
+        sensor_base_frame_id="navlab_replay_base_link",
+        laser_frame_id="navlab_replay_laser_frame",
+        imu_frame_id="navlab_replay_imu_link",
         laser_x_m=0.05,
         laser_y_m=0.0,
         laser_z_m=0.13,
@@ -73,8 +74,8 @@ def test_replay_tf_helpers_connect_world_map_base_and_laser() -> None:
     assert dynamic["x"] == 1.0
     assert [(item.parent_frame_id, item.child_frame_id) for item in static] == [
         ("navlab_world", "map"),
-        ("base_link", "laser_frame"),
-        ("base_link", "imu_link"),
+        ("navlab_replay_base_link", "navlab_replay_laser_frame"),
+        ("navlab_replay_base_link", "navlab_replay_imu_link"),
     ]
     assert static[1].x == 0.05
     assert static[1].z == 0.13

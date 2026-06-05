@@ -5,12 +5,13 @@ from typing import Annotated, cast
 import typer
 from rich.console import Console
 
-from src.host import (
-    ImageKind,
-    build_navlab_images,
-    companion_doctor,
-    orchestrate_companion_gazebo_acceptance,
-)
+from src.tasks.acceptance import AcceptanceTask
+from src.tasks.build import BuildTask, ImageKind
+from src.tasks.doctor import DoctorTask
+from src.tasks.hover import HoverAcceptanceTask
+from src.tasks.hover_diagnostic import HoverDiagnosticTask
+from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
+from src.tasks.registry import TaskRegistry
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
@@ -27,7 +28,8 @@ def image_build_command(
         typer.Option("--tag", help="Override the configured NavLab image tag strategy"),
     ] = None,
 ) -> None:
-    raise typer.Exit(build_navlab_images(kind=cast(ImageKind, kind), tag=tag, console=console))
+    task = cast(BuildTask, TaskRegistry.create("build"))
+    raise typer.Exit(task.run(kind=cast(ImageKind, kind), tag=tag, console=console))
 
 
 @app.command("doctor")
@@ -37,7 +39,8 @@ def companion_doctor_command(
         typer.Option("--config", help="NavLab TOML profile path"),
     ] = None,
 ) -> None:
-    raise typer.Exit(companion_doctor(config_path=config, console=console))
+    task = cast(DoctorTask, TaskRegistry.create("doctor"))
+    raise typer.Exit(task.run(config_path=config, console=console))
 
 
 @app.command("acceptance")
@@ -48,13 +51,46 @@ def acceptance_command(
         typer.Option("--config", help="NavLab TOML profile path"),
     ] = None,
 ) -> None:
+    task = cast(AcceptanceTask, TaskRegistry.create("acceptance"))
     raise typer.Exit(
-        orchestrate_companion_gazebo_acceptance(
-            config_path=config,
-            duration_sec=duration_sec,
-            console=console,
-        )
+        task.run(config_path=config, duration_sec=duration_sec, console=console)
     )
+
+
+@app.command("hover")
+def hover_acceptance_command(
+    duration_sec: Annotated[float, typer.Argument(help="Hover acceptance duration in seconds")] = 90.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(HoverAcceptanceTask, TaskRegistry.create("hover"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+
+
+@app.command("hover-diagnostic")
+def hover_diagnostic_command(
+    duration_sec: Annotated[float, typer.Argument(help="Hover diagnostic duration in seconds")] = 90.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(HoverDiagnosticTask, TaskRegistry.create("hover-diagnostic"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+
+
+@app.command("hover-slam-diagnostic")
+def hover_slam_diagnostic_command(
+    duration_sec: Annotated[float, typer.Argument(help="SLAM hover diagnostic duration in seconds")] = 90.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(HoverSlamDiagnosticTask, TaskRegistry.create("hover-slam-diagnostic"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
 
 
 if __name__ == "__main__":

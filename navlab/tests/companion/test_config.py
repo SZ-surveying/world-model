@@ -15,34 +15,67 @@ def test_companion_config_reads_companion_section() -> None:
 
 def test_runtime_config_world_markers_follow_navlab_quad_root() -> None:
     config = RuntimeConfig.load()
+    world_argv = config.world_markers.argv()
+    pose_argv = config.pose_mirror.argv()
+    scan_argv = config.scan_features.argv()
+    odom_argv = config.gazebo_truth_odom.argv()
+    mission_argv = config.mission.argv()
 
-    assert "--root-model-name" in config.world_markers.args
-    assert "navlab_iq_quad" in config.world_markers.args
-    assert "--frame-id" in config.world_markers.args
-    assert "navlab_world" in config.world_markers.args
-    assert "--set-gazebo-pose" not in config.pose_mirror.args
-    assert "--world-name" not in config.pose_mirror.args
-    assert "--model-name" not in config.pose_mirror.args
-    assert "--pose-frame-id" in config.pose_mirror.args
-    assert "--map-frame-id" in config.pose_mirror.args
-    assert "--sensor-base-frame-id" in config.pose_mirror.args
-    assert "--laser-frame-id" in config.pose_mirror.args
-    assert "--front-center-deg" in config.scan_features.args
-    front_flag = config.scan_features.args.index("--front-center-deg")
-    rear_flag = config.scan_features.args.index("--rear-center-deg")
-    assert config.scan_features.args[front_flag + 1] == "0"
-    assert config.scan_features.args[rear_flag + 1] == "180"
+    assert config.world_markers.root_model_name == "navlab_iq_quad"
+    assert config.world_markers.frame_id == "navlab_world"
+    assert "--root-model-name" in world_argv
+    assert "navlab_iq_quad" in world_argv
+    assert "--set-gazebo-pose" not in pose_argv
+    assert "--world-name" not in pose_argv
+    assert "--model-name" not in pose_argv
+    assert config.pose_mirror.pose_frame_id == "navlab_world"
+    assert config.pose_mirror.map_frame_id == "map"
+    assert config.pose_mirror.odom_frame_id == ""
+    assert config.pose_mirror.replay_base_frame_id == "navlab_replay_base_link"
+    assert config.pose_mirror.replay_base_parent_frame_id == "navlab_world"
+    assert config.pose_mirror.laser_frame_id == "navlab_replay_laser_frame"
+    assert config.pose_mirror.replay_imu_frame_id == "navlab_replay_imu_link"
+    assert config.pose_mirror.imu_frame_id == "imu_link"
+    assert config.pose_mirror.laser_z_m == 0.12
+    assert "--pose-frame-id" in pose_argv
+    assert "--laser-z-m" in pose_argv
+    assert "--front-center-deg" in scan_argv
+    front_flag = scan_argv.index("--front-center-deg")
+    rear_flag = scan_argv.index("--rear-center-deg")
+    assert scan_argv[front_flag + 1] == "0.0"
+    assert scan_argv[rear_flag + 1] == "180.0"
     assert config.gazebo_truth_bridge.autostart is True
-    assert "dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V" in config.gazebo_truth_bridge.args[0]
+    assert "dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V" in config.gazebo_truth_bridge.bridge
+    assert config.gazebo_truth_bridge.command() == [
+        "ros2",
+        "run",
+        "ros_gz_bridge",
+        "parameter_bridge",
+        config.gazebo_truth_bridge.bridge,
+    ]
     assert config.gazebo_truth_odom.autostart is True
-    assert "/gazebo/truth/odom" in config.gazebo_truth_odom.args
-    index_flag = config.gazebo_truth_odom.args.index("--transform-index")
-    assert config.gazebo_truth_odom.args[index_flag + 1] == "0"
-    assert "--pass-x-m" in config.mission.args
-    pass_x_flag = config.mission.args.index("--pass-x-m")
-    avoid_distance_flag = config.mission.args.index("--obstacle-avoid-distance-m")
-    assert config.mission.args[pass_x_flag + 1] == "1.25"
-    assert config.mission.args[avoid_distance_flag + 1] == "1.2"
+    assert config.gazebo_truth_odom.odom_topic == "/gazebo/truth/odom"
+    index_flag = odom_argv.index("--transform-index")
+    assert odom_argv[index_flag + 1] == "0"
+    assert config.mission.pass_x_m == 1.25
+    assert config.mission.obstacle_avoid_distance_m == 1.2
+    assert "--pass-x-m" in mission_argv
+    assert "--require-external-nav" in mission_argv
+    assert "--require-imu-status" in mission_argv
+    assert "--send-position-setpoints" in mission_argv
+    pass_x_flag = mission_argv.index("--pass-x-m")
+    avoid_distance_flag = mission_argv.index("--obstacle-avoid-distance-m")
+    assert mission_argv[pass_x_flag + 1] == "1.25"
+    assert mission_argv[avoid_distance_flag + 1] == "1.2"
+
+
+def test_companion_runtime_config_uses_structured_fields_not_args_lists() -> None:
+    data = tomllib.loads(open("navlab/config.toml", encoding="utf-8").read())
+    runtime = data["companion"]["runtime"]
+
+    for section_name, section in runtime.items():
+        if isinstance(section, dict):
+            assert "args" not in section, section_name
 
 
 def test_companion_dependency_group_includes_numpy_for_ros_python() -> None:

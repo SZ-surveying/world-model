@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from navlab.gazebo_sensor.config import X2SensorRuntimeConfig
+from navlab.gazebo_sensor.config import X2SensorRuntimeConfig, load_down_rangefinder_config
 
 
 def test_x2_sensor_code_lives_under_sensor_package() -> None:
@@ -76,3 +76,23 @@ def test_x2_sensor_runtime_config_reads_project_x2_protocol_section() -> None:
 def test_replay_meshes_are_not_part_of_default_replay_path() -> None:
     assert not Path("docker/navlab_models/iris_with_standoffs").exists()
     assert not Path("docker/navlab_replay_meshes").exists()
+
+
+def test_navlab_quad_model_owns_down_rangefinder_sensor() -> None:
+    config = load_down_rangefinder_config()
+    sdf = Path("docker/navlab_models/navlab_iq_quad/model.sdf").read_text(encoding="utf-8")
+
+    assert '<include merge="true">' in sdf
+    assert '<link name="rangefinder_down_link">' in sdf
+    assert '<sensor name="rangefinder_down" type="gpu_lidar">' in sdf
+    assert f"<pose>{config.model_pose.value}</pose>" in sdf
+    assert f"<topic>{config.scan_ideal_topic.value}</topic>" in sdf
+    assert f"<gz_frame_id>{config.frame_id.value}</gz_frame_id>" in sdf
+    sensor_block = re.search(r'<sensor name="rangefinder_down" type="gpu_lidar">(.*?)</sensor>', sdf, re.DOTALL)
+    assert sensor_block is not None
+    update_rate = re.search(r"<update_rate>(.*?)</update_rate>", sensor_block.group(1))
+    assert update_rate is not None
+    assert float(update_rate.group(1)) == config.model_update_rate_hz.value
+    assert f"<samples>{config.model_ray_count.value}</samples>" in sdf
+    assert f"<max>{config.max_distance_m.value}</max>" in sdf
+    assert f"<stddev>{config.model_noise_stddev_m.value}</stddev>" in sdf

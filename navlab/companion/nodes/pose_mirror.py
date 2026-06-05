@@ -112,6 +112,7 @@ def default_replay_static_transforms(
     *,
     root_frame_id: str,
     map_frame_id: str,
+    odom_frame_id: str,
     sensor_base_frame_id: str,
     laser_frame_id: str,
     imu_frame_id: str,
@@ -122,6 +123,10 @@ def default_replay_static_transforms(
 ) -> tuple[ReplayStaticTransformSpec, ...]:
     transforms = [
         ReplayStaticTransformSpec(parent_frame_id=root_frame_id, child_frame_id=map_frame_id),
+    ]
+    if odom_frame_id:
+        transforms.append(ReplayStaticTransformSpec(parent_frame_id=map_frame_id, child_frame_id=odom_frame_id))
+    transforms.append(
         ReplayStaticTransformSpec(
             parent_frame_id=sensor_base_frame_id,
             child_frame_id=laser_frame_id,
@@ -130,7 +135,7 @@ def default_replay_static_transforms(
             z=laser_z_m,
             yaw_rad=laser_yaw_rad,
         )
-    ]
+    )
     if imu_frame_id != laser_frame_id:
         transforms.append(ReplayStaticTransformSpec(parent_frame_id=sensor_base_frame_id, child_frame_id=imu_frame_id))
     return tuple(transforms)
@@ -255,9 +260,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pose-topic", default="/sim/uav_pose")
     parser.add_argument("--pose-frame-id", default="navlab_world")
     parser.add_argument("--map-frame-id", default="map")
+    parser.add_argument("--odom-frame-id", default="odom")
     parser.add_argument("--sensor-base-frame-id", default="base_link")
     parser.add_argument("--replay-base-frame-id", default="")
+    parser.add_argument("--replay-base-parent-frame-id", default="")
     parser.add_argument("--laser-frame-id", default="laser_frame")
+    parser.add_argument("--replay-imu-frame-id", default="")
     parser.add_argument("--laser-x-m", type=float, default=0.05)
     parser.add_argument("--laser-y-m", type=float, default=0.0)
     parser.add_argument("--laser-z-m", type=float, default=0.13)
@@ -411,9 +419,10 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._static_transform_specs = default_replay_static_transforms(
                 root_frame_id=args.pose_frame_id,
                 map_frame_id=args.map_frame_id,
+                odom_frame_id=args.odom_frame_id,
                 sensor_base_frame_id=args.sensor_base_frame_id,
                 laser_frame_id=args.laser_frame_id,
-                imu_frame_id=args.imu_frame_id,
+                imu_frame_id=args.replay_imu_frame_id or args.imu_frame_id,
                 laser_x_m=args.laser_x_m,
                 laser_y_m=args.laser_y_m,
                 laser_z_m=args.laser_z_m,
@@ -422,11 +431,15 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._publish_static_replay_tf()
             self.create_timer(1.0 / args.rate_hz, self._tick)
             self.create_timer(2.0, self._publish_static_replay_tf)
+            replay_base_parent = args.replay_base_parent_frame_id or args.pose_frame_id
+            replay_base = args.replay_base_frame_id or "<disabled>"
             self.get_logger().info(
                 f"pose observer started endpoint={args.endpoint} "
                 f"imu_stamp_source={args.imu_stamp_source_topic or 'node_clock'} "
                 f"fallback_pose_topic={args.fallback_pose_topic or '<disabled>'} "
                 f"replay_tf={args.pose_frame_id}->{args.map_frame_id}, "
+                f"{args.map_frame_id}->{args.odom_frame_id}, "
+                f"{replay_base_parent}->{replay_base}, "
                 f"{args.sensor_base_frame_id}->{args.laser_frame_id}"
             )
 
@@ -593,7 +606,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                 return
             transform = self._transform_from_fields(
                 build_replay_transform_fields(
-                    parent_frame_id=args.pose_frame_id,
+                    parent_frame_id=args.replay_base_parent_frame_id or args.pose_frame_id,
                     child_frame_id=args.replay_base_frame_id,
                     pose=pose,
                 ),

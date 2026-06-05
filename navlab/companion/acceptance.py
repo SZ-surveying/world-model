@@ -22,13 +22,16 @@ SAMPLE_TOPICS = (
     ("MAVLINK_STATUS_SAMPLE", "/navlab/mavlink/status"),
     ("POSE_MIRROR_STATUS_SAMPLE", "/navlab/pose_mirror/status"),
     ("IMU_STATUS_SAMPLE", "/imu/status"),
-    ("CARTOGRAPHER_STATUS_SAMPLE", "/cartographer/status"),
+    ("SLAM_STATUS_SAMPLE", "/navlab/slam/status"),
     ("GAZEBO_TRUTH_STATUS_SAMPLE", "/gazebo/truth/status"),
     ("EXTERNAL_STATUS_SAMPLE", "/external_nav/status"),
     ("MAVLINK_EXTERNAL_NAV_STATUS_SAMPLE", "/mavlink_external_nav/status"),
+    ("SLAM_ODOM_SAMPLE", "/odom"),
+    ("GAZEBO_TRUTH_ODOM_SAMPLE", "/gazebo/truth/odom"),
     ("SCAN_FEATURES_SAMPLE", "/scan_features"),
     ("SIM_LOG_SAMPLE", "/sim/log"),
     ("X2_STATUS_SAMPLE", "/sim/x2/status"),
+    ("RANGEFINDER_DOWN_STATUS_SAMPLE", "/rangefinder/down/status"),
 )
 
 MINIMUM_ROSBAG_TOPICS = (
@@ -40,6 +43,8 @@ MINIMUM_ROSBAG_TOPICS = (
     "/sim/uav_pose",
     "/sim/log",
     "/sim/x2/status",
+    "/rangefinder/down/range",
+    "/rangefinder/down/status",
     "/gazebo/truth/odom",
     "/gazebo/truth/status",
     "/imu/data",
@@ -47,7 +52,8 @@ MINIMUM_ROSBAG_TOPICS = (
     "/navlab/fcu/local_position_pose",
     "/tf",
     "/tf_static",
-    "/cartographer/status",
+    "/odom",
+    "/navlab/slam/status",
     "/external_nav/odom",
     "/external_nav/status",
     "/mavlink_external_nav/status",
@@ -97,6 +103,25 @@ def _record_profile_topics(*, manager: ProcessManager, artifact_dir: Path, topic
     )
 
 
+def _record_gazebo_truth_trajectory(*, manager: ProcessManager, artifact_dir: Path) -> ManagedProcess:
+    logger.info("Starting Gazebo truth trajectory recorder")
+    return manager.start_subprocess(
+        "gazebo_truth_trajectory",
+        [
+            "python3",
+            "-m",
+            "navlab.companion.nodes.gazebo_truth_trajectory",
+            "--topic",
+            "/gazebo/truth/odom",
+            "--output-file",
+            str(artifact_dir / "gazebo_truth_trajectory.json"),
+            "--sample-rate-hz",
+            "10",
+        ],
+        log_path=artifact_dir / "gazebo_truth_trajectory.log",
+    )
+
+
 def _dedupe_topics(topics: list[str]) -> list[str]:
     seen: set[str] = set()
     deduped: list[str] = []
@@ -126,9 +151,13 @@ def _load_extra_rosbag_topics(profile_path: Path) -> tuple[list[str], list[str]]
     return _dedupe_topics(required), _dedupe_topics(optional)
 
 
-def _build_rosbag_topic_plan(profile_path: Path) -> list[str]:
+def _build_rosbag_topic_plan(
+    profile_path: Path,
+    *,
+    minimum_topics: tuple[str, ...] = MINIMUM_ROSBAG_TOPICS,
+) -> list[str]:
     extra_required, extra_optional = _load_extra_rosbag_topics(profile_path)
-    required = _dedupe_topics([*MINIMUM_ROSBAG_TOPICS, *extra_required])
+    required = _dedupe_topics([*minimum_topics, *extra_required])
     optional = [topic for topic in extra_optional if topic not in required]
     return [*required, *optional]
 
@@ -138,9 +167,10 @@ def _write_effective_rosbag_profile(
     artifact_dir: Path,
     source_profile: Path,
     topics: list[str],
+    minimum_topics: tuple[str, ...] = MINIMUM_ROSBAG_TOPICS,
 ) -> Path:
     extra_required, extra_optional = _load_extra_rosbag_topics(source_profile)
-    required = _dedupe_topics([*MINIMUM_ROSBAG_TOPICS, *extra_required])
+    required = _dedupe_topics([*minimum_topics, *extra_required])
     optional = [topic for topic in extra_optional if topic not in required]
     effective_profile = artifact_dir / "effective_rosbag_profile.txt"
     lines = [
@@ -155,7 +185,7 @@ def _write_effective_rosbag_profile(
         lines.extend(["", "# Extra optional topics.", *(f"optional {topic}" for topic in optional)])
     effective_profile.write_text("\n".join(lines) + "\n", encoding="utf-8")
     (artifact_dir / "rosbag_minimum_topics.txt").write_text(
-        "\n".join(MINIMUM_ROSBAG_TOPICS) + "\n",
+        "\n".join(minimum_topics) + "\n",
         encoding="utf-8",
     )
     (artifact_dir / "rosbag_extra_topics.txt").write_text(
@@ -180,13 +210,7 @@ def _run_mission(*, artifact_dir: Path, duration_sec: float, config: RuntimeConf
         "python3",
         "-m",
         "navlab.companion.nodes.obstacle_mission",
-        "--endpoint",
-        config.mission.endpoint,
-        "--duration-sec",
-        str(duration_sec),
-        "--summary-file",
-        str(artifact_dir / "mission_summary.json"),
-        *config.mission.args,
+        *config.mission.argv(duration_sec=duration_sec, summary_file=str(artifact_dir / "mission_summary.json")),
     ]
     result = _run(command, stdout_path=artifact_dir / "mission_controller.log", check=False)
     (artifact_dir / "mission_rc.txt").write_text(str(result.returncode), encoding="utf-8")
@@ -218,10 +242,10 @@ def _collect_samples(*, artifact_dir: Path) -> None:
         )
 
 
-def _sample_payload(samples: str, label: str) -> dict[str, Any]:
+def _sample_section(samples: str, label: str) -> str:
     start = samples.find(label)
     if start < 0:
-        return {}
+        return ""
     end = len(samples)
     for next_label, _ in SAMPLE_TOPICS:
         if next_label == label:
@@ -229,11 +253,59 @@ def _sample_payload(samples: str, label: str) -> dict[str, Any]:
         next_start = samples.find(next_label, start + len(label))
         if next_start >= 0:
             end = min(end, next_start)
-    section = samples[start:end]
+    return samples[start:end]
+
+
+def _sample_payload(samples: str, label: str) -> dict[str, Any]:
+    section = _sample_section(samples, label)
+    if not section:
+        return {}
     match = re.search(r"data: '(.+)'", section)
     if not match:
         return {}
     return json.loads(match.group(1))
+
+
+def _odom_position_sample(samples: str, label: str) -> dict[str, float] | None:
+    section = _sample_section(samples, label)
+    if not section:
+        return None
+    match = re.search(
+        r"position:\s*\n\s*x:\s*([-+0-9.eE]+)\s*\n\s*y:\s*([-+0-9.eE]+)\s*\n\s*z:\s*([-+0-9.eE]+)",
+        section,
+    )
+    if not match:
+        return None
+    return {
+        "x": float(match.group(1)),
+        "y": float(match.group(2)),
+        "z": float(match.group(3)),
+    }
+
+
+def _slam_truth_comparison(samples: str) -> dict[str, Any]:
+    slam_position = _odom_position_sample(samples, "SLAM_ODOM_SAMPLE")
+    truth_position = _odom_position_sample(samples, "GAZEBO_TRUTH_ODOM_SAMPLE")
+    comparison: dict[str, Any] = {
+        "slam_topic": "/odom",
+        "truth_topic": "/gazebo/truth/odom",
+        "available": slam_position is not None and truth_position is not None,
+        "slam_position": slam_position,
+        "truth_position": truth_position,
+    }
+    if slam_position is None or truth_position is None:
+        return comparison
+    dx = slam_position["x"] - truth_position["x"]
+    dy = slam_position["y"] - truth_position["y"]
+    dz = slam_position["z"] - truth_position["z"]
+    comparison.update(
+        {
+            "horizontal_error_m": (dx * dx + dy * dy) ** 0.5,
+            "position_error_m": (dx * dx + dy * dy + dz * dz) ** 0.5,
+            "z_error_m": abs(dz),
+        }
+    )
+    return comparison
 
 
 def _scan_publisher_summary(samples: str) -> dict[str, Any]:
@@ -254,8 +326,26 @@ def _scan_publisher_summary(samples: str) -> dict[str, Any]:
     }
 
 
+def _load_gazebo_truth_trajectory_summary(artifact_dir: Path) -> dict[str, Any]:
+    path = artifact_dir / "gazebo_truth_trajectory.json"
+    if not path.is_file():
+        return {"ok": False, "path": str(path), "reason": "missing"}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "path": str(path), "reason": f"invalid_json: {exc}"}
+    summary = payload.get("summary", {})
+    return {
+        "ok": int(summary.get("sample_count", 0) or 0) > 0,
+        "path": str(path),
+        "source_topic": payload.get("source_topic"),
+        "schema": payload.get("schema"),
+        **summary,
+    }
+
+
 def _pose_mirror_set_pose_disabled(config: RuntimeConfig) -> bool:
-    args = set(config.pose_mirror.args)
+    args = set(config.pose_mirror.argv())
     return (
         "--set-gazebo-pose" not in args
         and "--simulate-pose-from-mission-status" not in args
@@ -302,6 +392,7 @@ def _write_foxglove_notes(*, artifact_dir: Path) -> None:
             "/navlab/mission/status",
             "/sim/log",
             "/sim/x2/status",
+            "/rangefinder/down/status",
             "/gazebo/truth/status",
             "/imu/status",
             "/external_nav/status",
@@ -343,17 +434,33 @@ def _write_summary(
     mavlink_status = _sample_payload(samples, "MAVLINK_STATUS_SAMPLE")
     pose_mirror_status = _sample_payload(samples, "POSE_MIRROR_STATUS_SAMPLE")
     imu_status = _sample_payload(samples, "IMU_STATUS_SAMPLE")
-    cartographer_status = _sample_payload(samples, "CARTOGRAPHER_STATUS_SAMPLE")
+    slam_status = _sample_payload(samples, "SLAM_STATUS_SAMPLE")
     gazebo_truth_status = _sample_payload(samples, "GAZEBO_TRUTH_STATUS_SAMPLE")
+    gazebo_truth_trajectory = _load_gazebo_truth_trajectory_summary(artifact_dir)
     external_status = _sample_payload(samples, "EXTERNAL_STATUS_SAMPLE")
     mavlink_external_nav_status = _sample_payload(samples, "MAVLINK_EXTERNAL_NAV_STATUS_SAMPLE")
     x2_status = _sample_payload(samples, "X2_STATUS_SAMPLE")
+    rangefinder_down_status = _sample_payload(samples, "RANGEFINDER_DOWN_STATUS_SAMPLE")
+    external_odom_status = external_status.get("odom", {})
+    if not isinstance(external_odom_status, dict):
+        external_odom_status = {}
+    external_nav_input_topic = str(external_odom_status.get("input_topic") or "")
+    external_nav_uses_gazebo_truth = external_nav_input_topic == "/gazebo/truth/odom"
+    external_nav_uses_slam_odom = external_nav_input_topic == "/odom"
+    slam_truth_comparison = _slam_truth_comparison(samples)
+    mavlink_message_counts = mavlink_status.get("message_counts", {})
+    rangefinder_fcu_observed = (
+        int(mavlink_message_counts.get("RANGEFINDER", 0) or 0) > 0
+        or int(mavlink_message_counts.get("DISTANCE_SENSOR", 0) or 0) > 0
+    )
     scan_publisher = _scan_publisher_summary(samples)
     topics = sorted(set(re.findall(r"name: (/[^\n]+)", metadata)))
     message_counts = rosbag_profile.get("message_counts", {})
     scan_recorded = message_counts.get("/scan", 0) > 0
     scan_ideal_recorded = message_counts.get("/scan_ideal", 0) > 0
     x2_status_recorded = message_counts.get("/sim/x2/status", 0) > 0
+    slam_odom_recorded = message_counts.get("/odom", 0) > 0
+    gazebo_truth_odom_recorded = message_counts.get("/gazebo/truth/odom", 0) > 0
     vendor_scan_publisher_ok = scan_publisher.get("vendor_driver_publisher") is True
     x2_status_fresh = _x2_scan_ideal_fresh(x2_status)
     x2_is_internal_to_sensor_runtime = (
@@ -387,6 +494,11 @@ def _write_summary(
         "world_markers_mode": "sdf_marker_observer",
     }
     phases_seen = mission_summary.get("phases_seen", [])
+    mission_wait_ready_ok = "wait_ready" in phases_seen
+    mission_guided_ok = "guided" in phases_seen
+    mission_arm_ok = "arm" in phases_seen
+    mission_takeoff_ok = "takeoff" in phases_seen
+    mission_hover_ok = "hover_settle" in phases_seen
     summary = {
         "ok": (
             rosbag_profile.get("ok") is True
@@ -395,19 +507,18 @@ def _write_summary(
             and mavlink_status.get("heartbeat_seen") is True
             and imu_status.get("state") == "streaming_fcu_imu"
             and imu_status.get("ready") is True
-            and cartographer_status.get("ready") is True
+            and slam_status.get("ready") is True
+            and slam_odom_recorded
             and external_status.get("state") == "healthy"
             and external_status.get("ready") is True
+            and external_nav_uses_slam_odom
+            and not external_nav_uses_gazebo_truth
             and mavlink_external_nav_status.get("state") == "sending"
-            and "hover_settle" in phases_seen
-            and "forward" in phases_seen
-            and "scan_left" in phases_seen
-            and "scan_right" in phases_seen
-            and "avoid" in phases_seen
-            and mission_summary.get("obstacle_detected") is True
-            and mission_summary.get("avoidance_setpoint_sent") is True
-            and mission_summary.get("scan_left_seen") is True
-            and mission_summary.get("scan_right_seen") is True
+            and mission_wait_ready_ok
+            and mission_guided_ok
+            and mission_arm_ok
+            and mission_takeoff_ok
+            and mission_hover_ok
             and scan_recorded
             and scan_ideal_recorded
             and x2_status_recorded
@@ -420,6 +531,32 @@ def _write_summary(
         "mission_rc": mission_rc,
         "scan_source": scan_source,
         "gps_free": True,
+        "slam_odom_source": {
+            "topic": "/odom",
+            "backend_status_topic": "/navlab/slam/status",
+            "ready": slam_status.get("ready") is True,
+            "state": slam_status.get("state"),
+            "recorded": slam_odom_recorded,
+            "count": message_counts.get("/odom", 0),
+            "status": slam_status.get("output", {}),
+        },
+        "gazebo_truth_source": {
+            "topic": "/gazebo/truth/odom",
+            "diagnostic_only": True,
+            "recorded": gazebo_truth_odom_recorded,
+            "count": message_counts.get("/gazebo/truth/odom", 0),
+        },
+        "external_nav_source": {
+            "input_topic": external_nav_input_topic,
+            "expected_input_topic": "/odom",
+            "diagnostic_truth_input": external_nav_uses_gazebo_truth,
+            "uses_slam_odom": external_nav_uses_slam_odom,
+        },
+        "external_nav_input_topic": external_nav_input_topic,
+        "external_nav_uses_gazebo_truth": external_nav_uses_gazebo_truth,
+        "external_nav_uses_slam_odom": external_nav_uses_slam_odom,
+        "diagnostic_external_nav_input": external_nav_uses_gazebo_truth,
+        "slam_truth_comparison": slam_truth_comparison,
         "rosbag_started_before_mission": True,
         "rosbag_covers_full_mission": rosbag_profile.get("ok") is True and "/navlab/mission/status" in topics,
         "companion_ready": True,
@@ -428,6 +565,8 @@ def _write_summary(
         "scan_fresh": rosbag_profile.get("message_counts", {}).get("/scan_features", 0) > 0,
         "scan_recorded": scan_recorded,
         "scan_ideal_recorded": scan_ideal_recorded,
+        "slam_odom_recorded": slam_odom_recorded,
+        "gazebo_truth_odom_recorded": gazebo_truth_odom_recorded,
         "x2_status_recorded": x2_status_recorded,
         "x2_status_fresh": x2_status_fresh,
         "lidar_chain": lidar_chain,
@@ -443,7 +582,11 @@ def _write_summary(
         "scan_features_consumes_final_scan": True,
         "external_nav_healthy": external_status.get("state") == "healthy",
         "gazebo_pose_mirror_ok": pose_mirror_state == "mirroring",
-        "hover_ok": "hover_settle" in phases_seen,
+        "wait_ready_ok": mission_wait_ready_ok,
+        "guided_ok": mission_guided_ok,
+        "arm_ok": mission_arm_ok,
+        "takeoff_ok": mission_takeoff_ok,
+        "hover_ok": mission_hover_ok,
         "forward_progress_ok": "forward" in phases_seen,
         "obstacle_detected": (
             mission_summary.get("obstacle_detected") is True or mission_status.get("obstacle_detected") is True
@@ -459,11 +602,14 @@ def _write_summary(
         "mavlink_status": mavlink_status,
         "pose_mirror_status": pose_mirror_status,
         "imu_status": imu_status,
-        "cartographer_status": cartographer_status,
+        "slam_status": slam_status,
         "gazebo_truth_status": gazebo_truth_status,
+        "gazebo_truth_trajectory": gazebo_truth_trajectory,
         "external_nav_status": external_status,
         "mavlink_external_nav_status": mavlink_external_nav_status,
         "x2_status": x2_status,
+        "rangefinder_down_status": rangefinder_down_status,
+        "rangefinder_fcu_observed": rangefinder_fcu_observed,
         "topics_recorded": topics,
         "foxglove_notes": str(artifact_dir / "foxglove_notes.md"),
     }
@@ -502,6 +648,7 @@ def execute_companion_gazebo_acceptance(
 
     manager = ProcessManager()
     _record_profile_topics(manager=manager, artifact_dir=artifact_dir, topics=topics)
+    _record_gazebo_truth_trajectory(manager=manager, artifact_dir=artifact_dir)
     try:
         time.sleep(2)
         mission_rc = _run_mission(artifact_dir=artifact_dir, duration_sec=duration_sec, config=config)

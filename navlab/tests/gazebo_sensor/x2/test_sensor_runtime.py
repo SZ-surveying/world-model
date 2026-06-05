@@ -6,6 +6,8 @@ from pathlib import Path
 
 from navlab.gazebo_sensor.runtime import (
     X2SensorLaunchConfig,
+    build_down_rangefinder_bridge_command,
+    build_down_rangefinder_sender_command,
     build_emulator_command,
     build_scan_ideal_bridge_command,
     build_vendor_driver_command,
@@ -30,6 +32,9 @@ def _runtime_config() -> X2SensorLaunchConfig:
         range_noise_stddev_m=0.02,
         dropout_rate=0.01,
         random_seed=123,
+        down_rangefinder_enabled=True,
+        down_rangefinder_scan_ideal_topic="/rangefinder/down/scan_ideal",
+        down_rangefinder_frame_id="rangefinder_down_frame",
     )
 
 
@@ -49,6 +54,20 @@ def test_x2_sensor_runtime_emulator_consumes_scan_ideal() -> None:
     assert "--range-noise-stddev-m" not in command
     assert "--dropout-rate" not in command
     assert "--auto-start" not in command
+
+
+def test_down_rangefinder_runtime_bridges_gazebo_scan() -> None:
+    command = build_down_rangefinder_bridge_command(_runtime_config())
+
+    assert command[:4] == ["ros2", "run", "ros_gz_bridge", "parameter_bridge"]
+    assert "/rangefinder/down/scan_ideal@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan" in command
+    assert "override_frame_id:=rangefinder_down_frame" in command
+
+
+def test_down_rangefinder_sender_runs_in_gazebo_sensor_runtime() -> None:
+    command = build_down_rangefinder_sender_command()
+
+    assert command == [command[0], "-m", "navlab.gazebo_sensor.rangefinder"]
 
 
 def test_x2_sensor_runtime_vendor_driver_uses_profile() -> None:

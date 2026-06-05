@@ -34,6 +34,20 @@ DEFAULT_X2_RANGE_NOISE_STDDEV_M = 0.0
 DEFAULT_X2_RANGE_NOISE_STDDEV_PER_M = 0.0
 DEFAULT_X2_DROPOUT_RATE = 0.0
 DEFAULT_X2_AUTO_START = True
+DEFAULT_DOWN_RANGEFINDER_ENABLED = True
+DEFAULT_DOWN_RANGEFINDER_SCAN_IDEAL_TOPIC = "/rangefinder/down/scan_ideal"
+DEFAULT_DOWN_RANGEFINDER_RANGE_TOPIC = "/rangefinder/down/range"
+DEFAULT_DOWN_RANGEFINDER_STATUS_TOPIC = "/rangefinder/down/status"
+DEFAULT_DOWN_RANGEFINDER_ENDPOINT = "udpout:mavlink-router:14550"
+DEFAULT_DOWN_RANGEFINDER_FRAME_ID = "rangefinder_down_frame"
+DEFAULT_DOWN_RANGEFINDER_MAVLINK_ORIENTATION = "MAV_SENSOR_ROTATION_PITCH_270"
+DEFAULT_DOWN_RANGEFINDER_SOURCE_SYSTEM = 1
+DEFAULT_DOWN_RANGEFINDER_SOURCE_COMPONENT = 158
+DEFAULT_DOWN_RANGEFINDER_SENSOR_ID = 1
+DEFAULT_DOWN_RANGEFINDER_RATE_HZ = 20.0
+DEFAULT_DOWN_RANGEFINDER_MIN_M = 0.05
+DEFAULT_DOWN_RANGEFINDER_MAX_M = 6.0
+DEFAULT_DOWN_RANGEFINDER_COVARIANCE_CM = 2
 
 
 @dataclass(slots=True)
@@ -124,6 +138,66 @@ class X2SensorRuntimeConfig:
         )
 
 
+@dataclass(slots=True)
+class DownRangefinderConfig:
+    enabled: BoolWithSource
+    scan_ideal_topic: ValueWithSource
+    range_topic: ValueWithSource
+    status_topic: ValueWithSource
+    endpoint: ValueWithSource
+    frame_id: ValueWithSource
+    mavlink_orientation: ValueWithSource
+    source_system: ValueWithSource
+    source_component: ValueWithSource
+    sensor_id: ValueWithSource
+    rate_hz: FloatWithSource
+    min_distance_m: FloatWithSource
+    max_distance_m: FloatWithSource
+    covariance_cm: ValueWithSource
+    model_pose: ValueWithSource
+    model_update_rate_hz: FloatWithSource
+    model_ray_count: ValueWithSource
+    model_noise_stddev_m: FloatWithSource
+
+
+@dataclass(frozen=True, slots=True)
+class DownRangefinderRuntimeConfig:
+    enabled: bool
+    scan_ideal_topic: str
+    range_topic: str
+    status_topic: str
+    endpoint: str
+    frame_id: str
+    mavlink_orientation: str
+    source_system: int
+    source_component: int
+    sensor_id: int
+    rate_hz: float
+    min_distance_m: float
+    max_distance_m: float
+    covariance_cm: int
+
+    @classmethod
+    def load(cls) -> DownRangefinderRuntimeConfig:
+        config = load_down_rangefinder_config()
+        return cls(
+            enabled=config.enabled.value,
+            scan_ideal_topic=config.scan_ideal_topic.value,
+            range_topic=config.range_topic.value,
+            status_topic=config.status_topic.value,
+            endpoint=config.endpoint.value,
+            frame_id=config.frame_id.value,
+            mavlink_orientation=config.mavlink_orientation.value,
+            source_system=_required_int(config.source_system.value, key="source_system"),
+            source_component=_required_int(config.source_component.value, key="source_component"),
+            sensor_id=_required_int(config.sensor_id.value, key="sensor_id"),
+            rate_hz=config.rate_hz.value,
+            min_distance_m=config.min_distance_m.value,
+            max_distance_m=config.max_distance_m.value,
+            covariance_cm=_required_int(config.covariance_cm.value, key="covariance_cm"),
+        )
+
+
 def load_x2_protocol_config(path: str | Path | None = None) -> X2ProtocolConfig:
     config_file, config = load_navlab_config(path)
     raw_gazebo_sensor = section(config, "gazebo_sensor", path=config_file)
@@ -172,6 +246,60 @@ def load_x2_protocol_config(path: str | Path | None = None) -> X2ProtocolConfig:
     )
 
 
+def load_down_rangefinder_config(path: str | Path | None = None) -> DownRangefinderConfig:
+    config_file, config = load_navlab_config(path)
+    raw_gazebo_sensor = section(config, "gazebo_sensor", path=config_file)
+    raw_rangefinder = section(raw_gazebo_sensor, "down_rangefinder", path=config_file, default={})
+    return DownRangefinderConfig(
+        enabled=resolve_bool_value(raw_rangefinder, "enabled", DEFAULT_DOWN_RANGEFINDER_ENABLED),
+        scan_ideal_topic=resolve_str_value(
+            raw_rangefinder,
+            "scan_ideal_topic",
+            DEFAULT_DOWN_RANGEFINDER_SCAN_IDEAL_TOPIC,
+        ),
+        range_topic=resolve_str_value(raw_rangefinder, "range_topic", DEFAULT_DOWN_RANGEFINDER_RANGE_TOPIC),
+        status_topic=resolve_str_value(raw_rangefinder, "status_topic", DEFAULT_DOWN_RANGEFINDER_STATUS_TOPIC),
+        endpoint=resolve_str_value(raw_rangefinder, "endpoint", DEFAULT_DOWN_RANGEFINDER_ENDPOINT),
+        frame_id=resolve_str_value(raw_rangefinder, "frame_id", DEFAULT_DOWN_RANGEFINDER_FRAME_ID),
+        mavlink_orientation=resolve_str_value(
+            raw_rangefinder,
+            "mavlink_orientation",
+            DEFAULT_DOWN_RANGEFINDER_MAVLINK_ORIENTATION,
+        ),
+        source_system=resolve_str_value(
+            raw_rangefinder,
+            "source_system",
+            str(DEFAULT_DOWN_RANGEFINDER_SOURCE_SYSTEM),
+        ),
+        source_component=resolve_str_value(
+            raw_rangefinder,
+            "source_component",
+            str(DEFAULT_DOWN_RANGEFINDER_SOURCE_COMPONENT),
+        ),
+        sensor_id=resolve_str_value(raw_rangefinder, "sensor_id", str(DEFAULT_DOWN_RANGEFINDER_SENSOR_ID)),
+        rate_hz=resolve_float_value(raw_rangefinder, "rate_hz", DEFAULT_DOWN_RANGEFINDER_RATE_HZ),
+        min_distance_m=resolve_float_value(
+            raw_rangefinder,
+            "min_distance_m",
+            DEFAULT_DOWN_RANGEFINDER_MIN_M,
+        ),
+        max_distance_m=resolve_float_value(
+            raw_rangefinder,
+            "max_distance_m",
+            DEFAULT_DOWN_RANGEFINDER_MAX_M,
+        ),
+        covariance_cm=resolve_str_value(
+            raw_rangefinder,
+            "covariance_cm",
+            str(DEFAULT_DOWN_RANGEFINDER_COVARIANCE_CM),
+        ),
+        model_pose=resolve_str_value(raw_rangefinder, "model_pose", "0 0 -0.02 0 1.5707963267948966 0"),
+        model_update_rate_hz=resolve_float_value(raw_rangefinder, "model_update_rate_hz", 20.0),
+        model_ray_count=resolve_str_value(raw_rangefinder, "model_ray_count", "1"),
+        model_noise_stddev_m=resolve_float_value(raw_rangefinder, "model_noise_stddev_m", 0.0),
+    )
+
+
 def _optional_int(value: str) -> int | None:
     if value == "":
         return None
@@ -179,3 +307,10 @@ def _optional_int(value: str) -> int | None:
         return int(value)
     except ValueError as exc:
         raise ValueError("Invalid value for 'random_seed': expected an integer") from exc
+
+
+def _required_int(value: str, *, key: str) -> int:
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid value for '{key}': expected an integer") from exc

@@ -47,7 +47,7 @@ class CompanionLauncher:
             self._start_function(
                 "world_marker_publisher",
                 run_world_markers,
-                [*config.world_markers.args],
+                config.world_markers.argv(),
             )
         if config.scan_features.autostart:
             from navlab.companion.nodes.scan_features import run as run_scan_features
@@ -55,18 +55,12 @@ class CompanionLauncher:
             self._start_function(
                 "scan_features_publisher",
                 run_scan_features,
-                [*config.scan_features.args],
+                config.scan_features.argv(),
             )
         if config.gazebo_truth_bridge.autostart:
             self._start(
                 "gazebo_truth_pose_bridge",
-                [
-                    "ros2",
-                    "run",
-                    "ros_gz_bridge",
-                    "parameter_bridge",
-                    *config.gazebo_truth_bridge.args,
-                ],
+                config.gazebo_truth_bridge.command(),
             )
         if config.gazebo_truth_odom.autostart:
             from navlab.companion.nodes.gazebo_truth_odom import run as run_gazebo_truth_odom
@@ -74,7 +68,7 @@ class CompanionLauncher:
             self._start_function(
                 "gazebo_truth_odom_publisher",
                 run_gazebo_truth_odom,
-                [*config.gazebo_truth_odom.args],
+                config.gazebo_truth_odom.argv(),
             )
         if config.pose_mirror.autostart:
             from navlab.companion.nodes.pose_mirror import run as run_pose_mirror
@@ -82,11 +76,7 @@ class CompanionLauncher:
             self._start_function(
                 "mavlink_gazebo_pose_mirror",
                 run_pose_mirror,
-                [
-                    "--endpoint",
-                    config.pose_mirror.endpoint,
-                    *config.pose_mirror.args,
-                ],
+                config.pose_mirror.argv(),
             )
         if config.imu_bridge.autostart:
             from navlab.companion.nodes.imu_bridge import run as run_imu_bridge
@@ -94,11 +84,7 @@ class CompanionLauncher:
             self._start_function(
                 "mavlink_imu_bridge",
                 run_imu_bridge,
-                [
-                    "--endpoint",
-                    config.imu_bridge.endpoint,
-                    *config.imu_bridge.args,
-                ],
+                config.imu_bridge.argv(),
             )
         if config.external_nav_sender.autostart:
             from navlab.companion.nodes.external_nav import main as run_external_nav_sender
@@ -106,11 +92,7 @@ class CompanionLauncher:
             self._start_function(
                 "mavlink_external_nav_sender",
                 run_external_nav_sender,
-                [
-                    "--endpoint",
-                    config.external_nav_sender.endpoint,
-                    *config.external_nav_sender.args,
-                ],
+                config.external_nav_sender.argv(),
             )
         if config.mission.autostart:
             from navlab.companion.nodes.obstacle_mission import run as run_obstacle_mission
@@ -118,11 +100,7 @@ class CompanionLauncher:
             self._start_function(
                 "mavlink_obstacle_mission_controller",
                 run_obstacle_mission,
-                [
-                    "--endpoint",
-                    config.mission.endpoint,
-                    *config.mission.args,
-                ],
+                config.mission.argv(),
             )
 
 

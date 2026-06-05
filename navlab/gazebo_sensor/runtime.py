@@ -9,7 +9,7 @@ from pathlib import Path
 
 from navlab.common.logging import configure_sim_logging, logger
 from navlab.common.process_manager import ProcessManager
-from navlab.gazebo_sensor.config import X2SensorRuntimeConfig
+from navlab.gazebo_sensor.config import DownRangefinderRuntimeConfig, X2SensorRuntimeConfig
 
 VIRTUAL_SERIAL_STARTUP_TIMEOUT_SEC = 10.0
 
@@ -31,10 +31,14 @@ class X2SensorLaunchConfig:
     range_noise_stddev_m: float
     dropout_rate: float
     random_seed: int | None
+    down_rangefinder_enabled: bool
+    down_rangefinder_scan_ideal_topic: str
+    down_rangefinder_frame_id: str
 
     @classmethod
     def from_config(cls) -> X2SensorLaunchConfig:
         runtime = X2SensorRuntimeConfig.load()
+        down_rangefinder = DownRangefinderRuntimeConfig.load()
         return cls(
             scan_source=runtime.scan_source,
             profile_path=runtime.profile,
@@ -51,6 +55,9 @@ class X2SensorLaunchConfig:
             range_noise_stddev_m=runtime.range_noise_stddev_m,
             dropout_rate=runtime.dropout_rate,
             random_seed=None,
+            down_rangefinder_enabled=down_rangefinder.enabled,
+            down_rangefinder_scan_ideal_topic=down_rangefinder.scan_ideal_topic,
+            down_rangefinder_frame_id=down_rangefinder.frame_id,
         )
 
 
@@ -64,6 +71,27 @@ def build_scan_ideal_bridge_command(config: X2SensorLaunchConfig) -> list[str]:
         "--ros-args",
         "-p",
         "override_frame_id:=laser_frame",
+    ]
+
+
+def build_down_rangefinder_bridge_command(config: X2SensorLaunchConfig) -> list[str]:
+    return [
+        "ros2",
+        "run",
+        "ros_gz_bridge",
+        "parameter_bridge",
+        f"{config.down_rangefinder_scan_ideal_topic}@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan",
+        "--ros-args",
+        "-p",
+        f"override_frame_id:={config.down_rangefinder_frame_id}",
+    ]
+
+
+def build_down_rangefinder_sender_command() -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "navlab.gazebo_sensor.rangefinder",
     ]
 
 
@@ -122,6 +150,15 @@ class X2SensorRuntime:
 
     def _start_processes(self) -> None:
         self._manager.start_subprocess("scan_ideal_bridge", build_scan_ideal_bridge_command(self._config))
+        if self._config.down_rangefinder_enabled:
+            self._manager.start_subprocess(
+                "down_rangefinder_bridge",
+                build_down_rangefinder_bridge_command(self._config),
+            )
+            self._manager.start_subprocess(
+                "down_rangefinder_sender",
+                build_down_rangefinder_sender_command(),
+            )
         if self._config.scan_source != "x2_virtual_serial":
             logger.info("scan_source={} starts only the ideal scan bridge", self._config.scan_source)
             return

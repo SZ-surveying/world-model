@@ -10,113 +10,156 @@ imu_source_label = "fcu_mavlink_navlab"
 
 [companion.runtime.world_markers]
 autostart = true
-args = [
-  "--world-file",
-  "/workspace/docker/worlds/navlab_iq_quad_figure8.sdf",
-  "--topic",
-  "/sim/markers",
-  "--pose-topic",
-  "/sim/uav_pose",
-  "--frame-id",
-  "navlab_world",
-  "--root-model-name",
-  "navlab_iq_quad",
-  "--rate",
-  "1",
-]
+world_file = "/workspace/docker/worlds/navlab_iq_quad_figure8.sdf"
+topic = "/sim/markers"
+pose_topic = "/sim/uav_pose"
+frame_id = "navlab_world"
+root_model_name = "navlab_iq_quad"
+rate_hz = 1.0
 
 [companion.runtime.scan_features]
 autostart = true
-args = ["--front-center-deg", "0", "--rear-center-deg", "180"]
+scan_topic = "/scan"
+features_topic = "/scan_features"
+nearest_point_topic = "/scan_nearest_point"
+front_center_deg = 0.0
+left_center_deg = 90.0
+right_center_deg = -90.0
+rear_center_deg = 180.0
+front_half_width_deg = 15.0
+side_half_width_deg = 20.0
+rear_half_width_deg = 20.0
 
 [companion.runtime.gazebo_truth_bridge]
 autostart = true
-args = [
-  "/world/navlab_iq_quad_figure8/dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V",
-]
+bridge = "/world/navlab_iq_quad_figure8/dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V"
 
 [companion.runtime.gazebo_truth_odom]
 autostart = true
-args = [
-  "--input-topic",
-  "/world/navlab_iq_quad_figure8/dynamic_pose/info",
-  "--odom-topic",
-  "/gazebo/truth/odom",
-  "--status-topic",
-  "/gazebo/truth/status",
-  "--transform-index",
-  "0",
-]
+input_topic = "/world/navlab_iq_quad_figure8/dynamic_pose/info"
+odom_topic = "/gazebo/truth/odom"
+status_topic = "/gazebo/truth/status"
+frame_id = "odom"
+child_frame_id = "base_link"
+gazebo_child_frame_id = ""
+transform_index = 0
+timeout_sec = 1.0
 
 [companion.runtime.pose_mirror]
 autostart = true
 endpoint = "tcp:mavlink-router:5760"
-args = [
-  "--imu-topic",
-  "/navlab/fcu_imu/data",
-  "--imu-status-topic",
-  "/navlab/fcu_imu/status",
-  "--imu-frame-id",
-  "imu_link",
-  "--fallback-pose-topic",
-  "/navlab/fcu/local_position_pose",
-  "--pose-frame-id",
-  "navlab_world",
-  "--map-frame-id",
-  "map",
-  "--sensor-base-frame-id",
-  "base_link",
-  "--laser-frame-id",
-  "laser_frame",
-  "--synthetic-imu-when-mavlink-missing",
-  "--rate-hz",
-  "10",
-]
+pose_topic = "/sim/uav_pose"
+fallback_pose_topic = "/navlab/fcu/local_position_pose"
+constraint_list_topic = "/constraint_list"
+replay_constraints_topic = "/navlab/replay/constraint_markers"
+status_topic = "/navlab/pose_mirror/status"
+mavlink_status_topic = "/navlab/mavlink/status"
+z_offset_m = 0.0
+min_z_m = 0.1
+
+[companion.runtime.pose_mirror.frames]
+pose_frame_id = "navlab_world"
+map_frame_id = "map"
+odom_frame_id = ""
+sensor_base_frame_id = "navlab_replay_base_link"
+replay_base_frame_id = "navlab_replay_base_link"
+replay_base_parent_frame_id = "navlab_world"
+laser_frame_id = "navlab_replay_laser_frame"
+replay_imu_frame_id = "navlab_replay_imu_link"
+
+[companion.runtime.pose_mirror.laser_mount]
+x_m = 0.05
+y_m = 0.0
+z_m = 0.12
+yaw_rad = 0.0
+
+[companion.runtime.pose_mirror.imu]
+topic = "/navlab/fcu_imu/data"
+status_topic = "/navlab/fcu_imu/status"
+frame_id = "imu_link"
+source_label = "fcu_mavlink_navlab"
+stamp_source_topic = "/scan"
+min_rate_hz = 4.0
+allow_raw = false
+synthetic_when_mavlink_missing = true
+
+[companion.runtime.pose_mirror.timing]
+rate_hz = 10.0
+stream_rate_hz = 10.0
+timeout_sec = 1.0
+reconnect_sec = 2.0
+stale_reconnect_sec = 5.0
 
 [companion.runtime.imu_bridge]
 autostart = false
 endpoint = "tcp:mavlink-router:5760"
-args = ["--allow-raw-imu"]
+imu_topic = "/imu/data"
+status_topic = "/imu/status"
+frame_id = "fcu_imu"
+source_label = "fcu_mavlink_navlab"
+rate_hz = 50.0
+stream_rate_hz = 50.0
+timeout_sec = 0.5
+min_rate_hz = 4.0
+allow_raw_imu = true
 
 [companion.runtime.external_nav_sender]
 autostart = true
 endpoint = "tcp:127.0.0.1:5762"
-args = [
-  "--rate-hz",
-  "20",
-  "--use-fcu-roll-pitch",
-  "--local-position-pose-topic",
-  "/navlab/fcu/local_position_pose",
-]
+odom_topic = "/external_nav/odom"
+status_topic = "/mavlink_external_nav/status"
+rate_hz = 20.0
+quality = 100
+reset_counter = 0
+source_system = 191
+use_fcu_roll_pitch = true
+local_position_pose_topic = "/navlab/fcu/local_position_pose"
 
 [companion.runtime.mission]
 autostart = false
 endpoint = "tcp:127.0.0.1:5763"
-args = [
-  "--takeoff-alt-m",
-  "0.45",
-  "--min-airborne-alt-m",
-  "0.10",
-  "--hover-settle-sec",
-  "2.0",
-  "--forward-speed-mps",
-  "0.30",
-  "--avoid-forward-speed-mps",
-  "0.25",
-  "--obstacle-detect-distance-m",
-  "2.3",
-  "--obstacle-avoid-distance-m",
-  "1.2",
-  "--scan-dwell-sec",
-  "1.0",
-  "--pass-x-m",
-  "1.25",
-  "--return-y-m",
-  "0.65",
-  "--final-hold-sec",
-  "2.0",
-  "--force-arm",
-]
+duration_sec = 90.0
+summary_file = ""
+mode = "GUIDED"
+takeoff_alt_m = 0.80
+min_airborne_alt_m = 0.25
+preflight_ready_sec = 5.0
+hover_settle_sec = 6.0
+hover_altitude_tolerance_m = 0.25
+hover_hold_sec = 20.0
+max_horizontal_drift_m = 1.0
+max_altitude_drift_m = 0.6
+forward_speed_mps = 0.30
+avoid_forward_speed_mps = 0.25
+obstacle_detect_distance_m = 2.3
+obstacle_avoid_distance_m = 1.2
+scan_yaw_deg = 45.0
+scan_dwell_sec = 1.0
+pass_x_m = 1.25
+return_y_m = 0.65
+final_hold_sec = 2.0
+origin_lat_deg = -35.363262
+origin_lon_deg = 149.165237
+origin_alt_m = 584.0
+source_system = 255
+source_component = 190
+status_topic = "/navlab/mission/status"
+sim_log_topic = "/sim/log"
+scan_features_topic = "/scan_features"
+external_nav_status_topic = "/external_nav/status"
+imu_status_topic = "/imu/status"
+pose_topic = "/sim/uav_pose"
+mavlink_status_topic = "/navlab/mavlink/status"
+scan_timeout_sec = 1.0
+status_timeout_sec = 1.0
+setpoint_rate_hz = 10.0
+setpoint_lookahead_sec = 2.0
+require_external_nav = true
+require_imu_status = true
+send_position_setpoints = true
+disable_arming_checks = true
+force_arm = true
+simulate_mode_arm = false
 
 [gazebo_sensor.x2_protocol]
 enabled = false
@@ -139,3 +182,49 @@ range_noise_stddev_per_m = 0.0
 dropout_rate = 0.0
 auto_start = true
 random_seed = ""
+
+[gazebo_sensor.down_rangefinder]
+enabled = true
+scan_ideal_topic = "/rangefinder/down/scan_ideal"
+range_topic = "/rangefinder/down/range"
+status_topic = "/rangefinder/down/status"
+endpoint = "udpout:mavlink-router:14550"
+frame_id = "rangefinder_down_frame"
+mavlink_orientation = "MAV_SENSOR_ROTATION_PITCH_270"
+source_system = 1
+source_component = 158
+sensor_id = 1
+rate_hz = 20.0
+min_distance_m = 0.05
+max_distance_m = 6.0
+covariance_cm = 2
+model_pose = "0 0 -0.02 0 1.5707963267948966 0"
+model_update_rate_hz = 20.0
+model_ray_count = 1
+model_noise_stddev_m = 0.0
+
+[slam.runtime]
+backend = "cartographer"
+launch_package = "navlab_slam_bringup"
+launch_file = "navlab_slam_bringup.launch.py"
+launch_fake_odom = false
+launch_cartographer_backend = true
+publish_placeholder_odom = false
+cartographer_configuration_basename = "navlab_cartographer_2d.lua"
+imu_source_mode = "topic"
+imu_source_topic = "/ap/imu/experimental/data"
+imu_source_label = "ardupilot_dds"
+imu_min_input_rate_hz = "4.0"
+require_imu_for_external_nav = true
+require_height_for_external_nav = false
+external_nav_input_odom_topic = "/odom"
+scan_topic = "/scan"
+imu_topic = "/imu"
+cartographer_odometry_topic = "/odometry"
+odom_topic = "/odom"
+slam_status_topic = "/navlab/slam/status"
+external_nav_status_topic = "/external_nav/status"
+gazebo_truth_odom_topic = "/gazebo/truth/odom"
+laser_frame = "laser_frame"
+imu_frame = "imu_link"
+base_frame = "base_link"

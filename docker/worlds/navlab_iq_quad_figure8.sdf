@@ -54,21 +54,41 @@
       </link>
     </model>
 
+    <model name="ground_collision_slab">
+      <static>true</static>
+      <pose>0 0 -0.025 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>16 10 0.05</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+
     <include>
       <uri>model://navlab_iq_quad</uri>
       <name>navlab_iq_quad</name>
       <pose>0 0 0.20 0 0 0</pose>
     </include>
 
+    <!--
+      Figure-eight corridor geometry:
+      - side corridors are about 0.60 m wide
+      - north/south corridors are about 0.73 m wide
+      - the shared waist around the origin is about 1.55 m wide for takeoff
+    -->
     <model name="outer_left_north_wall">
       <static>true</static>
-      <pose>-3.1 3.4 1 0 0 0</pose>
+      <pose>-2.05 2.0 1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>6.4 0.35 2</size></box></geometry>
+          <geometry><box><size>4.1 0.35 2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>6.4 0.35 2</size></box></geometry>
+          <geometry><box><size>4.1 0.35 2</size></box></geometry>
           <material>
             <ambient>0.34 0.42 0.50 0.82</ambient>
             <diffuse>0.34 0.42 0.50 0.82</diffuse>
@@ -79,13 +99,13 @@
 
     <model name="outer_left_south_wall">
       <static>true</static>
-      <pose>-3.1 -3.4 1 0 0 0</pose>
+      <pose>-2.05 -2.0 1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>6.4 0.35 2</size></box></geometry>
+          <geometry><box><size>4.1 0.35 2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>6.4 0.35 2</size></box></geometry>
+          <geometry><box><size>4.1 0.35 2</size></box></geometry>
           <material>
             <ambient>0.34 0.42 0.50 0.82</ambient>
             <diffuse>0.34 0.42 0.50 0.82</diffuse>
@@ -96,13 +116,13 @@
 
     <model name="outer_left_west_wall">
       <static>true</static>
-      <pose>-6.4 0 1 0 0 0</pose>
+      <pose>-4.1 0 1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>0.35 6.8 2</size></box></geometry>
+          <geometry><box><size>0.35 4.0 2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>0.35 6.8 2</size></box></geometry>
+          <geometry><box><size>0.35 4.0 2</size></box></geometry>
           <material>
             <ambient>0.34 0.42 0.50 0.82</ambient>
             <diffuse>0.34 0.42 0.50 0.82</diffuse>
@@ -113,13 +133,13 @@
 
     <model name="outer_right_north_wall">
       <static>true</static>
-      <pose>3.1 3.4 1 0 0 0</pose>
+      <pose>2.05 2.0 1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>6.4 0.35 2</size></box></geometry>
+          <geometry><box><size>4.1 0.35 2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>6.4 0.35 2</size></box></geometry>
+          <geometry><box><size>4.1 0.35 2</size></box></geometry>
           <material>
             <ambient>0.34 0.42 0.50 0.82</ambient>
             <diffuse>0.34 0.42 0.50 0.82</diffuse>
@@ -130,13 +150,13 @@
 
     <model name="outer_right_south_wall">
       <static>true</static>
-      <pose>3.1 -3.4 1 0 0 0</pose>
+      <pose>2.05 -2.0 1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>6.4 0.35 2</size></box></geometry>
+          <geometry><box><size>4.1 0.35 2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>6.4 0.35 2</size></box></geometry>
+          <geometry><box><size>4.1 0.35 2</size></box></geometry>
           <material>
             <ambient>0.34 0.42 0.50 0.82</ambient>
             <diffuse>0.34 0.42 0.50 0.82</diffuse>
@@ -147,13 +167,13 @@
 
     <model name="outer_right_east_wall">
       <static>true</static>
-      <pose>6.4 0 1 0 0 0</pose>
+      <pose>4.1 0 1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>0.35 6.8 2</size></box></geometry>
+          <geometry><box><size>0.35 4.0 2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>0.35 6.8 2</size></box></geometry>
+          <geometry><box><size>0.35 4.0 2</size></box></geometry>
           <material>
             <ambient>0.34 0.42 0.50 0.82</ambient>
             <diffuse>0.34 0.42 0.50 0.82</diffuse>
@@ -164,13 +184,13 @@
 
     <model name="inner_left_island">
       <static>true</static>
-      <pose>-3.1 0 1 0 0 0</pose>
+      <pose>-2.05 0 1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>2.4 2.2 2</size></box></geometry>
+          <geometry><box><size>2.55 2.2 2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>2.4 2.2 2</size></box></geometry>
+          <geometry><box><size>2.55 2.2 2</size></box></geometry>
           <material>
             <ambient>0.86 0.42 0.32 0.74</ambient>
             <diffuse>0.86 0.42 0.32 0.74</diffuse>
@@ -181,13 +201,13 @@
 
     <model name="inner_right_island">
       <static>true</static>
-      <pose>3.1 0 1 0 0 0</pose>
+      <pose>2.05 0 1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>2.4 2.2 2</size></box></geometry>
+          <geometry><box><size>2.55 2.2 2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>2.4 2.2 2</size></box></geometry>
+          <geometry><box><size>2.55 2.2 2</size></box></geometry>
           <material>
             <ambient>0.86 0.42 0.32 0.74</ambient>
             <diffuse>0.86 0.42 0.32 0.74</diffuse>

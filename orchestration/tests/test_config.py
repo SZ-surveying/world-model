@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from rich.console import Console
 from src import host
 from src.config import (
@@ -14,52 +15,98 @@ from src.config import (
     RunConfig,
 )
 from src.project_config import load_navlab_images_config, load_runtime_config, resolve_navlab_image_tag
+from src.tasks import acceptance as acceptance_task_module
+from src.tasks import build as build_task_module
+from src.tasks import hover as hover_task_module
+from src.tasks import hover_diagnostic as hover_diagnostic_task_module
+from src.tasks import hover_slam_diagnostic as hover_slam_diagnostic_task_module
+from src.tasks.acceptance import AcceptanceTask
+from src.tasks.base import OrchestrationTask
+from src.tasks.build import BuildTask
+from src.tasks.hover import HoverAcceptanceTask
+from src.tasks.hover_diagnostic import HoverDiagnosticTask
+from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
+from src.tasks.registry import TaskRegistry
 
-from navlab.companion.config import NodeConfig, RuntimeConfig
+from navlab.companion.config import (
+    ExternalNavSenderConfig,
+    GazeboTruthBridgeConfig,
+    GazeboTruthOdomConfig,
+    ImuBridgeConfig,
+    MissionNodeConfig,
+    PoseMirrorConfig,
+    RuntimeConfig,
+    ScanFeaturesConfig,
+    WorldMarkersConfig,
+)
 from navlab.companion.runtime import CompanionLauncher
 
 
 def test_navlab_runtime_config_loads_companion_nodes_from_toml() -> None:
     config = RuntimeConfig.load("navlab/config.toml")
+    world_argv = config.world_markers.argv()
+    pose_argv = config.pose_mirror.argv()
+    odom_argv = config.gazebo_truth_odom.argv()
+    external_nav_argv = config.external_nav_sender.argv()
+    mission_argv = config.mission.argv()
 
     assert config.imu_source_label == "fcu_mavlink_navlab"
     assert config.world_markers.autostart is True
-    assert "/sim/markers" in config.world_markers.args
-    assert "--frame-id" in config.world_markers.args
-    assert "navlab_world" in config.world_markers.args
+    assert "/sim/markers" in world_argv
+    assert "--frame-id" in world_argv
+    assert "navlab_world" in world_argv
     assert config.scan_features.autostart is True
     assert config.pose_mirror.autostart is True
     assert config.pose_mirror.endpoint == "tcp:mavlink-router:5760"
-    assert "--pose-frame-id" in config.pose_mirror.args
-    assert "navlab_world" in config.pose_mirror.args
-    assert "--map-frame-id" in config.pose_mirror.args
-    assert "--sensor-base-frame-id" in config.pose_mirror.args
-    assert "--laser-frame-id" in config.pose_mirror.args
-    assert "--simulate-pose-from-mission-status" not in config.pose_mirror.args
-    assert "--set-gazebo-pose" not in config.pose_mirror.args
-    assert "--world-name" not in config.pose_mirror.args
-    assert "--model-name" not in config.pose_mirror.args
+    assert "--pose-frame-id" in pose_argv
+    assert "navlab_world" in pose_argv
+    assert "--map-frame-id" in pose_argv
+    assert "--odom-frame-id" in pose_argv
+    assert "--sensor-base-frame-id" in pose_argv
+    assert "--replay-base-frame-id" in pose_argv
+    assert "--replay-base-parent-frame-id" in pose_argv
+    assert "--laser-frame-id" in pose_argv
+    replay_base_flag = pose_argv.index("--replay-base-frame-id")
+    replay_parent_flag = pose_argv.index("--replay-base-parent-frame-id")
+    assert pose_argv[replay_base_flag + 1] == "navlab_replay_base_link"
+    assert pose_argv[replay_parent_flag + 1] == "navlab_world"
+    assert "--simulate-pose-from-mission-status" not in pose_argv
+    assert "--set-gazebo-pose" not in pose_argv
+    assert "--world-name" not in pose_argv
+    assert "--model-name" not in pose_argv
     assert config.gazebo_truth_bridge.autostart is True
     assert config.gazebo_truth_odom.autostart is True
-    assert "/gazebo/truth/odom" in config.gazebo_truth_odom.args
-    index_flag = config.gazebo_truth_odom.args.index("--transform-index")
-    assert config.gazebo_truth_odom.args[index_flag + 1] == "0"
-    assert config.external_nav_sender.args == (
+    assert "/gazebo/truth/odom" in odom_argv
+    index_flag = odom_argv.index("--transform-index")
+    assert odom_argv[index_flag + 1] == "0"
+    assert external_nav_argv == [
+        "--endpoint",
+        "tcp:127.0.0.1:5762",
+        "--odom-topic",
+        "/external_nav/odom",
+        "--status-topic",
+        "/mavlink_external_nav/status",
         "--rate-hz",
-        "20",
+        "20.0",
+        "--quality",
+        "100",
+        "--reset-counter",
+        "0",
+        "--source-system",
+        "191",
         "--use-fcu-roll-pitch",
         "--local-position-pose-topic",
         "/navlab/fcu/local_position_pose",
-    )
+    ]
     assert config.external_nav_sender.endpoint == "tcp:127.0.0.1:5762"
     assert config.mission.endpoint == "tcp:127.0.0.1:5763"
-    assert "--simulate-mode-arm" not in config.mission.args
-    assert "--obstacle-detect-distance-m" in config.mission.args
-    assert "--obstacle-avoid-distance-m" in config.mission.args
-    assert "--pass-x-m" in config.mission.args
-    assert "--return-y-m" in config.mission.args
-    pass_x_flag = config.mission.args.index("--pass-x-m")
-    assert config.mission.args[pass_x_flag + 1] == "1.25"
+    assert "--simulate-mode-arm" not in mission_argv
+    assert "--obstacle-detect-distance-m" in mission_argv
+    assert "--obstacle-avoid-distance-m" in mission_argv
+    assert "--pass-x-m" in mission_argv
+    assert "--return-y-m" in mission_argv
+    pass_x_flag = mission_argv.index("--pass-x-m")
+    assert mission_argv[pass_x_flag + 1] == "1.25"
 
 
 def test_navlab_compose_env_contains_only_compose_level_config() -> None:
@@ -90,7 +137,7 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.foxglove_upload.device_name == "navlab_companion_sitl_gazebo"
     assert config.slam.autostart is True
     assert config.slam.backend == "cartographer"
-    assert config.slam.imu_source_topic == "/navlab/fcu_imu/data"
+    assert config.slam.runtime_config == "/workspace/navlab/config.toml"
     assert config.sensor.scan_source == "x2_virtual_serial"
     assert config.sensor.acceptance_scan_source == "x2_virtual_serial_vendor_driver"
 
@@ -157,18 +204,58 @@ def test_navlab_run_config_is_derived_from_config() -> None:
     assert config.artifact_dir.as_posix() == "artifacts/ros/navlab_companion_sitl_gazebo/20260603_000000"
 
 
+def test_orchestration_task_registry_contains_navlab_workflows() -> None:
+    assert TaskRegistry.names() == (
+        "acceptance",
+        "build",
+        "doctor",
+        "hover",
+        "hover-diagnostic",
+        "hover-slam-diagnostic",
+    )
+    assert TaskRegistry.create("build").description
+    assert TaskRegistry.create("doctor").description
+    assert TaskRegistry.create("acceptance").description
+    assert TaskRegistry.create("hover").description
+    assert TaskRegistry.create("hover-diagnostic").description
+    assert TaskRegistry.create("hover-slam-diagnostic").description
+
+
+def test_orchestration_task_registry_requires_task_name() -> None:
+    class MissingNameTask(OrchestrationTask):
+        TASK_DESCRIPTION = "Missing task name"
+
+        def run(self, **kwargs: object) -> int:
+            return 0
+
+    with pytest.raises(ValueError, match="MissingNameTask must define TASK_NAME"):
+        TaskRegistry.register(MissingNameTask)
+
+
+def test_orchestration_task_registry_rejects_duplicate_task_name() -> None:
+    class DuplicateHoverTask(OrchestrationTask):
+        TASK_NAME = "hover"
+        TASK_DESCRIPTION = "Duplicate hover task"
+
+        def run(self, **kwargs: object) -> int:
+            return 0
+
+    with pytest.raises(ValueError, match="orchestration task 'hover' is already registered"):
+        TaskRegistry.register(DuplicateHoverTask)
+
+
 def test_companion_launcher_autostarts_sim_marker_and_scan_nodes(monkeypatch) -> None:
     config = RuntimeConfig(
         path=Path("profile.toml"),
         imu_source_label="fcu",
-        world_markers=NodeConfig(autostart=True, args=("--topic", "/sim/markers")),
-        scan_features=NodeConfig(autostart=True, args=("--features-topic", "/scan_features")),
-        gazebo_truth_bridge=NodeConfig(autostart=False),
-        gazebo_truth_odom=NodeConfig(autostart=False),
-        pose_mirror=NodeConfig(autostart=False),
-        imu_bridge=NodeConfig(autostart=False),
-        external_nav_sender=NodeConfig(autostart=False),
-        mission=NodeConfig(autostart=False),
+        world_markers=WorldMarkersConfig(autostart=True, topic="/sim/markers"),
+        scan_features=ScanFeaturesConfig(autostart=True, features_topic="/scan_features"),
+        gazebo_truth_bridge=GazeboTruthBridgeConfig(autostart=False),
+        gazebo_truth_odom=GazeboTruthOdomConfig(autostart=False),
+        pose_mirror=PoseMirrorConfig(autostart=False),
+        imu_bridge=ImuBridgeConfig(autostart=False),
+        external_nav_sender=ExternalNavSenderConfig(autostart=False),
+        mission=MissionNodeConfig(autostart=False),
     )
     started: list[tuple[str, list[str]]] = []
 
@@ -179,10 +266,12 @@ def test_companion_launcher_autostarts_sim_marker_and_scan_nodes(monkeypatch) ->
 
     CompanionLauncher(config)._start_configured_processes()
 
-    assert started == [
-        ("world_marker_publisher", ["--topic", "/sim/markers"]),
-        ("scan_features_publisher", ["--features-topic", "/scan_features"]),
-    ]
+    assert started[0][0] == "world_marker_publisher"
+    assert "--topic" in started[0][1]
+    assert "/sim/markers" in started[0][1]
+    assert started[1][0] == "scan_features_publisher"
+    assert "--features-topic" in started[1][1]
+    assert "/scan_features" in started[1][1]
 
 
 def test_navlab_orchestration_starts_slam_container(monkeypatch) -> None:
@@ -209,9 +298,11 @@ def test_navlab_orchestration_starts_slam_container(monkeypatch) -> None:
     assert run["name"] == "navlab-slam"
     assert run["networks"] == ["container:gazebo-id"]
     command = " ".join(run["command"])
-    assert "ros2 launch indoor_bringup indoor_bringup.launch.py" in command
-    assert "imu_source_topic:=/navlab/fcu_imu/data" in command
-    assert "external_nav_input_odom_topic:=/gazebo/truth/odom" in command
+    assert "python3 -m navlab.slam.cli launch" in command
+    assert "--config /workspace/navlab/config.toml" in command
+    assert "--backend cartographer" in command
+    assert "/gazebo/truth/odom" not in command
+    assert run["envs"]["NAVLAB_SLAM_RUNTIME_CONFIG"] == "/workspace/navlab/config.toml"
 
 
 def test_navlab_orchestration_starts_companion_with_runtime_config(monkeypatch) -> None:
@@ -251,12 +342,12 @@ def test_navlab_acceptance_invokes_single_command_runtime_cli(monkeypatch, tmp_p
     monkeypatch.setattr(host, "_start_slam_container", lambda _config: None)
     monkeypatch.setattr(host, "_start_companion_container", lambda _config: None)
     monkeypatch.setattr(host, "_capture_stack_logs", lambda **_kwargs: None)
-    monkeypatch.setattr(host, "finalize_navlab_artifact", lambda **_kwargs: None)
+    monkeypatch.setattr(acceptance_task_module, "finalize_navlab_artifact", lambda **_kwargs: None)
     monkeypatch.setattr(host, "_remove_companion_container", lambda: None)
     monkeypatch.setattr(host, "_remove_slam_container", lambda: None)
     monkeypatch.setattr(host, "_compose_stop", lambda _config: None)
     monkeypatch.setattr(
-        host,
+        acceptance_task_module,
         "upload_acceptance_rosbag",
         lambda _config: SimpleNamespace(ok=False, state="skipped", reason="test"),
     )
@@ -267,7 +358,7 @@ def test_navlab_acceptance_invokes_single_command_runtime_cli(monkeypatch, tmp_p
 
     monkeypatch.setattr(host, "_docker_exec_runtime_command", fake_exec_runtime_command)
 
-    rc = host.orchestrate_companion_gazebo_acceptance(duration_sec=12.0, console=Console(file=io.StringIO()))
+    rc = AcceptanceTask().run(duration_sec=12.0, console=Console(file=io.StringIO()))
 
     assert rc == 0
     assert len(calls) == 1
@@ -275,6 +366,125 @@ def test_navlab_acceptance_invokes_single_command_runtime_cli(monkeypatch, tmp_p
     args = calls[0]["args"]
     assert args[0] == "--artifact-dir"
     assert "execute-acceptance" not in args
+
+
+def test_navlab_hover_acceptance_invokes_hover_runtime_cli(monkeypatch, tmp_path) -> None:
+    calls: list[dict[str, object]] = []
+    captured_logs: list[dict[str, object]] = []
+
+    monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path))
+    monkeypatch.setattr(host, "_render_run_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(host, "_compose_up", lambda _config: None)
+    monkeypatch.setattr(host, "_start_slam_container", lambda _config: None)
+    monkeypatch.setattr(host, "_start_companion_container", lambda _config: None)
+    monkeypatch.setattr(host, "_capture_stack_logs", lambda **_kwargs: None)
+    monkeypatch.setattr(host, "_capture_compose_service_log", lambda **kwargs: captured_logs.append(kwargs))
+    monkeypatch.setattr(hover_task_module, "finalize_navlab_artifact", lambda **_kwargs: None)
+    monkeypatch.setattr(host, "_remove_companion_container", lambda: None)
+    monkeypatch.setattr(host, "_remove_slam_container", lambda: None)
+    monkeypatch.setattr(host, "_compose_stop", lambda _config: None)
+    monkeypatch.setattr(
+        hover_task_module,
+        "upload_acceptance_rosbag",
+        lambda _config: SimpleNamespace(ok=False, state="skipped", reason="test"),
+    )
+
+    def fake_exec_runtime_command(**kwargs):  # noqa: ANN001
+        calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr(host, "_docker_exec_runtime_command", fake_exec_runtime_command)
+
+    rc = HoverAcceptanceTask().run(duration_sec=12.0, console=Console(file=io.StringIO()))
+
+    assert rc == 0
+    assert len(calls) == 1
+    assert calls[0]["module"] == "navlab.companion.acceptance_cli"
+    args = calls[0]["args"]
+    assert args[0] == "execute-hover-acceptance"
+    assert "--artifact-dir" in args
+    assert captured_logs[0]["service"] == "sitl"
+    assert captured_logs[0]["output_path"] == tmp_path / "sitl.log"
+
+
+def test_navlab_hover_diagnostic_skips_slam_and_invokes_diagnostic_runtime_cli(monkeypatch, tmp_path) -> None:
+    calls: list[dict[str, object]] = []
+    captured_logs: list[dict[str, object]] = []
+
+    monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path))
+    monkeypatch.setattr(host, "_render_run_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(host, "_compose_up", lambda _config: None)
+    monkeypatch.setattr(host, "_start_slam_container", lambda _config: (_ for _ in ()).throw(AssertionError("no SLAM")))
+    monkeypatch.setattr(host, "_start_companion_container", lambda _config: None)
+    monkeypatch.setattr(host, "_capture_stack_logs", lambda **_kwargs: None)
+    monkeypatch.setattr(host, "_capture_compose_service_log", lambda **kwargs: captured_logs.append(kwargs))
+    monkeypatch.setattr(hover_diagnostic_task_module, "finalize_navlab_artifact", lambda **_kwargs: None)
+    monkeypatch.setattr(host, "_remove_companion_container", lambda: None)
+    monkeypatch.setattr(host, "_remove_slam_container", lambda: None)
+    monkeypatch.setattr(host, "_compose_stop", lambda _config: None)
+    monkeypatch.setattr(
+        hover_diagnostic_task_module,
+        "upload_acceptance_rosbag",
+        lambda _config: SimpleNamespace(ok=False, state="skipped", reason="test"),
+    )
+
+    def fake_exec_runtime_command(**kwargs):  # noqa: ANN001
+        calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr(host, "_docker_exec_runtime_command", fake_exec_runtime_command)
+
+    rc = HoverDiagnosticTask().run(duration_sec=12.0, console=Console(file=io.StringIO()))
+
+    assert rc == 0
+    assert len(calls) == 1
+    assert calls[0]["module"] == "navlab.companion.acceptance_cli"
+    args = calls[0]["args"]
+    assert args[0] == "execute-hover-diagnostic-acceptance"
+    assert "profiles/navlab-hover-diagnostic-rosbag-topics.txt" in args
+    assert captured_logs[0]["service"] == "sitl"
+    assert captured_logs[0]["output_path"] == tmp_path / "sitl.log"
+
+
+def test_navlab_hover_slam_diagnostic_starts_slam_and_invokes_runtime_cli(monkeypatch, tmp_path) -> None:
+    calls: list[dict[str, object]] = []
+    captured_logs: list[dict[str, object]] = []
+    slam_started: list[bool] = []
+
+    monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path))
+    monkeypatch.setattr(host, "_render_run_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(host, "_compose_up", lambda _config: None)
+    monkeypatch.setattr(host, "_start_slam_container", lambda _config: slam_started.append(True))
+    monkeypatch.setattr(host, "_start_companion_container", lambda _config: None)
+    monkeypatch.setattr(host, "_capture_stack_logs", lambda **_kwargs: None)
+    monkeypatch.setattr(host, "_capture_compose_service_log", lambda **kwargs: captured_logs.append(kwargs))
+    monkeypatch.setattr(hover_slam_diagnostic_task_module, "finalize_navlab_artifact", lambda **_kwargs: None)
+    monkeypatch.setattr(host, "_remove_companion_container", lambda: None)
+    monkeypatch.setattr(host, "_remove_slam_container", lambda: None)
+    monkeypatch.setattr(host, "_compose_stop", lambda _config: None)
+    monkeypatch.setattr(
+        hover_slam_diagnostic_task_module,
+        "upload_acceptance_rosbag",
+        lambda _config: SimpleNamespace(ok=False, state="skipped", reason="test"),
+    )
+
+    def fake_exec_runtime_command(**kwargs):  # noqa: ANN001
+        calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr(host, "_docker_exec_runtime_command", fake_exec_runtime_command)
+
+    rc = HoverSlamDiagnosticTask().run(duration_sec=12.0, console=Console(file=io.StringIO()))
+
+    assert rc == 0
+    assert slam_started == [True]
+    assert len(calls) == 1
+    assert calls[0]["module"] == "navlab.companion.acceptance_cli"
+    args = calls[0]["args"]
+    assert args[0] == "execute-hover-slam-diagnostic-acceptance"
+    assert "profiles/navlab-rosbag-topics.txt" in args
+    assert captured_logs[0]["service"] == "sitl"
+    assert captured_logs[0]["output_path"] == tmp_path / "sitl.log"
 
 
 def test_navlab_image_build_uses_global_image_config(monkeypatch) -> None:
@@ -285,10 +495,10 @@ def test_navlab_image_build_uses_global_image_config(monkeypatch) -> None:
             builds.append({"context_path": context_path, **kwargs})
             return iter(["build log"])
 
-    monkeypatch.setattr(host, "DockerClient", FakeDockerClient)
+    monkeypatch.setattr(build_task_module, "DockerClient", FakeDockerClient)
     console = Console(file=io.StringIO(), width=120)
 
-    rc = host.build_navlab_images(kind="companion", tag="cli-tag", console=console)
+    rc = BuildTask().run(kind="companion", tag="cli-tag", console=console)
 
     assert rc == 0
     assert len(builds) == 1
@@ -308,10 +518,10 @@ def test_navlab_image_build_supports_slam(monkeypatch) -> None:
             builds.append({"context_path": context_path, **kwargs})
             return iter(["build log"])
 
-    monkeypatch.setattr(host, "DockerClient", FakeDockerClient)
+    monkeypatch.setattr(build_task_module, "DockerClient", FakeDockerClient)
     console = Console(file=io.StringIO(), width=120)
 
-    rc = host.build_navlab_images(kind="slam", tag="cli-tag", console=console)
+    rc = BuildTask().run(kind="slam", tag="cli-tag", console=console)
 
     assert rc == 0
     assert len(builds) == 1
@@ -329,10 +539,10 @@ def test_navlab_image_build_supports_gazebo_sensor(monkeypatch) -> None:
             builds.append({"context_path": context_path, **kwargs})
             return iter(["build log"])
 
-    monkeypatch.setattr(host, "DockerClient", FakeDockerClient)
+    monkeypatch.setattr(build_task_module, "DockerClient", FakeDockerClient)
     console = Console(file=io.StringIO(), width=120)
 
-    rc = host.build_navlab_images(kind="gazebo-sensor", tag="cli-tag", console=console)
+    rc = BuildTask().run(kind="gazebo-sensor", tag="cli-tag", console=console)
 
     assert rc == 0
     assert len(builds) == 1

@@ -10,7 +10,7 @@ from navlab.sim.world.world_markers import MarkerPose, MarkerSpec, load_world_ma
 DEFAULT_WORLD_FILE = Path("/workspace/docker/worlds/navlab_iq_quad_figure8.sdf")
 DEFAULT_TOPIC = "/sim/markers"
 DEFAULT_POSE_TOPIC = "/sim/uav_pose"
-DEFAULT_ROOT_MODEL_NAME = "uav_start_marker"
+DEFAULT_ROOT_MODEL_NAME = "navlab_iq_quad"
 DEFAULT_REPLAY_FRAME_ID = "navlab_world"
 
 

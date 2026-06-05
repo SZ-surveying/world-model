@@ -9,8 +9,8 @@ ydlidar_ros2_driver_node:
     sample_rate: 3
     abnormal_check_count: 4
     fixed_resolution: true
-    reversion: true
-    inverted: true
+    reversion: false
+    inverted: false
     auto_reconnect: true
     isSingleChannel: true
     intensity: false

@@ -5,10 +5,10 @@ from pathlib import Path
 
 def test_slam_ros_packages_live_under_navlab_slam_without_src_wrapper() -> None:
     assert not Path("ros2_ws").exists()
-    assert Path("navlab/slam/ros/localization/cartographer_indoor/package.xml").is_file()
-    assert Path("navlab/slam/ros/bridges/external_nav_bridge/package.xml").is_file()
-    assert Path("navlab/slam/ros/scenarios/indoor_bringup/package.xml").is_file()
-    assert Path("navlab/slam/ros/sensors/imu_bridge/package.xml").is_file()
+    assert Path("navlab/slam/ros/localization/navlab_cartographer_adapter/package.xml").is_file()
+    assert Path("navlab/slam/ros/bridges/navlab_external_nav_bridge/package.xml").is_file()
+    assert Path("navlab/slam/ros/scenarios/navlab_slam_bringup/package.xml").is_file()
+    assert Path("navlab/slam/ros/sensors/navlab_slam_imu_bridge/package.xml").is_file()
 
 
 def test_companion_image_does_not_copy_slam_ros_workspace() -> None:

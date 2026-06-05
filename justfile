@@ -42,6 +42,18 @@ navlab-doctor *args='':
 navlab-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} acceptance {{duration_sec}} {{args}}
 
+# Run NavLab FCU GUIDED/arm/takeoff/hover acceptance with rosbag/Foxglove artifacts.
+navlab-hover-acceptance duration_sec='90' *args='':
+    {{orchestration_cmd}} hover {{duration_sec}} {{args}}
+
+# Run NavLab rangefinder altitude hover diagnostic without SLAM horizontal control.
+navlab-hover-diagnostic duration_sec='90' *args='':
+    {{orchestration_cmd}} hover-diagnostic {{duration_sec}} {{args}}
+
+# Run NavLab SLAM ExternalNav hover diagnostic without horizontal setpoints.
+navlab-hover-slam-diagnostic duration_sec='90' *args='':
+    {{orchestration_cmd}} hover-slam-diagnostic {{duration_sec}} {{args}}
+
 # Build the YDLidar ROS2 package.
 x3-build:
     cd {{x3_ws}} && ../scripts/build-ydlidar.sh --no-clean

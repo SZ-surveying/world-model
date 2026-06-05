@@ -309,7 +309,7 @@ def load_world_obstacle_boxes(world_file: str | Path) -> list[WorldObstacleBox]:
     boxes: list[WorldObstacleBox] = []
     for model in world.findall("model"):
         name = model.get("name", "")
-        if name.startswith("uav_") or name == "ground_plane":
+        if name.startswith("uav_") or name in {"ground_plane", "ground_collision_slab"}:
             continue
 
         collision = model.find("link/collision/geometry/box/size")

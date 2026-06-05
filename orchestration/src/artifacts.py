@@ -72,6 +72,8 @@ def finalize_navlab_artifact(
     ros_domain_id: str,
     rosbag_profile: str,
     session_log_dir: Path | None = None,
+    stage_label: str = "Companion SITL Gazebo obstacle acceptance",
+    control_mode: str = "companion_mavlink_hover_forward_avoid",
 ) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     _copy_session_log(session_log_dir=session_log_dir, log_name="sitl.log", artifact_dir=artifact_dir)
@@ -84,14 +86,14 @@ def finalize_navlab_artifact(
                     "run_id": run_id,
                     "artifact_dir": str(artifact_dir),
                     "stage_id": "NavLab",
-                    "stage_label": "Companion SITL Gazebo obstacle acceptance",
+                    "stage_label": stage_label,
                     "stage_gate": "NavLab",
                     "duration_sec": duration_sec,
                     "ros_domain_id": ros_domain_id,
                 },
                 "inputs": {
                     "odom_source": "gazebo_scan_fcu_imu_cartographer",
-                    "control_mode": "companion_mavlink_hover_forward_avoid",
+                    "control_mode": control_mode,
                     "control_authority": "sitl_mavlink_only",
                     "gazebo_direct_set_pose": False,
                     "rosbag_profile": rosbag_profile,
@@ -123,7 +125,7 @@ def _write_summary_md(artifact_dir: Path) -> None:
             ("mission_summary", "Mission"),
             ("imu_status", "IMU"),
             ("external_nav_status", "ExternalNav"),
-            ("cartographer_status", "Cartographer"),
+            ("slam_status", "SLAM"),
             ("lidar_chain", "Lidar Chain"),
             ("x2_status", "X2 Sensor"),
             ("scan_publisher", "Scan Publisher"),

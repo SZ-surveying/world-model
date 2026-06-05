@@ -65,7 +65,7 @@ def resample_ideal_scan_to_x2_samples(
 
 
 def _x2_angle_deg_to_ros_rad(angle_deg: float) -> float:
-    angle_rad = math.radians((angle_deg - 180.0) % 360.0)
+    angle_rad = math.radians(angle_deg % 360.0)
     if angle_rad >= math.pi:
         angle_rad -= 2.0 * math.pi
     return angle_rad

@@ -5,33 +5,26 @@ import shlex
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal
 
 from python_on_whales import DockerClient
 from python_on_whales.exceptions import DockerException
 from rich.console import Console
 from rich.table import Table
 
-from src.artifacts import finalize_navlab_artifact
 from src.config import (
     NAVLAB_PROFILES,
     NAVLAB_SERVICES,
     NAVLAB_STOP_SERVICES,
     RunConfig,
 )
-from src.foxglove_upload import upload_acceptance_rosbag
 from src.project_config import (
-    NavLabImageConfig,
-    NavLabImagesConfig,
     load_compose_config,
-    load_navlab_images_config,
     load_runtime_config,
 )
 
 COMPANION_CONTAINER = "navlab-companion"
 SLAM_CONTAINER = "navlab-slam"
 GAZEBO_SENSOR_SERVICE = "gazebo-sensor"
-ImageKind = Literal["companion", "slam", "gazebo-sensor", "all"]
 DEFAULT_COMPANION_RUNTIME_CONFIG = Path("navlab/config.toml")
 
 
@@ -46,98 +39,6 @@ def _compose_client() -> DockerClient:
         compose_project_directory=runtime.lab_root,
         compose_env_files=([env_file] if env_file.is_file() else []),
     )
-
-
-def _repo_path(runtime_root: Path, value: str) -> Path:
-    path = Path(value).expanduser()
-    if path.is_absolute():
-        return path
-    return runtime_root / path
-
-
-def _image_build_specs(
-    image_config: NavLabImagesConfig,
-    kind: ImageKind,
-) -> tuple[tuple[str, NavLabImageConfig], ...]:
-    specs = (
-        ("companion", image_config.companion),
-        ("slam", image_config.slam),
-        ("gazebo-sensor", image_config.gazebo_sensor),
-    )
-    if kind == "all":
-        return specs
-    for spec in specs:
-        if spec[0] == kind:
-            return (spec,)
-    raise ValueError(f"Invalid NavLab image kind '{kind}': expected companion, slam, gazebo-sensor, or all")
-
-
-def _render_image_build_config(
-    console: Console,
-    *,
-    kind: ImageKind,
-    runtime_root: Path,
-    specs: tuple[tuple[str, NavLabImageConfig], ...],
-    tag: str | None,
-) -> None:
-    table = Table(title="NavLab Image Build", show_header=False)
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-    table.add_row("kind", kind)
-    table.add_row("tag override", tag or "<none>")
-    for label, image_config in specs:
-        table.add_row(f"{label} context", str(_repo_path(runtime_root, image_config.context.value)))
-        table.add_row(f"{label} dockerfile", str(_repo_path(runtime_root, image_config.dockerfile.value)))
-        table.add_row(f"{label} target", image_config.target.value)
-        table.add_row(f"{label} tag strategy", image_config.tag_strategy.value)
-        table.add_row(f"{label} image", image_config.image(cli_tag=tag, cwd=runtime_root))
-    console.print(table)
-
-
-def build_navlab_images(*, kind: ImageKind = "all", tag: str | None = None, console: Console | None = None) -> int:
-    console = console or Console()
-    runtime = load_runtime_config()
-    image_config = load_navlab_images_config(runtime)
-    try:
-        specs = _image_build_specs(image_config, kind)
-        resolved_specs = tuple(
-            (
-                label,
-                _repo_path(runtime.lab_root, spec.context.value),
-                _repo_path(runtime.lab_root, spec.dockerfile.value),
-                spec.target.value,
-                spec.image(cli_tag=tag, cwd=runtime.lab_root),
-            )
-            for label, spec in specs
-        )
-    except ValueError as exc:
-        console.print(f"[red]{exc}[/red]")
-        return 2
-    _render_image_build_config(
-        console,
-        kind=kind,
-        runtime_root=runtime.lab_root,
-        specs=specs,
-        tag=tag,
-    )
-    try:
-        for label, context_path, dockerfile, target, image in resolved_specs:
-            console.print(f"[bold cyan]Building NavLab {label} image[/bold cyan] {image}")
-            logs = DockerClient().build(
-                context_path,
-                file=dockerfile,
-                target=target,
-                tags=image,
-                stream_logs=True,
-            )
-            if logs is not None:
-                for line in logs:
-                    console.print(str(line).rstrip())
-    except DockerException as exc:
-        console.print(f"[red]Docker build failed:[/red] {exc}")
-        return exc.return_code or 1
-    console.print("[green]NavLab image build completed[/green]")
-    return 0
 
 
 @contextmanager
@@ -231,6 +132,17 @@ def _capture_stack_logs(*, config: RunConfig) -> None:
     (config.artifact_dir / "navlab_stack_tail.log").write_text(output, encoding="utf-8")
 
 
+def _capture_compose_service_log(*, config: RunConfig, service: str, output_path: Path, tail: int = 2000) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    compose = load_compose_config(load_runtime_config())
+    container_name = f"{compose.project_name.value}-{service}-1"
+    try:
+        output = DockerClient().logs(container_name, tail=tail)
+    except DockerException as exc:
+        output = str(exc)
+    output_path.write_text(str(output), encoding="utf-8")
+
+
 def _session_log_dir(config: RunConfig) -> Path:
     return Path("artifacts/sessions") / config.session_id / config.run_id
 
@@ -262,26 +174,17 @@ def _start_slam_container(config: RunConfig) -> None:
         return
     _remove_slam_container()
     slam = config.orchestration.slam
-    launch_args = [
-        "launch_fake_external_nav:=false",
-        "launch_cartographer_backend:=true",
-        "publish_placeholder_odom:=false",
-        "imu_source_mode:=topic",
-        f"imu_source_topic:={slam.imu_source_topic}",
-        f"imu_source_label:={slam.imu_source_label}",
-        f"imu_min_input_rate_hz:={slam.imu_min_input_rate_hz}",
-        "require_imu_for_external_nav:=true",
-        "external_nav_input_odom_topic:=/gazebo/truth/odom",
-        *slam.args,
-    ]
     launch_command = " ".join(
         shlex.quote(arg)
         for arg in [
-            "ros2",
+            "python3",
+            "-m",
+            "navlab.slam.cli",
             "launch",
-            "indoor_bringup",
-            "indoor_bringup.launch.py",
-            *launch_args,
+            "--config",
+            slam.runtime_config,
+            "--backend",
+            slam.backend,
         ]
     )
     DockerClient().run(
@@ -302,6 +205,7 @@ def _start_slam_container(config: RunConfig) -> None:
             "ROS_DOMAIN_ID": config.ros_domain_id,
             "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
             "PYTHONPATH": "/workspace",
+            "NAVLAB_SLAM_RUNTIME_CONFIG": slam.runtime_config,
         },
     )
 
@@ -393,84 +297,3 @@ def _docker_exec_runtime_command(*, args: list[str], module: str = "navlab.compa
     except DockerException as exc:
         return exc.return_code or 1
     return 0
-
-
-def companion_doctor(*, config_path: str | Path | None = None, console: Console | None = None) -> int:
-    console = console or Console()
-    config = RunConfig.from_config(config_path=config_path)
-    artifact_dir = Path(os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_companion_doctor/{config.run_id}"))
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    console.print("[bold cyan]Checking NavLab companion image[/bold cyan]")
-    rc = _docker_run_runtime_command(
-        config=config,
-        args=[
-            "doctor",
-            "--summary-file",
-            str(artifact_dir / "summary.json"),
-            "--image",
-            config.companion_image,
-        ],
-    )
-    console.print(f"[green]Doctor summary:[/green] {artifact_dir / 'summary.json'}")
-    return rc
-
-
-def orchestrate_companion_gazebo_acceptance(
-    *,
-    config_path: str | Path | None = None,
-    duration_sec: float = 90.0,
-    console: Console | None = None,
-) -> int:
-    console = console or Console()
-    config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
-    config.artifact_dir.mkdir(parents=True, exist_ok=True)
-    _render_run_config(console, config)
-    rc = 1
-    try:
-        console.print("[bold cyan]Starting SITL + Gazebo + companion stack[/bold cyan]")
-        _compose_up(config)
-        _start_slam_container(config)
-        _start_companion_container(config)
-        console.print(f"[bold cyan]Running acceptance inside companion for {duration_sec:g}s[/bold cyan]")
-        rc = _docker_exec_runtime_command(
-            module="navlab.companion.acceptance_cli",
-            args=[
-                "--artifact-dir",
-                str(config.artifact_dir),
-                "--duration-sec",
-                str(duration_sec),
-                "--rosbag-profile",
-                config.rosbag_profile,
-                "--companion-image",
-                config.companion_image,
-                "--scan-source",
-                config.scan_source,
-                "--config",
-                _companion_runtime_config_path(),
-            ],
-        )
-    finally:
-        _capture_stack_logs(config=config)
-        finalize_navlab_artifact(
-            artifact_dir=config.artifact_dir,
-            session_id=config.session_id,
-            run_id=config.run_id,
-            duration_sec=duration_sec,
-            ros_domain_id=config.ros_domain_id,
-            rosbag_profile=config.rosbag_profile,
-            session_log_dir=_session_log_dir(config),
-        )
-        _remove_companion_container()
-        _remove_slam_container()
-        try:
-            _compose_stop(config)
-        except DockerException:
-            pass
-        upload = upload_acceptance_rosbag(config)
-        upload_color = "green" if upload.ok else "yellow"
-        console.print(f"[{upload_color}]Foxglove upload:[/{upload_color}] {upload.state} ({upload.reason})")
-    color = "green" if rc == 0 else "red"
-    console.print(f"[{color}]NavLab acceptance completed rc={rc}[/{color}]")
-    console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")
-    console.print(f"[bold]Foxglove notes:[/bold] {config.artifact_dir / 'foxglove_notes.md'}")
-    return rc

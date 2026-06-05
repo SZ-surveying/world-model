@@ -49,10 +49,7 @@ scan_source = "x2_virtual_serial"
 [slam]
 autostart = true
 backend = "cartographer"
-imu_source_topic = "/navlab/fcu_imu/data"
-imu_source_label = "fcu_mavlink_navlab"
-imu_min_input_rate_hz = "2.0"
-args = []
+runtime_config = "/workspace/navlab/config.toml"
 
 [foxglove_upload]
 enabled = true

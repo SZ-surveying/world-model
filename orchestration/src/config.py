@@ -44,10 +44,7 @@ class SlamContainerConfig:
     autostart: bool
     image: str
     backend: str
-    imu_source_topic: str
-    imu_source_label: str
-    imu_min_input_rate_hz: str
-    args: tuple[str, ...]
+    runtime_config: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,10 +124,7 @@ class OrchestrationConfig:
                 autostart=_as_bool(slam.get("autostart"), True),
                 image=_as_str(slam.get("image"), image_config.slam.image(cwd=runtime_config.lab_root)),
                 backend=_as_str(slam.get("backend"), "cartographer"),
-                imu_source_topic=_as_str(slam.get("imu_source_topic"), "/navlab/fcu_imu/data"),
-                imu_source_label=_as_str(slam.get("imu_source_label"), "fcu_mavlink_navlab"),
-                imu_min_input_rate_hz=_as_str(slam.get("imu_min_input_rate_hz"), "2.0"),
-                args=_as_args(slam.get("args")),
+                runtime_config=_as_str(slam.get("runtime_config"), "/workspace/navlab/config.toml"),
             ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
