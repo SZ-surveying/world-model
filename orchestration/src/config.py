@@ -203,6 +203,42 @@ class FcuControllerConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class FrameContractConfig:
+    rosbag_profile: str
+    required_frames: tuple[str, ...]
+    map_frame_id: str
+    odom_frame_id: str
+    base_frame_id: str
+    imu_frame_id: str
+    laser_frame_id: str
+    rangefinder_frame_id: str
+    scan_topic: str
+    imu_topic: str
+    rangefinder_range_topic: str
+    rangefinder_status_topic: str
+    fcu_pose_topic: str
+    fcu_twist_topic: str
+    fcu_status_topic: str
+    cmd_vel_topic: str
+    slam_odom_topic: str
+    slam_status_topic: str
+    truth_diagnostic_topic: str
+    controller_status_topic: str
+    setpoint_output_topic: str
+    owner_status_topic: str
+    status_topic: str
+    max_dynamic_tf_age_sec: float
+    min_scan_valid_ratio: float
+    max_rangefinder_height_error_m: float
+    max_direction_error_rad: float
+    probe_duration_sec: float
+    require_motion_direction_check: bool
+    hover_claim: str
+    exploration_claim: str
+    uses_gazebo_truth_as_input: bool
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -229,6 +265,7 @@ class OrchestrationConfig:
     rangefinder_imu: RangefinderImuConfig
     slam_backend: SlamBackendQualityConfig
     fcu_controller: FcuControllerConfig
+    frame_contract: FrameContractConfig
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -246,6 +283,7 @@ class OrchestrationConfig:
         rangefinder_imu = _section(data, "rangefinder_imu")
         slam_backend = _section(data, "slam_backend")
         fcu_controller = _section(data, "fcu_controller")
+        frame_contract = _section(data, "frame_contract")
         foxglove_upload = _section(data, "foxglove_upload")
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
@@ -548,6 +586,61 @@ class OrchestrationConfig:
                 hover_claim=_as_str(fcu_controller.get("hover_claim"), "not_evaluated"),
                 exploration_claim=_as_str(fcu_controller.get("exploration_claim"), "not_evaluated"),
             ),
+            frame_contract=FrameContractConfig(
+                rosbag_profile=_as_str(
+                    frame_contract.get("rosbag_profile"),
+                    "profiles/navlab-frame-contract-rosbag-topics.txt",
+                ),
+                required_frames=_as_str_tuple(
+                    frame_contract.get("required_frames"),
+                    ("map", "odom", "base_link", "imu_link", "base_scan", "rangefinder_down_frame"),
+                ),
+                map_frame_id=_as_str(frame_contract.get("map_frame_id"), "map"),
+                odom_frame_id=_as_str(frame_contract.get("odom_frame_id"), "odom"),
+                base_frame_id=_as_str(frame_contract.get("base_frame_id"), "base_link"),
+                imu_frame_id=_as_str(frame_contract.get("imu_frame_id"), "imu_link"),
+                laser_frame_id=_as_str(frame_contract.get("laser_frame_id"), "base_scan"),
+                rangefinder_frame_id=_as_str(frame_contract.get("rangefinder_frame_id"), "rangefinder_down_frame"),
+                scan_topic=_as_str(frame_contract.get("scan_topic"), "/scan"),
+                imu_topic=_as_str(frame_contract.get("imu_topic"), "/imu"),
+                rangefinder_range_topic=_as_str(frame_contract.get("rangefinder_range_topic"), "/rangefinder/down/range"),
+                rangefinder_status_topic=_as_str(
+                    frame_contract.get("rangefinder_status_topic"),
+                    "/rangefinder/down/status",
+                ),
+                fcu_pose_topic=_as_str(frame_contract.get("fcu_pose_topic"), "/ap/v1/pose/filtered"),
+                fcu_twist_topic=_as_str(frame_contract.get("fcu_twist_topic"), "/ap/v1/twist/filtered"),
+                fcu_status_topic=_as_str(frame_contract.get("fcu_status_topic"), "/ap/v1/status"),
+                cmd_vel_topic=_as_str(frame_contract.get("cmd_vel_topic"), "/ap/v1/cmd_vel"),
+                slam_odom_topic=_as_str(frame_contract.get("slam_odom_topic"), "/slam/odom"),
+                slam_status_topic=_as_str(frame_contract.get("slam_status_topic"), "/navlab/slam/status"),
+                truth_diagnostic_topic=_as_str(frame_contract.get("truth_diagnostic_topic"), "/odometry"),
+                controller_status_topic=_as_str(
+                    frame_contract.get("controller_status_topic"),
+                    "/navlab/fcu/controller/status",
+                ),
+                setpoint_output_topic=_as_str(
+                    frame_contract.get("setpoint_output_topic"),
+                    "/navlab/fcu/setpoint/output",
+                ),
+                owner_status_topic=_as_str(frame_contract.get("owner_status_topic"), "/navlab/fcu/owner/status"),
+                status_topic=_as_str(frame_contract.get("status_topic"), "/navlab/frame_contract/status"),
+                max_dynamic_tf_age_sec=_as_float(frame_contract.get("max_dynamic_tf_age_sec"), 3.0),
+                min_scan_valid_ratio=_as_float(frame_contract.get("min_scan_valid_ratio"), 0.05),
+                max_rangefinder_height_error_m=_as_float(
+                    frame_contract.get("max_rangefinder_height_error_m"),
+                    0.35,
+                ),
+                max_direction_error_rad=_as_float(frame_contract.get("max_direction_error_rad"), 0.8),
+                probe_duration_sec=_as_float(frame_contract.get("probe_duration_sec"), 16.0),
+                require_motion_direction_check=_as_bool(
+                    frame_contract.get("require_motion_direction_check"),
+                    False,
+                ),
+                hover_claim=_as_str(frame_contract.get("hover_claim"), "not_evaluated"),
+                exploration_claim=_as_str(frame_contract.get("exploration_claim"), "not_evaluated"),
+                uses_gazebo_truth_as_input=_as_bool(frame_contract.get("uses_gazebo_truth_as_input"), False),
+            ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
                 api_url=_as_str(foxglove_upload.get("api_url"), "https://api.foxglove.dev/v1"),
@@ -638,6 +731,10 @@ class RunConfig:
     @property
     def fcu_controller_rosbag_profile(self) -> str:
         return self.orchestration.fcu_controller.rosbag_profile
+
+    @property
+    def frame_contract_rosbag_profile(self) -> str:
+        return self.orchestration.frame_contract.rosbag_profile
 
     @classmethod
     def from_config(

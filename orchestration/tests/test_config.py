@@ -20,6 +20,7 @@ from src.project_config import load_navlab_images_config, load_runtime_config, r
 from src.tasks import acceptance as acceptance_task_module
 from src.tasks import build as build_task_module
 from src.tasks import fcu_controller as fcu_controller_task_module
+from src.tasks import frame_contract as frame_contract_task_module
 from src.tasks import hover as hover_task_module
 from src.tasks import hover_diagnostic as hover_diagnostic_task_module
 from src.tasks import hover_slam_diagnostic as hover_slam_diagnostic_task_module
@@ -29,6 +30,7 @@ from src.tasks.acceptance import AcceptanceTask
 from src.tasks.base import OrchestrationTask
 from src.tasks.build import BuildTask
 from src.tasks.fcu_controller import FcuControllerAcceptanceTask, FcuControllerDoctorTask
+from src.tasks.frame_contract import FrameContractAcceptanceTask, FrameContractDoctorTask
 from src.tasks.hover import HoverAcceptanceTask
 from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
@@ -237,6 +239,33 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.fcu_controller.require_slam_backend is True
     assert config.fcu_controller.hover_claim == "not_evaluated"
     assert config.fcu_controller.exploration_claim == "not_evaluated"
+    assert config.frame_contract.rosbag_profile == "profiles/navlab-frame-contract-rosbag-topics.txt"
+    assert config.frame_contract.required_frames == (
+        "map",
+        "odom",
+        "base_link",
+        "imu_link",
+        "base_scan",
+        "rangefinder_down_frame",
+    )
+    assert config.frame_contract.map_frame_id == "map"
+    assert config.frame_contract.odom_frame_id == "odom"
+    assert config.frame_contract.base_frame_id == "base_link"
+    assert config.frame_contract.imu_frame_id == "imu_link"
+    assert config.frame_contract.laser_frame_id == "base_scan"
+    assert config.frame_contract.rangefinder_frame_id == "rangefinder_down_frame"
+    assert config.frame_contract.scan_topic == "/scan"
+    assert config.frame_contract.imu_topic == "/imu"
+    assert config.frame_contract.rangefinder_range_topic == "/rangefinder/down/range"
+    assert config.frame_contract.rangefinder_status_topic == "/rangefinder/down/status"
+    assert config.frame_contract.fcu_pose_topic == "/ap/v1/pose/filtered"
+    assert config.frame_contract.fcu_twist_topic == "/ap/v1/twist/filtered"
+    assert config.frame_contract.cmd_vel_topic == "/ap/v1/cmd_vel"
+    assert config.frame_contract.slam_odom_topic == "/slam/odom"
+    assert config.frame_contract.truth_diagnostic_topic == "/odometry"
+    assert config.frame_contract.status_topic == "/navlab/frame_contract/status"
+    assert config.frame_contract.require_motion_direction_check is False
+    assert config.frame_contract.uses_gazebo_truth_as_input is False
 
 
 def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> None:
@@ -306,6 +335,7 @@ def test_navlab_run_config_is_derived_from_config() -> None:
     assert config.artifact_dir.as_posix() == "artifacts/ros/navlab_companion_sitl_gazebo/20260603_000000"
     assert config.rangefinder_imu_rosbag_profile == "profiles/navlab-rangefinder-imu-rosbag-topics.txt"
     assert config.slam_backend_rosbag_profile == "profiles/navlab-slam-backend-rosbag-topics.txt"
+    assert config.frame_contract_rosbag_profile == "profiles/navlab-frame-contract-rosbag-topics.txt"
 
 
 def test_p2_rangefinder_imu_rosbag_profile_contains_required_topics() -> None:
@@ -576,6 +606,117 @@ def test_p4_controller_blockers_detect_pre_ready_output_and_direct_pose() -> Non
     assert "controller did not publish setpoint output diagnostics" in blockers
 
 
+def test_p5_frame_contract_rosbag_profile_contains_required_topics() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    profile = Path(config.frame_contract_rosbag_profile)
+    content = profile.read_text(encoding="utf-8")
+
+    for topic in (
+        "/tf",
+        "/tf_static",
+        "/ap/v1/time",
+        "/ap/v1/pose/filtered",
+        "/ap/v1/twist/filtered",
+        "/ap/v1/status",
+        "/ap/v1/cmd_vel",
+        "/scan",
+        "/imu",
+        "/rangefinder/down/range",
+        "/rangefinder/down/status",
+        "/slam/odom",
+        "/navlab/slam/status",
+        "/navlab/fcu/state",
+        "/navlab/fcu/controller/status",
+        "/navlab/fcu/setpoint/output",
+        "/navlab/fcu/owner/status",
+        "/navlab/frame_contract/status",
+    ):
+        assert f"required {topic}" in content
+
+
+def test_p5_runtime_config_writes_frame_contract(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    runtime_config = tmp_path / "p5_frame_contract_runtime.toml"
+
+    summary = frame_contract_task_module._write_p5_runtime_config(config, runtime_config)
+
+    assert runtime_config.is_file()
+    runtime = summary["data"]["frame_contract"]["runtime"]
+    assert runtime["required_frames"] == [
+        "map",
+        "odom",
+        "base_link",
+        "imu_link",
+        "base_scan",
+        "rangefinder_down_frame",
+    ]
+    assert runtime["map_frame_id"] == "map"
+    assert runtime["odom_frame_id"] == "odom"
+    assert runtime["base_frame_id"] == "base_link"
+    assert runtime["scan_topic"] == "/scan"
+    assert runtime["slam_odom_topic"] == "/slam/odom"
+    assert runtime["status_topic"] == "/navlab/frame_contract/status"
+    assert runtime["uses_gazebo_truth_as_input"] is False
+    assert runtime["hover_claim"] == "not_evaluated"
+    assert runtime["exploration_claim"] == "not_evaluated"
+
+
+def test_p5_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    orchestration = replace(
+        config.orchestration,
+        frame_contract=replace(config.orchestration.frame_contract, uses_gazebo_truth_as_input=True),
+    )
+    unsafe_config = replace(config, orchestration=orchestration, artifact_dir=tmp_path)
+    runtime_config = tmp_path / "p5_frame_contract_runtime.toml"
+    frame_contract_task_module._write_p5_runtime_config(unsafe_config, runtime_config)
+
+    monkeypatch.setattr(frame_contract_task_module, "_build_doctor_summary", lambda _config: {"ok": True, "blockers": []})
+    monkeypatch.setattr(
+        frame_contract_task_module,
+        "_build_p3_doctor_summary",
+        lambda _config, runtime_config: {"ok": True, "blockers": []},
+    )
+    monkeypatch.setattr(
+        frame_contract_task_module,
+        "_build_p4_doctor_summary",
+        lambda _config, runtime_config: {"ok": True, "blockers": []},
+    )
+
+    summary = frame_contract_task_module._build_p5_doctor_summary(unsafe_config, runtime_config=runtime_config)
+
+    assert summary["ok"] is False
+    assert "P5 must not use Gazebo truth as a control/planning/ExternalNav input" in summary["blockers"]
+
+
+def test_p5_blockers_detect_failed_frame_contract() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    blockers: list[str] = []
+
+    frame_contract_task_module._append_p5_blockers(
+        blockers=blockers,
+        frame_summary={
+            "ok": False,
+            "blockers": ["required frames are missing"],
+            "tf": {"ok": False},
+            "scan": {"ok": False},
+            "imu": {"ok": False},
+            "rangefinder": {"ok": False},
+        },
+        rosbag_profile={"ok": False},
+        counts={},
+        p5=config.orchestration.frame_contract,
+    )
+
+    assert "required frames are missing" in blockers
+    assert "P5 TF contract did not pass" in blockers
+    assert "P5 scan contract did not pass" in blockers
+    assert "P5 IMU contract did not pass" in blockers
+    assert "P5 rangefinder contract did not pass" in blockers
+    assert "P5 rosbag profile did not pass" in blockers
+    assert "/navlab/frame_contract/status was not recorded" in blockers
+
+
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.names() == (
         "acceptance",
@@ -583,6 +724,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         "doctor",
         "fcu-controller-acceptance",
         "fcu-controller-doctor",
+        "frame-contract-acceptance",
+        "frame-contract-doctor",
         "hover",
         "hover-diagnostic",
         "hover-slam-diagnostic",
@@ -599,6 +742,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.create("acceptance").description
     assert TaskRegistry.create("fcu-controller-doctor").description
     assert TaskRegistry.create("fcu-controller-acceptance").description
+    assert TaskRegistry.create("frame-contract-doctor").description
+    assert TaskRegistry.create("frame-contract-acceptance").description
     assert TaskRegistry.create("hover").description
     assert TaskRegistry.create("hover-diagnostic").description
     assert TaskRegistry.create("hover-slam-diagnostic").description

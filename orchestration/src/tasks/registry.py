@@ -58,6 +58,7 @@ class TaskRegistry:
             "src.tasks.rangefinder_imu",
             "src.tasks.slam_backend",
             "src.tasks.fcu_controller",
+            "src.tasks.frame_contract",
         ):
             import_module(module_name)
 

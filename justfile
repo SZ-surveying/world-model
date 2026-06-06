@@ -78,6 +78,14 @@ navlab-fcu-controller-doctor *args='':
 navlab-fcu-controller-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} fcu-controller-acceptance {{duration_sec}} {{args}}
 
+# Check P5 frame contract prerequisites.
+navlab-frame-contract-doctor *args='':
+    {{orchestration_cmd}} frame-contract-doctor {{args}}
+
+# Run P5 frame contract acceptance.
+navlab-frame-contract-acceptance duration_sec='90' *args='':
+    {{orchestration_cmd}} frame-contract-acceptance {{duration_sec}} {{args}}
+
 # Run NavLab companion + SITL + Gazebo obstacle acceptance with rosbag/Foxglove artifacts.
 navlab-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} acceptance {{duration_sec}} {{args}}

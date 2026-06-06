@@ -201,6 +201,40 @@ require_slam_backend = true
 hover_claim = "not_evaluated"
 exploration_claim = "not_evaluated"
 
+[frame_contract]
+rosbag_profile = "profiles/navlab-frame-contract-rosbag-topics.txt"
+required_frames = ["map", "odom", "base_link", "imu_link", "base_scan", "rangefinder_down_frame"]
+map_frame_id = "map"
+odom_frame_id = "odom"
+base_frame_id = "base_link"
+imu_frame_id = "imu_link"
+laser_frame_id = "base_scan"
+rangefinder_frame_id = "rangefinder_down_frame"
+scan_topic = "/scan"
+imu_topic = "/imu"
+rangefinder_range_topic = "/rangefinder/down/range"
+rangefinder_status_topic = "/rangefinder/down/status"
+fcu_pose_topic = "/ap/v1/pose/filtered"
+fcu_twist_topic = "/ap/v1/twist/filtered"
+fcu_status_topic = "/ap/v1/status"
+cmd_vel_topic = "/ap/v1/cmd_vel"
+slam_odom_topic = "/slam/odom"
+slam_status_topic = "/navlab/slam/status"
+truth_diagnostic_topic = "/odometry"
+controller_status_topic = "/navlab/fcu/controller/status"
+setpoint_output_topic = "/navlab/fcu/setpoint/output"
+owner_status_topic = "/navlab/fcu/owner/status"
+status_topic = "/navlab/frame_contract/status"
+max_dynamic_tf_age_sec = 3.0
+min_scan_valid_ratio = 0.05
+max_rangefinder_height_error_m = 0.35
+max_direction_error_rad = 0.8
+probe_duration_sec = 16.0
+require_motion_direction_check = false
+hover_claim = "not_evaluated"
+exploration_claim = "not_evaluated"
+uses_gazebo_truth_as_input = false
+
 [foxglove_upload]
 enabled = true
 api_url = "https://api.foxglove.dev/v1"

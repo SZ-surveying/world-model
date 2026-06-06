@@ -57,7 +57,7 @@ Gazebo 物理世界
 | P2 | 下视 rangefinder 和 IMU 机制验收 | down rangefinder、IMU 和 FCU 接收状态来自正确机制 | `claudedrone` + Gazebo sensor | `todos/P2_rangefinder_imu_todo.md` |
 | P3 | SLAM backend 质量验收 | Cartographer 输出真实 `/odom`，并可对照诊断 | official Cartographer + PX4 SLAM | `todos/P3_slam_backend_quality_todo.md` |
 | P4 | FCU 状态机和唯一控制器 | 只有一个 owner 向 FCU 发运动 setpoint | `Altair-Silent` + `claudedrone` | `todos/P4_fcu_state_machine_todo.md` |
-| P5 | Frame contract 自动验收 | NED/ENU、FRD/FLU、TF 链和 scan 方向可自动检查 | PX4 odom converter | 待建 |
+| P5 | Frame contract 自动验收 | TF 链、传感器 frame、scan 前向、rangefinder/IMU frame 和 rosbag contract 自动通过；动态运动方向留给 P6/P7 | PX4 odom converter | `todos/P5_frame_contract_todo.md` |
 | P6 | 真实 SLAM hover gate | SLAM ExternalNav 悬停稳定通过 | official + NavLab acceptance | 待建 |
 | P7 | 官方 maze 小范围运动 gate | 在官方 maze 中 forward/back/yaw scan/stop drift 都通过 | VehicleController | 待建 |
 | P8 | 官方 maze 探索任务 | 在官方 maze 中完成可回放探索，不碰撞 | Nav2 / exploration | 待建 |
@@ -201,19 +201,40 @@ TODO：
 目标：
 
 - 把 frame 和坐标转换从“靠看 Foxglove 猜”变成自动验收。
+- 证明 ROS `map/odom/base_link`、传感器 frame、ArduPilot ROS2 `/ap/v1/*` 输出、SLAM `/slam/odom` 和 Gazebo truth 诊断处在同一个可回放 contract 中。
+- 在 P6 hover gate 前先排除 scan 反向、TF 缺失、传感器 frame 错误、rangefinder 高度不一致和 Gazebo truth 被误用为控制输入等基础问题。
 
 要覆盖：
 
-- MAVLink/ArduPilot NED 到 ROS ENU。
-- body FRD 到 ROS FLU。
+- `/ap/v1/pose/filtered` 和 `/ap/v1/twist/filtered` 作为官方 ArduPilot ROS2 输出，不在 P5 重复做 NED/ENU 或 FRD/FLU 二次转换。
 - `map -> odom -> base_link -> imu_link/laser_frame/rangefinder_down_frame`。
-- scan 角度方向和 yaw 正方向。
+- scan frame、角度范围、有效 range 比例和前向 `base_link +X`。
+- IMU/rangefinder frame、rangefinder height error 和 rosbag required topics。
+- FCU pose、SLAM `/slam/odom`、Gazebo truth diagnostic 的观测位移记录；动态方向 match 不在 P5 强制验收。
+
+非目标：
+
+- 不完成 P6 SLAM hover。
+- 不做 P7 小范围运动 gate。
+- 不做 P8 探索任务。
+- 不允许 direct set pose。
+- 不允许 Gazebo truth 进入控制、规划或 ExternalNav 输入。
 
 完成标准：
 
 - TF 连通、无循环、parent 唯一。
 - `/scan` 可叠到固定墙体。
-- FCU local position、SLAM `/odom`、Gazebo truth 诊断方向一致。
+- IMU、rangefinder、FCU pose、SLAM odom 和 frame status 均被 rosbag 记录且 required topic 非零。
+- summary 记录 `direction_motion_claim=not_evaluated`，动态方向一致性进入 P6/P7。
+- summary 明确 `hover_claim=not_evaluated` 和 `exploration_claim=not_evaluated`。
+
+设计文档：
+
+- `docs/scenarios/indoor/navlab_p5_frame_contract_design.md`
+
+TODO：
+
+- `docs/scenarios/indoor/todos/P5_frame_contract_todo.md`
 
 ### P6：真实 SLAM hover gate
 
