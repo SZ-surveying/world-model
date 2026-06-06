@@ -18,7 +18,7 @@ from src.project_config import (
 from src.tasks.base import OrchestrationTask
 from src.tasks.registry import TaskRegistry
 
-ImageKind = Literal["companion", "slam", "gazebo-sensor", "all"]
+ImageKind = Literal["companion", "slam", "gazebo-sensor", "official-baseline", "all"]
 
 
 def _repo_path(runtime_root: Path, value: str) -> Path:
@@ -36,13 +36,16 @@ def _image_build_specs(
         ("companion", image_config.companion),
         ("slam", image_config.slam),
         ("gazebo-sensor", image_config.gazebo_sensor),
+        ("official-baseline", image_config.official_baseline),
     )
     if kind == "all":
         return specs
     for spec in specs:
         if spec[0] == kind:
             return (spec,)
-    raise ValueError(f"Invalid NavLab image kind '{kind}': expected companion, slam, gazebo-sensor, or all")
+    raise ValueError(
+        f"Invalid NavLab image kind '{kind}': expected companion, slam, gazebo-sensor, official-baseline, or all"
+    )
 
 
 def _render_image_build_config(

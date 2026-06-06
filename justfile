@@ -22,6 +22,10 @@ navlab-slam-image-build *args='':
 navlab-gazebo-sensor-image-build *args='':
     {{orchestration_cmd}} build gazebo-sensor {{args}}
 
+# Build the NavLab official ArduPilot ROS2/DDS baseline image.
+navlab-official-baseline-image-build *args='':
+    {{orchestration_cmd}} build official-baseline {{args}}
+
 # Run the X2 vendor-driver smoke in the Gazebo/sensor runtime.
 x2-driver-smoke duration_sec='15':
     X2_MODE=driver-smoke \
@@ -37,6 +41,14 @@ navlab-images-build *args='':
 # Check the NavLab companion image contents without running a flight mission.
 navlab-doctor *args='':
     {{orchestration_cmd}} doctor {{args}}
+
+# Check official ArduPilot ROS2/DDS and Cartographer baseline prerequisites.
+navlab-official-baseline-doctor *args='':
+    {{orchestration_cmd}} official-baseline-doctor {{args}}
+
+# Run the official ArduPilot ROS2/DDS baseline graph acceptance.
+navlab-official-baseline-acceptance duration_sec='30' *args='':
+    {{orchestration_cmd}} official-baseline-acceptance {{duration_sec}} {{args}}
 
 # Run NavLab companion + SITL + Gazebo obstacle acceptance with rosbag/Foxglove artifacts.
 navlab-acceptance duration_sec='90' *args='':

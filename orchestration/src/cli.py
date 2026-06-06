@@ -11,6 +11,7 @@ from src.tasks.doctor import DoctorTask
 from src.tasks.hover import HoverAcceptanceTask
 from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
+from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
 from src.tasks.registry import TaskRegistry
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -21,7 +22,7 @@ console = Console()
 def image_build_command(
     kind: Annotated[
         str,
-        typer.Argument(help="Image to build: companion, slam, gazebo-sensor, or all"),
+        typer.Argument(help="Image to build: companion, slam, gazebo-sensor, official-baseline, or all"),
     ] = "all",
     tag: Annotated[
         str | None,
@@ -90,6 +91,29 @@ def hover_slam_diagnostic_command(
     ] = None,
 ) -> None:
     task = cast(HoverSlamDiagnosticTask, TaskRegistry.create("hover-slam-diagnostic"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+
+
+@app.command("official-baseline-doctor")
+def official_baseline_doctor_command(
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(OfficialBaselineDoctorTask, TaskRegistry.create("official-baseline-doctor"))
+    raise typer.Exit(task.run(config_path=config, console=console))
+
+
+@app.command("official-baseline-acceptance")
+def official_baseline_acceptance_command(
+    duration_sec: Annotated[float, typer.Argument(help="Official baseline graph check duration in seconds")] = 30.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(OfficialBaselineAcceptanceTask, TaskRegistry.create("official-baseline-acceptance"))
     raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
 
 

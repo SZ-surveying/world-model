@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,12 +21,14 @@ from src.tasks import build as build_task_module
 from src.tasks import hover as hover_task_module
 from src.tasks import hover_diagnostic as hover_diagnostic_task_module
 from src.tasks import hover_slam_diagnostic as hover_slam_diagnostic_task_module
+from src.tasks import official_baseline as official_baseline_task_module
 from src.tasks.acceptance import AcceptanceTask
 from src.tasks.base import OrchestrationTask
 from src.tasks.build import BuildTask
 from src.tasks.hover import HoverAcceptanceTask
 from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
+from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
 from src.tasks.registry import TaskRegistry
 
 from navlab.companion.config import (
@@ -140,6 +143,31 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.slam.runtime_config == "/workspace/navlab/config.toml"
     assert config.sensor.scan_source == "x2_virtual_serial"
     assert config.sensor.acceptance_scan_source == "x2_virtual_serial_vendor_driver"
+    assert config.official_baseline.rosbag_profile == "profiles/navlab-official-baseline-rosbag-topics.txt"
+    assert config.official_baseline.dds_enable == "1"
+    assert config.official_baseline.dds_domain_id == "0"
+    assert config.official_baseline.rmw_implementation == "rmw_cyclonedds_cpp"
+    assert config.official_baseline.expected_ap_node == "/ap"
+    assert config.official_baseline.required_ap_topics == ("/ap/v1/time",)
+    assert config.official_baseline.runtime_image == "world-model/navlab-official-baseline:latest"
+    assert config.official_baseline.required_ros_packages == (
+        "ardupilot_sitl",
+        "ardupilot_msgs",
+        "ardupilot_dds_tests",
+        "micro_ros_agent",
+        "ardupilot_gz_bringup",
+        "ardupilot_gz_application",
+        "ardupilot_gazebo",
+        "ardupilot_gz_gazebo",
+        "ardupilot_sitl_models",
+        "ardupilot_cartographer",
+    )
+    assert config.official_baseline.micro_ros_agent_binaries == ("MicroXRCEAgent", "micro_ros_agent")
+    assert config.official_baseline.sitl_launch == "ros2 launch ardupilot_sitl sitl_dds_udp.launch.py"
+    assert config.official_baseline.gazebo_launch == "ros2 launch ardupilot_gz_bringup iris_maze.launch.py"
+    assert config.official_baseline.cartographer_launch == "ros2 launch ardupilot_cartographer cartographer.launch.py"
+    assert config.official_baseline.gazebo_bringup_mode == "official_gz_bringup"
+    assert config.official_baseline.external_nav_route == "official_dds"
 
 
 def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> None:
@@ -171,9 +199,14 @@ def test_navlab_images_config_drives_default_run_images() -> None:
     assert image_config.gazebo_sensor.target.value == "navlab-gazebo-sensor"
     assert image_config.gazebo_sensor.repository.value == "world-model/navlab-gazebo-sensor"
     assert image_config.gazebo_sensor.image() == "world-model/navlab-gazebo-sensor:latest"
+    assert image_config.official_baseline.dockerfile.value == "docker/Dockerfile.official-baseline"
+    assert image_config.official_baseline.target.value == "navlab-official-baseline"
+    assert image_config.official_baseline.repository.value == "world-model/navlab-official-baseline"
+    assert image_config.official_baseline.image() == "world-model/navlab-official-baseline:latest"
     assert orchestration.companion_image == image_config.companion.image()
     assert orchestration.slam.image == image_config.slam.image()
     assert orchestration.sensor.image == image_config.gazebo_sensor.image()
+    assert orchestration.official_baseline.runtime_image == image_config.official_baseline.image()
 
 
 def test_navlab_image_tag_cli_override_wins_over_strategy() -> None:
@@ -212,6 +245,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         "hover",
         "hover-diagnostic",
         "hover-slam-diagnostic",
+        "official-baseline-acceptance",
+        "official-baseline-doctor",
     )
     assert TaskRegistry.create("build").description
     assert TaskRegistry.create("doctor").description
@@ -219,6 +254,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.create("hover").description
     assert TaskRegistry.create("hover-diagnostic").description
     assert TaskRegistry.create("hover-slam-diagnostic").description
+    assert TaskRegistry.create("official-baseline-doctor").description
+    assert TaskRegistry.create("official-baseline-acceptance").description
 
 
 def test_orchestration_task_registry_requires_task_name() -> None:
@@ -242,6 +279,140 @@ def test_orchestration_task_registry_rejects_duplicate_task_name() -> None:
 
     with pytest.raises(ValueError, match="orchestration task 'hover' is already registered"):
         TaskRegistry.register(DuplicateHoverTask)
+
+
+def test_navlab_official_baseline_doctor_writes_cartographer_summary(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path))
+
+    def fake_run_ros_shell_capture(**kwargs):  # noqa: ANN001
+        command = kwargs["shell_command"]
+        if command == "true":
+            return 0, ""
+        if command == "ros2 pkg prefix cartographer_ros":
+            return 0, "/opt/ros/jazzy\n"
+        if command == "ros2 pkg executables cartographer_ros":
+            return 0, (
+                "cartographer_ros cartographer_node\n"
+                "cartographer_ros cartographer_occupancy_grid_node\n"
+            )
+        if command.startswith("ros2 pkg prefix ardupilot_") or command == "ros2 pkg prefix micro_ros_agent":
+            return 0, "/opt/navlab_official_ws/install\n"
+        if "MicroXRCEAgent" in command:
+            return 0, f"/usr/bin/{command.rsplit(maxsplit=1)[-1]}\n"
+        return 1, "unexpected command"
+
+    monkeypatch.setattr(host, "_docker_run_ros_shell_capture", fake_run_ros_shell_capture)
+
+    rc = OfficialBaselineDoctorTask().run(console=Console(file=io.StringIO()))
+
+    assert rc == 0
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    official = summary["official_baseline"]
+    assert summary["ok"] is True
+    assert official["cartographer_ros_present"] is True
+    assert official["cartographer_node_present"] is True
+    assert official["cartographer_occupancy_grid_node_present"] is True
+    assert official["cartographer_config_hash"]
+    assert official["cartographer_uses_odometry"] is True
+    assert official["tracking_frame"] == "imu_link"
+    assert official["published_frame"] == "base_link"
+    assert official["odom_frame"] == "odom"
+    assert official["official_runtime_image"] == "world-model/navlab-official-baseline:latest"
+    assert official["official_runtime_image_available"] is True
+    assert official["missing_official_ros_packages"] == []
+    assert official["micro_ros_agent_available"] is True
+    assert official["official_sitl_launch"] == "ros2 launch ardupilot_sitl sitl_dds_udp.launch.py"
+    assert official["official_gazebo_launch"] == "ros2 launch ardupilot_gz_bringup iris_maze.launch.py"
+    assert official["official_cartographer_launch"] == "ros2 launch ardupilot_cartographer cartographer.launch.py"
+
+
+def test_navlab_official_baseline_acceptance_blocks_mavlink_fallback_without_ap_graph(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path))
+    monkeypatch.setattr(host, "_render_run_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(host, "_compose_up", lambda _config: None)
+    monkeypatch.setattr(host, "_compose_stop", lambda _config: None)
+    monkeypatch.setattr(host, "_capture_stack_logs", lambda **_kwargs: None)
+    monkeypatch.setattr(host, "_gazebo_network_namespace", lambda: "container:gazebo-id")
+    monkeypatch.setattr(
+        official_baseline_task_module,
+        "_record_official_rosbag",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "recorded": True,
+            "required_topics": ["/ap/v1/time"],
+            "optional_topics": [],
+        },
+    )
+    monkeypatch.setattr(
+        host,
+        "_compose_ps_status",
+        lambda _config: [
+            {"name": "navlab-gazebo-1", "image": "remote-sitl-lab/gazebo-headless:latest", "running": True},
+            {"name": "navlab-sitl-1", "image": "remote-sitl-lab/ardupilot-sitl:stage1", "running": True},
+        ],
+    )
+    monkeypatch.setattr(official_baseline_task_module.time, "sleep", lambda _sec: None)
+
+    def fake_run_ros_shell_capture(**kwargs):  # noqa: ANN001
+        command = kwargs["shell_command"]
+        if command == "true":
+            return 0, ""
+        if command == "ros2 pkg prefix cartographer_ros":
+            return 0, "/opt/ros/jazzy\n"
+        if command == "ros2 pkg executables cartographer_ros":
+            return 0, (
+                "cartographer_ros cartographer_node\n"
+                "cartographer_ros cartographer_occupancy_grid_node\n"
+            )
+        if command.startswith("ros2 pkg prefix ardupilot_") or command == "ros2 pkg prefix micro_ros_agent":
+            return 0, "/opt/navlab_official_ws/install\n"
+        if "MicroXRCEAgent" in command:
+            return 0, f"/usr/bin/{command.rsplit(maxsplit=1)[-1]}\n"
+        if command == "ros2 node list":
+            return 0, "/rosout\n"
+        if command == "ros2 topic list --include-hidden-topics":
+            return 0, "/clock\n/tf\n/tf_static\n"
+        if command == "ros2 node info /ap":
+            return 1, "Unable to find node /ap\n"
+        if "navlab_official_dds_probe" in command:
+            return 0, (
+                '{"prearm_service": "/ap/v1/prearm_check", '
+                '"prearm_service_available": false, "prearm_success": null, '
+                '"time_nanosec": null, "time_received": false, "time_sec": null, '
+                '"time_topic": "/ap/v1/time"}\n'
+            )
+        return 1, "unexpected command"
+
+    monkeypatch.setattr(host, "_docker_run_ros_shell_capture", fake_run_ros_shell_capture)
+
+    rc = OfficialBaselineAcceptanceTask().run(duration_sec=1.0, console=Console(file=io.StringIO()))
+
+    assert rc == 30
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    official = summary["official_baseline"]
+    assert summary["ok"] is False
+    assert summary["blocked"] is True
+    assert official["ap_node_present"] is False
+    assert official["ap_topics"] == []
+    assert official["external_nav_route"] == "official_dds"
+    assert official["gazebo_truth_route"] == "diagnostic_only"
+    assert official["missing_official_ros_packages"] == []
+    assert official["micro_ros_agent_available"] is True
+    assert official["process_status"][0]["name"] == "navlab-gazebo-1"
+    assert "official DDS probe did not receive /ap/v1/time" in summary["blockers"]
+    assert "official DDS probe did not find /ap/v1/prearm_check service" in summary["blockers"]
+    assert summary["rosbag_profile"]["ok"] is True
+    assert "/ap/v1/time" in summary["rosbag_profile"]["required_topics"]
+
+
+def test_navlab_official_baseline_only_official_dds_route_can_pass() -> None:
+    assert official_baseline_task_module._route_is_official("official_dds") is True
+    assert official_baseline_task_module._route_is_official("mavlink_fallback") is False
+    assert official_baseline_task_module._route_is_official("diagnostic_only") is False
+    assert official_baseline_task_module._route_is_official("unknown") is False
 
 
 def test_companion_launcher_autostarts_sim_marker_and_scan_nodes(monkeypatch) -> None:
@@ -550,3 +721,24 @@ def test_navlab_image_build_supports_gazebo_sensor(monkeypatch) -> None:
     assert Path(build["file"]).resolve() == (Path.cwd() / "docker/Dockerfile.gazebo-sensor").resolve()
     assert build["target"] == "navlab-gazebo-sensor"
     assert build["tags"] == "world-model/navlab-gazebo-sensor:cli-tag"
+
+
+def test_navlab_image_build_supports_official_baseline(monkeypatch) -> None:
+    builds: list[dict[str, object]] = []
+
+    class FakeDockerClient:
+        def build(self, context_path, **kwargs):  # noqa: ANN001
+            builds.append({"context_path": context_path, **kwargs})
+            return iter(["build log"])
+
+    monkeypatch.setattr(build_task_module, "DockerClient", FakeDockerClient)
+    console = Console(file=io.StringIO(), width=120)
+
+    rc = BuildTask().run(kind="official-baseline", tag="cli-tag", console=console)
+
+    assert rc == 0
+    assert len(builds) == 1
+    build = builds[0]
+    assert Path(build["file"]).resolve() == (Path.cwd() / "docker/Dockerfile.official-baseline").resolve()
+    assert build["target"] == "navlab-official-baseline"
+    assert build["tags"] == "world-model/navlab-official-baseline:cli-tag"

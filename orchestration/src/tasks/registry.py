@@ -53,6 +53,7 @@ class TaskRegistry:
             "src.tasks.hover",
             "src.tasks.hover_diagnostic",
             "src.tasks.hover_slam_diagnostic",
+            "src.tasks.official_baseline",
         ):
             import_module(module_name)
 

@@ -60,6 +60,24 @@ class SensorContainerConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class OfficialBaselineConfig:
+    rosbag_profile: str
+    dds_enable: str
+    dds_domain_id: str
+    rmw_implementation: str
+    expected_ap_node: str
+    required_ap_topics: tuple[str, ...]
+    runtime_image: str
+    required_ros_packages: tuple[str, ...]
+    micro_ros_agent_binaries: tuple[str, ...]
+    sitl_launch: str
+    gazebo_launch: str
+    cartographer_launch: str
+    gazebo_bringup_mode: str
+    external_nav_route: str
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -81,6 +99,7 @@ class OrchestrationConfig:
     router_tcp_port: str
     sensor: SensorContainerConfig
     slam: SlamContainerConfig
+    official_baseline: OfficialBaselineConfig
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -93,11 +112,13 @@ class OrchestrationConfig:
         router = _section(data, "router")
         sensor = _section(data, "sensor")
         slam = _section(data, "slam")
+        official_baseline = _section(data, "official_baseline")
         foxglove_upload = _section(data, "foxglove_upload")
+        ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
             path=config_path,
             session_id=_as_str(data.get("session_id"), "navlab_companion_sitl_gazebo"),
-            ros_domain_id=_as_str(data.get("ros_domain_id"), "85"),
+            ros_domain_id=ros_domain_id,
             gazebo_world=_as_str(data.get("gazebo_world"), "/workspace/worlds/navlab_iq_quad_figure8.sdf"),
             rosbag_profile=_as_str(data.get("rosbag_profile"), "profiles/navlab-rosbag-topics.txt"),
             companion_image=_as_str(
@@ -125,6 +146,54 @@ class OrchestrationConfig:
                 image=_as_str(slam.get("image"), image_config.slam.image(cwd=runtime_config.lab_root)),
                 backend=_as_str(slam.get("backend"), "cartographer"),
                 runtime_config=_as_str(slam.get("runtime_config"), "/workspace/navlab/config.toml"),
+            ),
+            official_baseline=OfficialBaselineConfig(
+                rosbag_profile=_as_str(
+                    official_baseline.get("rosbag_profile"),
+                    "profiles/navlab-official-baseline-rosbag-topics.txt",
+                ),
+                dds_enable=_as_str(official_baseline.get("dds_enable"), "1"),
+                dds_domain_id=_as_str(official_baseline.get("dds_domain_id"), ros_domain_id),
+                rmw_implementation=_as_str(official_baseline.get("rmw_implementation"), "rmw_cyclonedds_cpp"),
+                expected_ap_node=_as_str(official_baseline.get("expected_ap_node"), "/ap"),
+                required_ap_topics=_as_str_tuple(official_baseline.get("required_ap_topics"), ("/ap/v1/time",)),
+                runtime_image=_as_str(
+                    official_baseline.get("runtime_image"),
+                    image_config.official_baseline.image(cwd=runtime_config.lab_root),
+                ),
+                required_ros_packages=_as_str_tuple(
+                    official_baseline.get("required_ros_packages"),
+                    (
+                        "ardupilot_sitl",
+                        "ardupilot_msgs",
+                        "ardupilot_dds_tests",
+                        "micro_ros_agent",
+                        "ardupilot_gz_bringup",
+                        "ardupilot_gz_application",
+                        "ardupilot_gazebo",
+                        "ardupilot_gz_gazebo",
+                        "ardupilot_sitl_models",
+                        "ardupilot_cartographer",
+                    ),
+                ),
+                micro_ros_agent_binaries=_as_str_tuple(
+                    official_baseline.get("micro_ros_agent_binaries"),
+                    ("MicroXRCEAgent", "micro_ros_agent"),
+                ),
+                sitl_launch=_as_str(
+                    official_baseline.get("sitl_launch"),
+                    "ros2 launch ardupilot_sitl sitl_dds_udp.launch.py",
+                ),
+                gazebo_launch=_as_str(
+                    official_baseline.get("gazebo_launch"),
+                    "ros2 launch ardupilot_gz_bringup iris_maze.launch.py",
+                ),
+                cartographer_launch=_as_str(
+                    official_baseline.get("cartographer_launch"),
+                    "ros2 launch ardupilot_cartographer cartographer.launch.py",
+                ),
+                gazebo_bringup_mode=_as_str(official_baseline.get("gazebo_bringup_mode"), "navlab_custom_bringup"),
+                external_nav_route=_as_str(official_baseline.get("external_nav_route"), "mavlink_fallback"),
             ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
@@ -197,6 +266,10 @@ class RunConfig:
     def rosbag_profile(self) -> str:
         return self.orchestration.rosbag_profile
 
+    @property
+    def official_baseline_rosbag_profile(self) -> str:
+        return self.orchestration.official_baseline.rosbag_profile
+
     @classmethod
     def from_config(
         cls,
@@ -253,6 +326,16 @@ def _as_scan_source(value: Any) -> str:
     if scan_source not in {"gazebo_ideal", "x2_virtual_serial"}:
         raise ValueError("orchestration.sensor.scan_source must be gazebo_ideal or x2_virtual_serial")
     return scan_source
+
+
+def _as_str_tuple(value: Any, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, list | tuple):
+        return tuple(str(item) for item in value)
+    raise TypeError(f"expected string list, got {type(value).__name__}")
 
 
 def _section(data: dict[str, Any], *keys: str) -> dict[str, Any]:

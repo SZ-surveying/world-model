@@ -73,6 +73,7 @@ class NavLabImagesConfig:
     companion: NavLabImageConfig
     slam: NavLabImageConfig
     gazebo_sensor: NavLabImageConfig
+    official_baseline: NavLabImageConfig
 
 
 PACKAGE_PATH = Path(__file__).parent
@@ -109,6 +110,10 @@ DEFAULT_NAVLAB_GAZEBO_SENSOR_DOCKERFILE = "docker/Dockerfile.gazebo-sensor"
 DEFAULT_NAVLAB_GAZEBO_SENSOR_TARGET = "navlab-gazebo-sensor"
 DEFAULT_NAVLAB_GAZEBO_SENSOR_REPOSITORY = "world-model/navlab-gazebo-sensor"
 DEFAULT_NAVLAB_GAZEBO_SENSOR_IMAGE = f"{DEFAULT_NAVLAB_GAZEBO_SENSOR_REPOSITORY}:latest"
+DEFAULT_NAVLAB_OFFICIAL_BASELINE_DOCKERFILE = "docker/Dockerfile.official-baseline"
+DEFAULT_NAVLAB_OFFICIAL_BASELINE_TARGET = "navlab-official-baseline"
+DEFAULT_NAVLAB_OFFICIAL_BASELINE_REPOSITORY = "world-model/navlab-official-baseline"
+DEFAULT_NAVLAB_OFFICIAL_BASELINE_IMAGE = f"{DEFAULT_NAVLAB_OFFICIAL_BASELINE_REPOSITORY}:latest"
 
 
 def repo_root() -> Path:
@@ -290,6 +295,13 @@ def load_navlab_images_config(runtime: RuntimeConfig) -> NavLabImagesConfig:
             default_dockerfile=DEFAULT_NAVLAB_GAZEBO_SENSOR_DOCKERFILE,
             default_target=DEFAULT_NAVLAB_GAZEBO_SENSOR_TARGET,
             default_repository=DEFAULT_NAVLAB_GAZEBO_SENSOR_REPOSITORY,
+        ),
+        official_baseline=_resolve_navlab_image_config(
+            raw_images,
+            "official_baseline",
+            default_dockerfile=DEFAULT_NAVLAB_OFFICIAL_BASELINE_DOCKERFILE,
+            default_target=DEFAULT_NAVLAB_OFFICIAL_BASELINE_TARGET,
+            default_repository=DEFAULT_NAVLAB_OFFICIAL_BASELINE_REPOSITORY,
         ),
     )
 

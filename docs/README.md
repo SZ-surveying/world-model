@@ -1,21 +1,23 @@
 # 无人机世界模型项目文档
 
-这个目录只保留当前主线需要的文档。当前重点不是旧的接口验收，而是：
+这个目录只保留当前主线需要的文档。当前重点不是旧的接口验收，也不是直接跳到 hover 演示，而是先按官方基线建立真实闭环标准：
 
-- Gazebo 8 字形室内世界
-- X2 雷达协议级仿真
+- 官方 ArduPilot ROS2/Gazebo/Cartographer baseline
+- NavLab world/model/sensor 接入官方或官方等价机制
 - 无 GPS 真实 SLAM feedback
-- ArduPilot SITL ExternalNav
-- FCU 真实悬停
-- MCAP rosbag 和 Foxglove 回放
+- FCU 状态机、唯一 setpoint owner 和真实悬停
+- MCAP rosbag 和 Foxglove 回放验收
 
 ## 主导航
 
 ### 室内无 GPS 主线
 
-- `docs/scenarios/indoor/navlab_slam_hover_design.md`: 当前无 GPS SLAM feedback 悬停阶段设计
-- `docs/scenarios/indoor/navlab_slam_hover_todo.md`: 当前 phase TODO 和验收标准
-- `docs/scenarios/indoor/navlab_runtime_workflow.md`: 批处理 acceptance、topic、summary、rosbag 和 Foxglove 回放口径
+- `docs/scenarios/indoor/navlab_master_roadmap.md`: 总 roadmap，定义 P0-P8 顺序和完成标准
+- `docs/scenarios/indoor/navlab_p0_official_baseline_design.md`: P0 官方基线验收设计
+- `docs/scenarios/indoor/todos/P0_official_baseline_todo.md`: P0 TODO 和验收标准
+- `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`: 当前系统与官方路线的对齐审计
+- `docs/scenarios/indoor/navlab_reference_projects_analysis.md`: 四个参考仓库的综合分析和改进建议
+- `docs/scenarios/indoor/navlab_cartographer_real_machine_tuning.md`: Cartographer 真机调参记录口径
 
 ### 仿真和传感器
 
@@ -31,12 +33,14 @@
 
 ## 推荐阅读顺序
 
-1. `docs/scenarios/indoor/navlab_slam_hover_design.md`
-2. `docs/scenarios/indoor/navlab_runtime_workflow.md`
-3. `docs/scenarios/indoor/navlab_slam_hover_todo.md`
-4. `docs/sim/x2_lidar_simulation_design.md`
-5. `docs/sim/x2_lidar_protocol_todo.md`
-6. `docs/general/lab_env_service_refactor_todo.md`
+1. `docs/scenarios/indoor/navlab_master_roadmap.md`
+2. `docs/scenarios/indoor/navlab_p0_official_baseline_design.md`
+3. `docs/scenarios/indoor/todos/P0_official_baseline_todo.md`
+4. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
+5. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
+6. `docs/sim/x2_lidar_simulation_design.md`
+7. `docs/sim/x2_lidar_protocol_todo.md`
+8. `docs/general/lab_env_service_refactor_todo.md`
 
 ## 当前目录结构
 
@@ -48,9 +52,13 @@ docs/
     lab_env_service_refactor_todo.md
   scenarios/
     indoor/
-      navlab_slam_hover_design.md
-      navlab_slam_hover_todo.md
-      navlab_runtime_workflow.md
+      navlab_master_roadmap.md
+      navlab_p0_official_baseline_design.md
+      navlab_ardupilot_ros2_official_alignment.md
+      navlab_reference_projects_analysis.md
+      navlab_cartographer_real_machine_tuning.md
+      todos/
+        P0_official_baseline_todo.md
   sim/
     README.md
     todo.md
@@ -66,8 +74,9 @@ docs/
 - Gazebo 只负责世界、物理和传感器。
 - SITL 等价于真实飞控。
 - companion 等价于机载计算盒子。
-- SLAM 必须消费 `/scan + /imu/data`，不能消费 Gazebo truth 或 FCU fused local position。
-- ExternalNav 验收必须来自 SLAM `/odom`。
+- P0 必须先证明官方 `/ap/*` DDS baseline，而不是直接把自定义 MAVLink bridge 当作完成标准。
+- SLAM 必须消费 `/scan + /imu + /odometry`，不能消费 Gazebo truth 或 FCU fused local position。
+- ExternalNav 验收必须来自真实 SLAM `/odom` 或官方等价 ExternalNav 路线。
 - Gazebo truth 只能用于诊断和误差对照。
 - 上游代码不能直接 `set_pose` 移动 Gazebo 无人机。
 - 每次 acceptance 必须输出 MCAP rosbag，方便 Foxglove 回放。

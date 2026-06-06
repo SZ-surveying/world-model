@@ -24,6 +24,7 @@ from src.project_config import (
 
 COMPANION_CONTAINER = "navlab-companion"
 SLAM_CONTAINER = "navlab-slam"
+OFFICIAL_BASELINE_CONTAINER = "navlab-official-baseline"
 GAZEBO_SENSOR_SERVICE = "gazebo-sensor"
 DEFAULT_COMPANION_RUNTIME_CONFIG = Path("navlab/config.toml")
 
@@ -73,6 +74,25 @@ def _compose_logs(config: RunConfig, *, tail: int) -> str:
     with _compose_environment(config):
         output = _compose_client().compose.logs(services=list(NAVLAB_SERVICES), tail=str(tail))
     return str(output)
+
+
+def _compose_ps_status(config: RunConfig) -> list[dict[str, object]]:
+    with _compose_environment(config):
+        containers = _compose_client().compose.ps(services=list(NAVLAB_SERVICES), all=True)
+    statuses: list[dict[str, object]] = []
+    for container in containers:
+        container_config = getattr(container, "config", None)
+        container_state = getattr(container, "state", None)
+        statuses.append(
+            {
+                "id": getattr(container, "id", ""),
+                "name": getattr(container, "name", ""),
+                "image": getattr(container_config, "image", ""),
+                "status": getattr(container_state, "status", ""),
+                "running": bool(getattr(container_state, "running", False)),
+            }
+        )
+    return statuses
 
 
 def _workspace_path(path: Path) -> str:
@@ -159,6 +179,65 @@ def _remove_slam_container() -> None:
         DockerClient().remove(SLAM_CONTAINER, force=True)
     except DockerException:
         pass
+
+
+def _remove_official_baseline_container() -> None:
+    try:
+        DockerClient().remove(OFFICIAL_BASELINE_CONTAINER, force=True)
+    except DockerException:
+        pass
+
+
+def _start_official_baseline_container(config: RunConfig) -> None:
+    _remove_official_baseline_container()
+    baseline = config.orchestration.official_baseline
+    launch_command = (
+        f"{baseline.gazebo_launch} "
+        "use_gz_sim_gui:=false "
+        "rviz:=false "
+        "use_dds_agent:=true "
+        "use_gz_sim_server:=true "
+        "spawn_robot:=true"
+    )
+    DockerClient().run(
+        baseline.runtime_image,
+        [
+            "bash",
+            "-lc",
+            (
+                "source /opt/ros/jazzy/setup.bash && "
+                "source /opt/navlab_official_ws/install/setup.bash && "
+                "export NAVLAB_OFFICIAL_SDF_ROOTS="
+                "/opt/navlab_official_ws/install/ardupilot_gazebo/share:"
+                "/opt/navlab_official_ws/install/ardupilot_gz_description/share && "
+                "export SDF_PATH=${NAVLAB_OFFICIAL_SDF_ROOTS}:${SDF_PATH:-} && "
+                "export GZ_SIM_RESOURCE_PATH=${NAVLAB_OFFICIAL_SDF_ROOTS}:${GZ_SIM_RESOURCE_PATH:-} && "
+                f"exec {launch_command}"
+            ),
+        ],
+        detach=True,
+        name=OFFICIAL_BASELINE_CONTAINER,
+        networks=["host"],
+        volumes=[(Path.cwd(), "/workspace")],
+        workdir="/workspace",
+        envs={
+            "SESSION_ID": config.session_id,
+            "ROS_DOMAIN_ID": baseline.dds_domain_id,
+            "RMW_IMPLEMENTATION": baseline.rmw_implementation,
+            "DDS_ENABLE": baseline.dds_enable,
+            "DDS_DOMAIN_ID": baseline.dds_domain_id,
+            "PYTHONPATH": "/workspace",
+        },
+    )
+
+
+def _capture_official_baseline_log(*, config: RunConfig, tail: int = 2000) -> None:
+    config.artifact_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        output = DockerClient().logs(OFFICIAL_BASELINE_CONTAINER, tail=tail)
+    except DockerException as exc:
+        output = str(exc)
+    (config.artifact_dir / "official_baseline_tail.log").write_text(str(output), encoding="utf-8")
 
 
 def _gazebo_network_namespace() -> str:
@@ -278,6 +357,48 @@ def _docker_run_runtime_command(
     except DockerException as exc:
         return exc.return_code or 1
     return 0
+
+
+def _docker_run_ros_shell_capture(
+    *,
+    config: RunConfig,
+    image: str,
+    shell_command: str,
+    name: str | None = None,
+    network: str | None = None,
+    envs: dict[str, str] | None = None,
+) -> tuple[int, str]:
+    command = [
+        "bash",
+        "-lc",
+        (
+            "source /opt/ros/jazzy/setup.bash && "
+            "if [ -f /opt/navlab_ws/install/setup.bash ]; then "
+            "source /opt/navlab_ws/install/setup.bash; fi && "
+            "if [ -f /opt/navlab_official_ws/install/setup.bash ]; then "
+            "source /opt/navlab_official_ws/install/setup.bash; fi && "
+            f"{shell_command}"
+        ),
+    ]
+    try:
+        output = DockerClient().run(
+            image,
+            command,
+            remove=True,
+            name=name,
+            networks=([network] if network else []),
+            volumes=[(Path.cwd(), "/workspace")],
+            workdir="/workspace",
+            envs={
+                "ROS_DOMAIN_ID": config.ros_domain_id,
+                "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+                "PYTHONPATH": "/workspace",
+                **(envs or {}),
+            },
+        )
+    except DockerException as exc:
+        return exc.return_code or 1, str(exc)
+    return 0, str(output)
 
 
 def _docker_exec_runtime_command(*, args: list[str], module: str = "navlab.companion.cli") -> int:

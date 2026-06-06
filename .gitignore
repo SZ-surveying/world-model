@@ -23,3 +23,10 @@ artifacts/
 build/
 install/
 log/
+
+core
+eeprom.bin
+mav.parm
+mav.tlog
+mav.tlog.raw
+terrain/

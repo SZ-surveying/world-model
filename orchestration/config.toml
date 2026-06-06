@@ -25,6 +25,12 @@ context = "."
 target = "navlab-gazebo-sensor"
 repository = "world-model/navlab-gazebo-sensor"
 
+[navlab.images.official_baseline]
+dockerfile = "docker/Dockerfile.official-baseline"
+context = "."
+target = "navlab-official-baseline"
+repository = "world-model/navlab-official-baseline"
+
 session_id = "navlab_companion_sitl_gazebo"
 ros_domain_id = "85"
 gazebo_world = "/workspace/worlds/navlab_iq_quad_figure8.sdf"
@@ -50,6 +56,33 @@ scan_source = "x2_virtual_serial"
 autostart = true
 backend = "cartographer"
 runtime_config = "/workspace/navlab/config.toml"
+
+[official_baseline]
+rosbag_profile = "profiles/navlab-official-baseline-rosbag-topics.txt"
+dds_enable = "1"
+dds_domain_id = "0"
+rmw_implementation = "rmw_cyclonedds_cpp"
+expected_ap_node = "/ap"
+required_ap_topics = ["/ap/v1/time"]
+runtime_image = "world-model/navlab-official-baseline:latest"
+required_ros_packages = [
+  "ardupilot_sitl",
+  "ardupilot_msgs",
+  "ardupilot_dds_tests",
+  "micro_ros_agent",
+  "ardupilot_gz_bringup",
+  "ardupilot_gz_application",
+  "ardupilot_gazebo",
+  "ardupilot_gz_gazebo",
+  "ardupilot_sitl_models",
+  "ardupilot_cartographer",
+]
+micro_ros_agent_binaries = ["MicroXRCEAgent", "micro_ros_agent"]
+sitl_launch = "ros2 launch ardupilot_sitl sitl_dds_udp.launch.py"
+gazebo_launch = "ros2 launch ardupilot_gz_bringup iris_maze.launch.py"
+cartographer_launch = "ros2 launch ardupilot_cartographer cartographer.launch.py"
+gazebo_bringup_mode = "official_gz_bringup"
+external_nav_route = "official_dds"
 
 [foxglove_upload]
 enabled = true
