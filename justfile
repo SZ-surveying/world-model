@@ -62,6 +62,14 @@ navlab-rangefinder-imu-doctor *args='':
 navlab-rangefinder-imu-acceptance duration_sec='60' *args='':
     {{orchestration_cmd}} rangefinder-imu-acceptance {{duration_sec}} {{args}}
 
+# Check P3 SLAM backend quality prerequisites.
+navlab-slam-backend-doctor *args='':
+    {{orchestration_cmd}} slam-backend-doctor {{args}}
+
+# Run P3 SLAM backend quality acceptance.
+navlab-slam-backend-acceptance duration_sec='90' *args='':
+    {{orchestration_cmd}} slam-backend-acceptance {{duration_sec}} {{args}}
+
 # Run NavLab companion + SITL + Gazebo obstacle acceptance with rosbag/Foxglove artifacts.
 navlab-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} acceptance {{duration_sec}} {{args}}

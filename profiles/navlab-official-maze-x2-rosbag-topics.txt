@@ -8,6 +8,7 @@ required /odometry
 required /lidar
 required /scan
 required /sim/x2/status
+optional /navlab/x2/vendor_scan
 optional /map
 optional /submap_list
 optional /trajectory_node_list

@@ -113,6 +113,7 @@ def _write_p1_vendor_profile(path: Path, *, virtual_serial_link: str) -> None:
             f"""\
             ydlidar_ros2_driver_node:
               ros__parameters:
+                use_sim_time: true
                 port: {virtual_serial_link}
                 frame_id: base_scan
                 ignore_array: ""
@@ -154,6 +155,7 @@ def _write_p1_sensor_config(config: RunConfig, path: Path, *, vendor_profile: Pa
                 "profile": _workspace_path(config, vendor_profile),
                 "virtual_serial_link": maze_x2.x2_virtual_serial_link,
                 "scan_ideal_topic": maze_x2.x2_scan_input_topic,
+                "vendor_scan_topic": "/navlab/x2/vendor_scan",
                 "scan_topic": maze_x2.x2_scan_topic,
                 "status_topic": maze_x2.x2_status_topic,
                 "sample_rate_hz": 3000.0,
@@ -587,7 +589,8 @@ def _write_foxglove_notes(config: RunConfig) -> None:
                 "",
                 "- Fixed frame: `map` when Cartographer is present; otherwise inspect `odom`/`base_link`.",
                 f"- Gazebo lidar input: `{maze_x2.gazebo_lidar_topic}` bridged to `{maze_x2.x2_scan_input_topic}`.",
-                f"- Completion scan topic: `{maze_x2.x2_scan_topic}` from `ydlidar_ros2_driver_node`.",
+                f"- Completion scan topic: `{maze_x2.x2_scan_topic}` from `navlab_x2_scan_time_normalizer`.",
+                "- Raw vendor scan topic: `/navlab/x2/vendor_scan` from `ydlidar_ros2_driver_node`.",
                 f"- X2 status topic: `{maze_x2.x2_status_topic}`.",
                 "- Altitude control and hover are intentionally not evaluated in P1.",
                 "- If `/scan` has a `ros_gz_bridge` publisher, the run is polluted and should fail.",
@@ -662,7 +665,13 @@ class OfficialMazeX2AcceptanceTask(OrchestrationTask):
             topic_info = _collect_topic_info(
                 config,
                 image=baseline.runtime_image,
-                topics=(maze_x2.x2_scan_input_topic, maze_x2.x2_scan_topic, maze_x2.x2_status_topic, "/map"),
+                topics=(
+                    maze_x2.x2_scan_input_topic,
+                    "/navlab/x2/vendor_scan",
+                    maze_x2.x2_scan_topic,
+                    maze_x2.x2_status_topic,
+                    "/map",
+                ),
             )
             x2_status = _collect_x2_status(config, image=baseline.runtime_image)
             scan_sample = _collect_laser_scan_sample(
@@ -683,6 +692,8 @@ class OfficialMazeX2AcceptanceTask(OrchestrationTask):
             counts = _message_counts(config)
             scan_publishers = topic_info.get(maze_x2.x2_scan_topic, {}).get("publisher_nodes", [])
             scan_subscribers = topic_info.get(maze_x2.x2_scan_topic, {}).get("subscription_nodes", [])
+            vendor_scan_publishers = topic_info.get("/navlab/x2/vendor_scan", {}).get("publisher_nodes", [])
+            vendor_scan_subscribers = topic_info.get("/navlab/x2/vendor_scan", {}).get("subscription_nodes", [])
             x2_sample = x2_status.get("result", {}).get("sample") or {}
             official_cartographer_config = _official_cartographer_config_summary(
                 config,
@@ -706,6 +717,7 @@ class OfficialMazeX2AcceptanceTask(OrchestrationTask):
                 "lidar_route": "navlab_x2_vendor_driver",
                 "gazebo_lidar_topic": maze_x2.gazebo_lidar_topic,
                 "x2_scan_input_topic": maze_x2.x2_scan_input_topic,
+                "x2_vendor_scan_topic": "/navlab/x2/vendor_scan",
                 "x2_scan_topic": maze_x2.x2_scan_topic,
                 "x2_status_topic": maze_x2.x2_status_topic,
                 "x2_vendor_profile": str(vendor_profile),
@@ -719,6 +731,8 @@ class OfficialMazeX2AcceptanceTask(OrchestrationTask):
                 "set_pose_count": 0,
                 "scan_publishers": scan_publishers,
                 "scan_subscribers": scan_subscribers,
+                "vendor_scan_publishers": vendor_scan_publishers,
+                "vendor_scan_subscribers": vendor_scan_subscribers,
                 "scan_sample": scan_sample.get("result", {}),
                 "scan_input_sample": scan_input_sample.get("result", {}),
                 "x2_status": x2_status.get("result", {}),
@@ -748,8 +762,10 @@ class OfficialMazeX2AcceptanceTask(OrchestrationTask):
                 blockers.append("P1 must not claim altitude control")
             if maze_x2.hover_claim != "not_evaluated":
                 blockers.append("P1 must not claim hover completion")
-            if "ydlidar_ros2_driver_node" not in scan_publishers:
-                blockers.append("/scan is not published by ydlidar_ros2_driver_node")
+            if "ydlidar_ros2_driver_node" not in vendor_scan_publishers:
+                blockers.append("/navlab/x2/vendor_scan is not published by ydlidar_ros2_driver_node")
+            if "navlab_x2_scan_time_normalizer" not in scan_publishers:
+                blockers.append("/scan is not published by navlab_x2_scan_time_normalizer")
             if any("ros_gz_bridge" in publisher for publisher in scan_publishers):
                 blockers.append("/scan is still published by ros_gz_bridge; X2 route is polluted")
             if "cartographer_node" not in scan_subscribers:

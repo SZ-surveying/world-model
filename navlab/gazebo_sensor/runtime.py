@@ -20,6 +20,7 @@ class X2SensorLaunchConfig:
     profile_path: Path
     virtual_serial_link: Path
     scan_ideal_topic: str
+    vendor_scan_topic: str
     scan_topic: str
     status_topic: str
     scan_frequency_hz: float
@@ -44,6 +45,7 @@ class X2SensorLaunchConfig:
             profile_path=runtime.profile,
             virtual_serial_link=runtime.virtual_serial_link,
             scan_ideal_topic=runtime.scan_ideal_topic,
+            vendor_scan_topic=runtime.vendor_scan_topic,
             scan_topic=runtime.scan_topic,
             status_topic=runtime.status_topic,
             scan_frequency_hz=runtime.scan_frequency_hz,
@@ -113,6 +115,18 @@ def build_vendor_driver_command(config: X2SensorLaunchConfig) -> list[str]:
         "--ros-args",
         "--params-file",
         str(config.profile_path),
+        "-p",
+        "use_sim_time:=true",
+        "-r",
+        f"scan:={config.vendor_scan_topic}",
+    ]
+
+
+def build_scan_time_normalizer_command() -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "navlab.gazebo_sensor.scan_time_normalizer",
     ]
 
 
@@ -164,6 +178,7 @@ class X2SensorRuntime:
             return
         self._manager.start_subprocess("x2_serial_emulator", build_emulator_command(self._config))
         wait_for_virtual_serial_link(self._config.virtual_serial_link)
+        self._manager.start_subprocess("x2_scan_time_normalizer", build_scan_time_normalizer_command())
         self._manager.start_subprocess("ydlidar_ros2_driver", build_vendor_driver_command(self._config))
 
     def _handle_signal(self, signum: int, _frame: object) -> None:

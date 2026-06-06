@@ -134,6 +134,38 @@ class RangefinderImuConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SlamBackendQualityConfig:
+    rosbag_profile: str
+    backend: str
+    launch_package: str
+    launch_file: str
+    cartographer_configuration_basename: str
+    scan_topic: str
+    imu_topic: str
+    odometry_topic: str
+    slam_odom_topic: str
+    slam_status_topic: str
+    external_nav_status_topic: str
+    x2_scan_input_topic: str
+    x2_vendor_scan_topic: str
+    x2_scan_topic: str
+    x2_status_topic: str
+    rangefinder_range_topic: str
+    rangefinder_status_topic: str
+    imu_frame_id: str
+    laser_frame_id: str
+    odom_frame_id: str
+    base_frame_id: str
+    min_slam_odom_rate_hz: float
+    max_latest_age_sec: float
+    max_jump_m: float
+    max_yaw_jump_rad: float
+    max_stationary_drift_m: float
+    truth_diagnostic_topic: str
+    uses_gazebo_truth_as_input: bool
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -158,6 +190,7 @@ class OrchestrationConfig:
     official_baseline: OfficialBaselineConfig
     official_maze_x2: OfficialMazeX2Config
     rangefinder_imu: RangefinderImuConfig
+    slam_backend: SlamBackendQualityConfig
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -173,6 +206,7 @@ class OrchestrationConfig:
         official_baseline = _section(data, "official_baseline")
         official_maze_x2 = _section(data, "official_maze_x2")
         rangefinder_imu = _section(data, "rangefinder_imu")
+        slam_backend = _section(data, "slam_backend")
         foxglove_upload = _section(data, "foxglove_upload")
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
@@ -369,6 +403,51 @@ class OrchestrationConfig:
                     or "ros2 launch ardupilot_cartographer cartographer.launch.py",
                 ),
             ),
+            slam_backend=SlamBackendQualityConfig(
+                rosbag_profile=_as_str(
+                    slam_backend.get("rosbag_profile"),
+                    "profiles/navlab-slam-backend-rosbag-topics.txt",
+                ),
+                backend=_as_str(slam_backend.get("backend"), "cartographer"),
+                launch_package=_as_str(slam_backend.get("launch_package"), "navlab_slam_bringup"),
+                launch_file=_as_str(slam_backend.get("launch_file"), "navlab_slam_bringup.launch.py"),
+                cartographer_configuration_basename=_as_str(
+                    slam_backend.get("cartographer_configuration_basename"),
+                    "navlab_cartographer_2d.lua",
+                ),
+                scan_topic=_as_str(slam_backend.get("scan_topic"), "/scan"),
+                imu_topic=_as_str(slam_backend.get("imu_topic"), "/imu"),
+                odometry_topic=_as_str(slam_backend.get("odometry_topic"), "/odometry"),
+                slam_odom_topic=_as_str(slam_backend.get("slam_odom_topic"), "/slam/odom"),
+                slam_status_topic=_as_str(slam_backend.get("slam_status_topic"), "/navlab/slam/status"),
+                external_nav_status_topic=_as_str(
+                    slam_backend.get("external_nav_status_topic"),
+                    "/external_nav/status",
+                ),
+                x2_scan_input_topic=_as_str(slam_backend.get("x2_scan_input_topic"), "/navlab/x2/scan_ideal"),
+                x2_vendor_scan_topic=_as_str(slam_backend.get("x2_vendor_scan_topic"), "/navlab/x2/vendor_scan"),
+                x2_scan_topic=_as_str(slam_backend.get("x2_scan_topic"), "/scan"),
+                x2_status_topic=_as_str(slam_backend.get("x2_status_topic"), "/sim/x2/status"),
+                rangefinder_range_topic=_as_str(
+                    slam_backend.get("rangefinder_range_topic"),
+                    "/rangefinder/down/range",
+                ),
+                rangefinder_status_topic=_as_str(
+                    slam_backend.get("rangefinder_status_topic"),
+                    "/rangefinder/down/status",
+                ),
+                imu_frame_id=_as_str(slam_backend.get("imu_frame_id"), "imu_link"),
+                laser_frame_id=_as_str(slam_backend.get("laser_frame_id"), "base_scan"),
+                odom_frame_id=_as_str(slam_backend.get("odom_frame_id"), "odom"),
+                base_frame_id=_as_str(slam_backend.get("base_frame_id"), "base_link"),
+                min_slam_odom_rate_hz=_as_float(slam_backend.get("min_slam_odom_rate_hz"), 1.0),
+                max_latest_age_sec=_as_float(slam_backend.get("max_latest_age_sec"), 1.0),
+                max_jump_m=_as_float(slam_backend.get("max_jump_m"), 2.0),
+                max_yaw_jump_rad=_as_float(slam_backend.get("max_yaw_jump_rad"), 1.0),
+                max_stationary_drift_m=_as_float(slam_backend.get("max_stationary_drift_m"), 2.0),
+                truth_diagnostic_topic=_as_str(slam_backend.get("truth_diagnostic_topic"), "/odometry"),
+                uses_gazebo_truth_as_input=_as_bool(slam_backend.get("uses_gazebo_truth_as_input"), False),
+            ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
                 api_url=_as_str(foxglove_upload.get("api_url"), "https://api.foxglove.dev/v1"),
@@ -451,6 +530,10 @@ class RunConfig:
     @property
     def rangefinder_imu_rosbag_profile(self) -> str:
         return self.orchestration.rangefinder_imu.rosbag_profile
+
+    @property
+    def slam_backend_rosbag_profile(self) -> str:
+        return self.orchestration.slam_backend.rosbag_profile
 
     @classmethod
     def from_config(

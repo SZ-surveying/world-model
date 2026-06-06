@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cmath>
 #include <iomanip>
 #include <memory>
 #include <sstream>
@@ -20,6 +21,10 @@ class NavlabCartographerAdapterNode : public rclcpp::Node {
     scan_timeout_ms_ = declare_parameter("scan_timeout_ms", 500);
     imu_timeout_ms_ = declare_parameter("imu_timeout_ms", 500);
     tf_timeout_ms_ = declare_parameter("tf_timeout_ms", 500);
+    max_tf_stamp_sec_ = declare_parameter("max_tf_stamp_sec", 100000000.0);
+    max_tf_translation_m_ = declare_parameter("max_tf_translation_m", 100.0);
+    max_tf_jump_m_ = declare_parameter("max_tf_jump_m", 2.0);
+    max_tf_yaw_z_jump_ = declare_parameter("max_tf_yaw_z_jump", 1.0);
     publish_placeholder_odom_ =
         declare_parameter("publish_placeholder_odom", false);
     odom_source_mode_ =
@@ -85,6 +90,18 @@ class NavlabCartographerAdapterNode : public rclcpp::Node {
     for (const auto &transform : msg->transforms) {
       if (transform.header.frame_id == odom_frame_id_ &&
           transform.child_frame_id == base_frame_id_) {
+        ++tf_received_count_;
+        if (!is_acceptable_odom_transform(transform)) {
+          ++tf_rejected_count_;
+          RCLCPP_WARN_THROTTLE(
+              get_logger(), *get_clock(), 2000,
+              "rejected odom TF stamp=%d.%09u x=%.3f y=%.3f z=%.3f rejected=%llu",
+              transform.header.stamp.sec, transform.header.stamp.nanosec,
+              transform.transform.translation.x, transform.transform.translation.y,
+              transform.transform.translation.z,
+              static_cast<unsigned long long>(tf_rejected_count_));
+          continue;
+        }
         last_odom_transform_ =
             std::make_shared<geometry_msgs::msg::TransformStamped>(transform);
         last_tf_time_ = now();
@@ -186,6 +203,8 @@ class NavlabCartographerAdapterNode : public rclcpp::Node {
     oss << "\"fresh\":" << (tf_ok ? "true" : "false") << ",";
     oss << "\"age_ms\":" << age_ms(last_tf_time_, last_odom_transform_) << ",";
     oss << "\"count\":" << tf_count_ << ",";
+    oss << "\"received_count\":" << tf_received_count_ << ",";
+    oss << "\"rejected_count\":" << tf_rejected_count_ << ",";
     oss << "\"topic\":\"" << json_escape(tf_topic_) << "\",";
     oss << "\"frame_id\":\"" << json_escape(odom_frame_id_) << "\",";
     oss << "\"child_frame_id\":\"" << json_escape(base_frame_id_) << "\"},";
@@ -198,6 +217,37 @@ class NavlabCartographerAdapterNode : public rclcpp::Node {
     oss << "\"last_yaw_z\":" << last_odom_yaw_z_ << "}";
     oss << "}";
     return oss.str();
+  }
+
+  bool is_acceptable_odom_transform(
+      const geometry_msgs::msg::TransformStamped &transform) const {
+    const double stamp_sec =
+        static_cast<double>(transform.header.stamp.sec) +
+        static_cast<double>(transform.header.stamp.nanosec) * 1e-9;
+    const auto &translation = transform.transform.translation;
+    const auto &rotation = transform.transform.rotation;
+    if (stamp_sec > max_tf_stamp_sec_) {
+      return false;
+    }
+    if (!std::isfinite(translation.x) || !std::isfinite(translation.y) ||
+        !std::isfinite(translation.z) || !std::isfinite(rotation.x) ||
+        !std::isfinite(rotation.y) || !std::isfinite(rotation.z) ||
+        !std::isfinite(rotation.w)) {
+      return false;
+    }
+    if (std::hypot(translation.x, translation.y) > max_tf_translation_m_) {
+      return false;
+    }
+    if (has_published_odom_) {
+      if (std::hypot(translation.x - last_odom_x_,
+                     translation.y - last_odom_y_) > max_tf_jump_m_) {
+        return false;
+      }
+      if (std::abs(rotation.z - last_odom_yaw_z_) > max_tf_yaw_z_jump_) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void publish_odom_from_transform(
@@ -233,6 +283,7 @@ class NavlabCartographerAdapterNode : public rclcpp::Node {
     last_odom_x_ = odom.pose.pose.position.x;
     last_odom_y_ = odom.pose.pose.position.y;
     last_odom_yaw_z_ = odom.pose.pose.orientation.z;
+    has_published_odom_ = true;
     ++odom_count_;
     odom_pub_->publish(odom);
   }
@@ -266,6 +317,7 @@ class NavlabCartographerAdapterNode : public rclcpp::Node {
     last_odom_x_ = odom.pose.pose.position.x;
     last_odom_y_ = odom.pose.pose.position.y;
     last_odom_yaw_z_ = odom.pose.pose.orientation.z;
+    has_published_odom_ = true;
     ++odom_count_;
     odom_pub_->publish(odom);
   }
@@ -273,7 +325,12 @@ class NavlabCartographerAdapterNode : public rclcpp::Node {
   int scan_timeout_ms_;
   int imu_timeout_ms_;
   int tf_timeout_ms_;
+  double max_tf_stamp_sec_;
+  double max_tf_translation_m_;
+  double max_tf_jump_m_;
+  double max_tf_yaw_z_jump_;
   bool publish_placeholder_odom_;
+  bool has_published_odom_{false};
   std::string odom_source_mode_;
   std::string odom_frame_id_;
   std::string base_frame_id_;
@@ -284,6 +341,8 @@ class NavlabCartographerAdapterNode : public rclcpp::Node {
   std::string status_topic_;
   uint64_t scan_count_{0};
   uint64_t imu_count_{0};
+  uint64_t tf_received_count_{0};
+  uint64_t tf_rejected_count_{0};
   uint64_t tf_count_{0};
   uint64_t odom_count_{0};
   double last_odom_x_{0.0};

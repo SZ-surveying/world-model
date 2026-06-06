@@ -3,6 +3,10 @@ navlab_cartographer_adapter_node:
     scan_timeout_ms: 500
     imu_timeout_ms: 500
     tf_timeout_ms: 500
+    max_tf_stamp_sec: 100000000.0
+    max_tf_translation_m: 100.0
+    max_tf_jump_m: 2.0
+    max_tf_yaw_z_jump: 1.0
     publish_placeholder_odom: false
     odom_source_mode: tf
     odom_frame_id: odom

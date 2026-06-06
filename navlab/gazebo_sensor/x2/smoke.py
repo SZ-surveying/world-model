@@ -96,6 +96,8 @@ def build_vendor_driver_command(config: X2DriverSmokeConfig) -> list[str]:
         "--ros-args",
         "--params-file",
         str(config.profile_path),
+        "-p",
+        "use_sim_time:=true",
     ]
 
 

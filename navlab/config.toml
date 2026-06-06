@@ -167,6 +167,7 @@ scan_source = "x2_virtual_serial"
 profile = "/workspace/profiles/x2-vendor-sim.yaml"
 virtual_serial_link = "/tmp/navlab_x2"
 scan_ideal_topic = "/scan_ideal"
+vendor_scan_topic = "/navlab/x2/vendor_scan"
 scan_topic = "/scan"
 status_topic = "/sim/x2/status"
 sample_rate_hz = 3000.0

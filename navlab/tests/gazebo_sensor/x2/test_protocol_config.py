@@ -18,6 +18,7 @@ def test_x2_protocol_config_loads_vendor_defaults() -> None:
     assert config.profile.value == "/workspace/profiles/x2-vendor-sim.yaml"
     assert config.virtual_serial_link.value == "/tmp/navlab_x2"
     assert config.scan_ideal_topic.value == "/scan_ideal"
+    assert config.vendor_scan_topic.value == "/navlab/x2/vendor_scan"
     assert config.scan_topic.value == "/scan"
     assert config.status_topic.value == "/sim/x2/status"
     assert config.sample_rate_hz.value == 3000.0
@@ -38,6 +39,7 @@ def test_x2_vendor_profile_matches_protocol_baseline() -> None:
     profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
     params = profile["ydlidar_ros2_driver_node"]["ros__parameters"]
 
+    assert params["use_sim_time"] is True
     assert params["port"] == "/tmp/navlab_x2"
     assert params["lidar_type"] == 1
     assert params["sample_rate"] == 3

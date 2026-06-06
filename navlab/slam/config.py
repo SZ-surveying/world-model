@@ -15,6 +15,7 @@ DEFAULT_CONFIG_PATH_ENV = "NAVLAB_SLAM_RUNTIME_CONFIG"
 class RuntimeConfig:
     path: Path
     backend: str = DEFAULT_BACKEND
+    use_sim_time: bool = True
     launch_package: str = "navlab_slam_bringup"
     launch_file: str = "navlab_slam_bringup.launch.py"
     launch_fake_odom: bool = False
@@ -48,6 +49,7 @@ class RuntimeConfig:
         return cls(
             path=config_path,
             backend=selected_backend,
+            use_sim_time=as_bool(runtime.get("use_sim_time"), True),
             launch_package=as_str(runtime.get("launch_package"), "navlab_slam_bringup"),
             launch_file=as_str(runtime.get("launch_file"), "navlab_slam_bringup.launch.py"),
             launch_fake_odom=as_bool(runtime.get("launch_fake_odom"), False),
@@ -83,6 +85,7 @@ class RuntimeConfig:
     def launch_argument_map(self) -> dict[str, Any]:
         return {
             "imu_source_mode": self.imu_source_mode,
+            "use_sim_time": self.use_sim_time,
             "imu_source_topic": self.imu_source_topic,
             "imu_source_label": self.imu_source_label,
             "imu_min_input_rate_hz": self.imu_min_input_rate_hz,

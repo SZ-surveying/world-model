@@ -11,6 +11,7 @@ def test_slam_runtime_config_loads_cartographer_contract() -> None:
     config = RuntimeConfig.load("navlab/config.toml")
 
     assert config.backend == "cartographer"
+    assert config.use_sim_time is True
     assert config.scan_topic == "/scan"
     assert config.imu_topic == "/imu"
     assert config.cartographer_odometry_topic == "/odometry"
@@ -26,6 +27,7 @@ def test_cartographer_backend_generates_launch_command_from_runtime_config() -> 
     assert command[:4] == ["ros2", "launch", "navlab_slam_bringup", "navlab_slam_bringup.launch.py"]
     assert "launch_fake_odom:=false" in command
     assert "launch_cartographer_backend:=true" in command
+    assert "use_sim_time:=true" in command
     assert "publish_placeholder_odom:=false" in command
     assert "scan_topic:=/scan" in command
     assert "imu_topic:=/imu" in command

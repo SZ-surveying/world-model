@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,6 +23,7 @@ from src.tasks import hover as hover_task_module
 from src.tasks import hover_diagnostic as hover_diagnostic_task_module
 from src.tasks import hover_slam_diagnostic as hover_slam_diagnostic_task_module
 from src.tasks import official_baseline as official_baseline_task_module
+from src.tasks import slam_backend as slam_backend_task_module
 from src.tasks.acceptance import AcceptanceTask
 from src.tasks.base import OrchestrationTask
 from src.tasks.build import BuildTask
@@ -31,6 +33,7 @@ from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
 from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
 from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
 from src.tasks.registry import TaskRegistry
+from src.tasks.slam_backend import SlamBackendAcceptanceTask, SlamBackendDoctorTask
 
 from navlab.companion.config import (
     ExternalNavSenderConfig,
@@ -200,6 +203,16 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.rangefinder_imu.synthetic_fallback_enabled is False
     assert config.rangefinder_imu.altitude_control_claim == "not_evaluated"
     assert config.rangefinder_imu.hover_claim == "not_evaluated"
+    assert config.slam_backend.rosbag_profile == "profiles/navlab-slam-backend-rosbag-topics.txt"
+    assert config.slam_backend.backend == "cartographer"
+    assert config.slam_backend.launch_package == "navlab_slam_bringup"
+    assert config.slam_backend.scan_topic == "/scan"
+    assert config.slam_backend.x2_vendor_scan_topic == "/navlab/x2/vendor_scan"
+    assert config.slam_backend.imu_topic == "/imu"
+    assert config.slam_backend.odometry_topic == "/odometry"
+    assert config.slam_backend.slam_odom_topic == "/slam/odom"
+    assert config.slam_backend.slam_status_topic == "/navlab/slam/status"
+    assert config.slam_backend.uses_gazebo_truth_as_input is False
 
 
 def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> None:
@@ -268,6 +281,7 @@ def test_navlab_run_config_is_derived_from_config() -> None:
     assert config.run_id == "20260603_000000"
     assert config.artifact_dir.as_posix() == "artifacts/ros/navlab_companion_sitl_gazebo/20260603_000000"
     assert config.rangefinder_imu_rosbag_profile == "profiles/navlab-rangefinder-imu-rosbag-topics.txt"
+    assert config.slam_backend_rosbag_profile == "profiles/navlab-slam-backend-rosbag-topics.txt"
 
 
 def test_p2_rangefinder_imu_rosbag_profile_contains_required_topics() -> None:
@@ -293,6 +307,119 @@ def test_p2_rangefinder_imu_rosbag_profile_contains_required_topics() -> None:
     }.issubset(required)
 
 
+def test_p3_slam_backend_rosbag_profile_contains_required_topics() -> None:
+    profile = Path("profiles/navlab-slam-backend-rosbag-topics.txt")
+    lines = profile.read_text(encoding="utf-8").splitlines()
+    required = {
+        line.split(maxsplit=1)[1]
+        for line in lines
+        if line.strip().startswith("required ") and len(line.split(maxsplit=1)) == 2
+    }
+
+    assert {
+        "/clock",
+        "/tf",
+        "/tf_static",
+        "/scan",
+        "/imu",
+        "/odometry",
+        "/slam/odom",
+        "/map",
+        "/submap_list",
+        "/trajectory_node_list",
+        "/sim/x2/status",
+        "/rangefinder/down/range",
+        "/rangefinder/down/status",
+    }.issubset(required)
+    assert "optional /navlab/x2/vendor_scan" in lines
+
+
+def test_p3_slam_runtime_config_writes_canonical_backend_contract(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    runtime_config = tmp_path / "p3_slam_runtime.toml"
+
+    summary = slam_backend_task_module._write_p3_slam_runtime_config(config, runtime_config)
+
+    assert runtime_config.is_file()
+    runtime = summary["data"]["slam"]["runtime"]
+    assert runtime["backend"] == "cartographer"
+    assert runtime["use_sim_time"] is True
+    assert runtime["launch_fake_odom"] is False
+    assert runtime["publish_placeholder_odom"] is False
+    assert runtime["scan_topic"] == "/scan"
+    assert runtime["imu_topic"] == "/imu"
+    assert runtime["cartographer_odometry_topic"] == "/odometry"
+    assert runtime["odom_topic"] == "/slam/odom"
+    assert runtime["external_nav_input_odom_topic"] == "/slam/odom"
+
+
+def test_p3_doctor_blocks_gazebo_truth_as_slam_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    orchestration = replace(
+        config.orchestration,
+        slam_backend=replace(config.orchestration.slam_backend, uses_gazebo_truth_as_input=True),
+    )
+    unsafe_config = replace(config, orchestration=orchestration)
+    runtime_config = tmp_path / "p3_slam_runtime.toml"
+    slam_backend_task_module._write_p3_slam_runtime_config(unsafe_config, runtime_config)
+
+    monkeypatch.setattr(slam_backend_task_module, "_build_doctor_summary", lambda _config: {"ok": True, "blockers": []})
+    monkeypatch.setattr(
+        slam_backend_task_module,
+        "_slam_backend_print_command",
+        lambda _config, runtime_config: (0, "ros2 launch navlab_slam_bringup navlab_slam_bringup.launch.py"),
+    )
+
+    summary = slam_backend_task_module._build_p3_doctor_summary(unsafe_config, runtime_config=runtime_config)
+
+    assert summary["ok"] is False
+    assert summary["p3_slam_backend_doctor"]["command"].startswith(
+        "ros2 launch navlab_slam_bringup navlab_slam_bringup.launch.py"
+    )
+    assert "P3 SLAM backend must not use Gazebo truth as the SLAM odom source" in summary["blockers"]
+
+
+def test_p3_slam_odom_quality_blocks_missing_output() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    blockers: list[str] = []
+
+    slam_backend_task_module._append_slam_odom_quality_blockers(
+        blockers=blockers,
+        p3=config.orchestration.slam_backend,
+        slam_odom_result={},
+    )
+
+    assert f"P3 did not receive {config.orchestration.slam_backend.slam_odom_topic}" in blockers
+    assert "SLAM odom rate is below minimum" in blockers
+    assert "SLAM odom latest age is too high" in blockers
+
+
+def test_p3_slam_odom_quality_blocks_unstable_output() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    p3 = config.orchestration.slam_backend
+    blockers: list[str] = []
+
+    slam_backend_task_module._append_slam_odom_quality_blockers(
+        blockers=blockers,
+        p3=p3,
+        slam_odom_result={
+            "received": True,
+            "frame_id": p3.odom_frame_id,
+            "child_frame_id": p3.base_frame_id,
+            "rate_hz": p3.min_slam_odom_rate_hz,
+            "latest_age_sec": p3.max_latest_age_sec + 1.0,
+            "max_jump_m": p3.max_jump_m + 1.0,
+            "max_yaw_jump_rad": p3.max_yaw_jump_rad + 1.0,
+            "stationary_drift_m": p3.max_stationary_drift_m + 1.0,
+        },
+    )
+
+    assert "SLAM odom latest age is too high" in blockers
+    assert "SLAM odom jump exceeds threshold" in blockers
+    assert "SLAM odom yaw jump exceeds threshold" in blockers
+    assert "SLAM odom stationary drift exceeds threshold" in blockers
+
+
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.names() == (
         "acceptance",
@@ -306,6 +433,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         "official-maze-x2-acceptance",
         "rangefinder-imu-acceptance",
         "rangefinder-imu-doctor",
+        "slam-backend-acceptance",
+        "slam-backend-doctor",
     )
     assert TaskRegistry.create("build").description
     assert TaskRegistry.create("doctor").description
@@ -315,6 +444,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.create("hover-slam-diagnostic").description
     assert TaskRegistry.create("official-baseline-doctor").description
     assert TaskRegistry.create("official-baseline-acceptance").description
+    assert TaskRegistry.create("slam-backend-doctor").description
+    assert TaskRegistry.create("slam-backend-acceptance").description
 
 
 def test_orchestration_task_registry_requires_task_name() -> None:

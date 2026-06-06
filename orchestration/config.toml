@@ -136,6 +136,36 @@ altitude_control_claim = "not_evaluated"
 hover_claim = "not_evaluated"
 cartographer_launch = "ros2 launch ardupilot_cartographer cartographer.launch.py"
 
+[slam_backend]
+rosbag_profile = "profiles/navlab-slam-backend-rosbag-topics.txt"
+backend = "cartographer"
+launch_package = "navlab_slam_bringup"
+launch_file = "navlab_slam_bringup.launch.py"
+cartographer_configuration_basename = "navlab_cartographer_2d.lua"
+scan_topic = "/scan"
+imu_topic = "/imu"
+odometry_topic = "/odometry"
+slam_odom_topic = "/slam/odom"
+slam_status_topic = "/navlab/slam/status"
+external_nav_status_topic = "/external_nav/status"
+x2_scan_input_topic = "/navlab/x2/scan_ideal"
+x2_vendor_scan_topic = "/navlab/x2/vendor_scan"
+x2_scan_topic = "/scan"
+x2_status_topic = "/sim/x2/status"
+rangefinder_range_topic = "/rangefinder/down/range"
+rangefinder_status_topic = "/rangefinder/down/status"
+imu_frame_id = "imu_link"
+laser_frame_id = "base_scan"
+odom_frame_id = "odom"
+base_frame_id = "base_link"
+min_slam_odom_rate_hz = 1.0
+max_latest_age_sec = 1.0
+max_jump_m = 2.0
+max_yaw_jump_rad = 1.0
+max_stationary_drift_m = 2.0
+truth_diagnostic_topic = "/odometry"
+uses_gazebo_truth_as_input = false
+
 [foxglove_upload]
 enabled = true
 api_url = "https://api.foxglove.dev/v1"

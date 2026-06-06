@@ -8,6 +8,7 @@ required /odometry
 required /navlab/x2/scan_ideal
 required /scan
 required /sim/x2/status
+optional /navlab/x2/vendor_scan
 required /rangefinder/down/scan_ideal
 required /rangefinder/down/range
 required /rangefinder/down/status

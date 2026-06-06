@@ -1,5 +1,6 @@
 ydlidar_ros2_driver_node:
   ros__parameters:
+    use_sim_time: true
     port: /tmp/navlab_x2
     frame_id: laser_frame
     ignore_array: ""

@@ -46,6 +46,8 @@ def test_x2_driver_smoke_uses_vendor_driver_with_profile(tmp_path: Path) -> None
         "--ros-args",
         "--params-file",
         "/workspace/profiles/x2-vendor-sim.yaml",
+        "-p",
+        "use_sim_time:=true",
     ]
 
 

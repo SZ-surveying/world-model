@@ -270,6 +270,7 @@ def _write_p2_sensor_config(config: RunConfig, path: Path, *, vendor_profile: Pa
                 "profile": host._workspace_path(vendor_profile),
                 "virtual_serial_link": p2.x2_virtual_serial_link,
                 "scan_ideal_topic": p2.x2_scan_input_topic,
+                "vendor_scan_topic": "/navlab/x2/vendor_scan",
                 "scan_topic": p2.x2_scan_topic,
                 "status_topic": p2.x2_status_topic,
                 "sample_rate_hz": 3000.0,
@@ -886,6 +887,7 @@ class RangefinderImuAcceptanceTask(OrchestrationTask):
                 image=baseline.runtime_image,
                 topics=(
                     p2.x2_scan_input_topic,
+                    "/navlab/x2/vendor_scan",
                     p2.x2_scan_topic,
                     p2.x2_status_topic,
                     p2.rangefinder_scan_ideal_topic,
@@ -919,6 +921,8 @@ class RangefinderImuAcceptanceTask(OrchestrationTask):
             counts = _message_counts(config)
             scan_publishers = topic_info.get(p2.x2_scan_topic, {}).get("publisher_nodes", [])
             scan_subscribers = topic_info.get(p2.x2_scan_topic, {}).get("subscription_nodes", [])
+            vendor_scan_publishers = topic_info.get("/navlab/x2/vendor_scan", {}).get("publisher_nodes", [])
+            vendor_scan_subscribers = topic_info.get("/navlab/x2/vendor_scan", {}).get("subscription_nodes", [])
             rangefinder_publishers = topic_info.get(p2.rangefinder_range_topic, {}).get("publisher_nodes", [])
             rangefinder_status_publishers = topic_info.get(p2.rangefinder_status_topic, {}).get("publisher_nodes", [])
             imu_publishers = topic_info.get(p2.imu_output_topic, {}).get("publisher_nodes", [])
@@ -998,10 +1002,13 @@ class RangefinderImuAcceptanceTask(OrchestrationTask):
                 "set_pose_count": 0,
                 "gazebo_lidar_topic": p2.gazebo_lidar_topic,
                 "x2_scan_input_topic": p2.x2_scan_input_topic,
+                "x2_vendor_scan_topic": "/navlab/x2/vendor_scan",
                 "x2_scan_topic": p2.x2_scan_topic,
                 "x2_status_topic": p2.x2_status_topic,
                 "scan_publishers": scan_publishers,
                 "scan_subscribers": scan_subscribers,
+                "vendor_scan_publishers": vendor_scan_publishers,
+                "vendor_scan_subscribers": vendor_scan_subscribers,
                 "scan_sample": scan_sample.get("result", {}),
                 "scan_input_sample": scan_input_sample.get("result", {}),
                 "x2_status": x2_status.get("result", {}),
@@ -1026,8 +1033,10 @@ class RangefinderImuAcceptanceTask(OrchestrationTask):
                 blockers.append("P2 must not claim hover completion")
             if p2.synthetic_fallback_enabled:
                 blockers.append("P2 IMU synthetic fallback must be disabled")
-            if "ydlidar_ros2_driver_node" not in scan_publishers:
-                blockers.append("/scan is not published by ydlidar_ros2_driver_node")
+            if "ydlidar_ros2_driver_node" not in vendor_scan_publishers:
+                blockers.append("/navlab/x2/vendor_scan is not published by ydlidar_ros2_driver_node")
+            if "navlab_x2_scan_time_normalizer" not in scan_publishers:
+                blockers.append("/scan is not published by navlab_x2_scan_time_normalizer")
             if any("ros_gz_bridge" in publisher for publisher in scan_publishers):
                 blockers.append("/scan is still published by ros_gz_bridge; X2 route is polluted")
             if "cartographer_node" not in scan_subscribers:

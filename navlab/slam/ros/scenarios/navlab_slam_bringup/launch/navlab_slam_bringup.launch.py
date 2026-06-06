@@ -38,6 +38,11 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument(
+                "use_sim_time",
+                default_value="true",
+                description="Use the Gazebo/ROS simulation clock for all SLAM runtime nodes",
+            ),
+            DeclareLaunchArgument(
                 "imu_source_mode",
                 default_value="topic",
                 description="imu_bridge source mode: topic or placeholder",
@@ -155,6 +160,7 @@ def generate_launch_description():
                         "source_label": LaunchConfiguration("imu_source_label"),
                         "min_input_rate_hz": LaunchConfiguration("imu_min_input_rate_hz"),
                         "output_topic": LaunchConfiguration("imu_topic"),
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
                     },
                 ],
             ),
@@ -217,6 +223,7 @@ def generate_launch_description():
                     {
                         "mode": LaunchConfiguration("fake_odom_mode"),
                         "odom_topic": LaunchConfiguration("odom_topic"),
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
                     },
                 ],
             ),
@@ -234,6 +241,7 @@ def generate_launch_description():
                         "imu_topic": LaunchConfiguration("imu_topic"),
                         "odom_topic": LaunchConfiguration("odom_topic"),
                         "status_topic": LaunchConfiguration("slam_status_topic"),
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
                     },
                 ],
             ),
@@ -249,6 +257,7 @@ def generate_launch_description():
                     "-configuration_basename",
                     LaunchConfiguration("cartographer_configuration_basename"),
                 ],
+                parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
                 remappings=[
                     ("scan", LaunchConfiguration("scan_topic")),
                     ("imu", LaunchConfiguration("imu_topic")),
@@ -262,6 +271,7 @@ def generate_launch_description():
                 name="cartographer_occupancy_grid_node",
                 output="screen",
                 arguments=["-resolution", "0.05"],
+                parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
             ),
             Node(
                 package="navlab_external_nav_bridge",
@@ -282,6 +292,7 @@ def generate_launch_description():
                         "require_height_for_output": LaunchConfiguration(
                             "require_height_for_external_nav"
                         ),
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
                     },
                 ],
             ),

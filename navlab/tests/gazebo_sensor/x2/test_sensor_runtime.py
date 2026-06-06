@@ -10,6 +10,7 @@ from navlab.gazebo_sensor.runtime import (
     build_down_rangefinder_sender_command,
     build_emulator_command,
     build_scan_ideal_bridge_command,
+    build_scan_time_normalizer_command,
     build_vendor_driver_command,
     wait_for_virtual_serial_link,
 )
@@ -21,6 +22,7 @@ def _runtime_config() -> X2SensorLaunchConfig:
         profile_path=Path("/workspace/profiles/x2-vendor-sim.yaml"),
         virtual_serial_link=Path("/tmp/navlab_x2"),
         scan_ideal_topic="/scan_ideal",
+        vendor_scan_topic="/navlab/x2/vendor_scan",
         scan_topic="/scan",
         status_topic="/sim/x2/status",
         scan_frequency_hz=7.0,
@@ -81,7 +83,17 @@ def test_x2_sensor_runtime_vendor_driver_uses_profile() -> None:
         "--ros-args",
         "--params-file",
         "/workspace/profiles/x2-vendor-sim.yaml",
+        "-p",
+        "use_sim_time:=true",
+        "-r",
+        "scan:=/navlab/x2/vendor_scan",
     ]
+
+
+def test_x2_sensor_runtime_normalizes_vendor_scan_time() -> None:
+    command = build_scan_time_normalizer_command()
+
+    assert command == [command[0], "-m", "navlab.gazebo_sensor.scan_time_normalizer"]
 
 
 def test_x2_sensor_runtime_waits_for_virtual_serial_link(tmp_path: Path) -> None:

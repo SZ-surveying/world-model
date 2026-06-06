@@ -20,6 +20,7 @@ DEFAULT_X2_SCAN_SOURCE = "x2_virtual_serial"
 DEFAULT_X2_VENDOR_PROFILE = "/workspace/profiles/x2-vendor-sim.yaml"
 DEFAULT_X2_VIRTUAL_SERIAL_LINK = "/tmp/navlab_x2"
 DEFAULT_X2_SCAN_IDEAL_TOPIC = "/scan_ideal"
+DEFAULT_X2_VENDOR_SCAN_TOPIC = "/navlab/x2/vendor_scan"
 DEFAULT_X2_SCAN_TOPIC = "/scan"
 DEFAULT_X2_STATUS_TOPIC = "/sim/x2/status"
 DEFAULT_X2_SAMPLE_RATE_HZ = 3000.0
@@ -57,6 +58,7 @@ class X2ProtocolConfig:
     profile: ValueWithSource
     virtual_serial_link: ValueWithSource
     scan_ideal_topic: ValueWithSource
+    vendor_scan_topic: ValueWithSource
     scan_topic: ValueWithSource
     status_topic: ValueWithSource
     sample_rate_hz: FloatWithSource
@@ -81,6 +83,7 @@ class X2SensorRuntimeConfig:
     profile: Path
     virtual_serial_link: Path
     scan_ideal_topic: str
+    vendor_scan_topic: str
     scan_topic: str
     status_topic: str
     sample_rate_hz: float
@@ -106,6 +109,7 @@ class X2SensorRuntimeConfig:
             profile=Path(config.profile.value),
             virtual_serial_link=Path(config.virtual_serial_link.value),
             scan_ideal_topic=config.scan_ideal_topic.value,
+            vendor_scan_topic=config.vendor_scan_topic.value,
             scan_topic=config.scan_topic.value,
             status_topic=config.status_topic.value,
             sample_rate_hz=config.sample_rate_hz.value,
@@ -208,6 +212,7 @@ def load_x2_protocol_config(path: str | Path | None = None) -> X2ProtocolConfig:
         profile=resolve_str_value(raw_x2, "profile", DEFAULT_X2_VENDOR_PROFILE),
         virtual_serial_link=resolve_str_value(raw_x2, "virtual_serial_link", DEFAULT_X2_VIRTUAL_SERIAL_LINK),
         scan_ideal_topic=resolve_str_value(raw_x2, "scan_ideal_topic", DEFAULT_X2_SCAN_IDEAL_TOPIC),
+        vendor_scan_topic=resolve_str_value(raw_x2, "vendor_scan_topic", DEFAULT_X2_VENDOR_SCAN_TOPIC),
         scan_topic=resolve_str_value(raw_x2, "scan_topic", DEFAULT_X2_SCAN_TOPIC),
         status_topic=resolve_str_value(raw_x2, "status_topic", DEFAULT_X2_STATUS_TOPIC),
         sample_rate_hz=resolve_float_value(raw_x2, "sample_rate_hz", DEFAULT_X2_SAMPLE_RATE_HZ),

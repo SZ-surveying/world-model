@@ -55,7 +55,7 @@ Gazebo 物理世界
 | P0 | 官方基线验收 | 官方 `/ap/*`、SITL、Gazebo、Cartographer 基线可观测 | ArduPilot official | `todos/P0_official_baseline_todo.md` |
 | P1 | 官方 maze + NavLab X2 雷达 | 继续使用官方 `iris_maze` 和 Iris 模型，只把雷达链路换成 X2 机制 | `ardupilot_gz` + X2 driver | `todos/P1_official_maze_x2_todo.md` |
 | P2 | 下视 rangefinder 和 IMU 机制验收 | down rangefinder、IMU 和 FCU 接收状态来自正确机制 | `claudedrone` + Gazebo sensor | `todos/P2_rangefinder_imu_todo.md` |
-| P3 | SLAM backend 质量验收 | Cartographer 输出真实 `/odom`，并可对照诊断 | official Cartographer + PX4 SLAM | 待建 |
+| P3 | SLAM backend 质量验收 | Cartographer 输出真实 `/odom`，并可对照诊断 | official Cartographer + PX4 SLAM | `todos/P3_slam_backend_quality_todo.md` |
 | P4 | FCU 状态机和唯一控制器 | 只有一个 owner 向 FCU 发运动 setpoint | `Altair-Silent` + `claudedrone` | 待建 |
 | P5 | Frame contract 自动验收 | NED/ENU、FRD/FLU、TF 链和 scan 方向可自动检查 | PX4 odom converter | 待建 |
 | P6 | 真实 SLAM hover gate | SLAM ExternalNav 悬停稳定通过 | official + NavLab acceptance | 待建 |
@@ -156,6 +156,14 @@ TODO：
 - `/scan + /imu + /odometry + TF` 驱动 SLAM。
 - `/odom` 连续、低跳变、误差可对照。
 - artifact 记录 backend、配置 hash、版本。
+
+设计文档：
+
+- `docs/scenarios/indoor/navlab_p3_slam_backend_quality_design.md`
+
+TODO：
+
+- `docs/scenarios/indoor/todos/P3_slam_backend_quality_todo.md`
 
 ### P4：FCU 状态机和唯一控制器
 
