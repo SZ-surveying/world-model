@@ -1,0 +1,27 @@
+# P4 FCU state machine and unique setpoint owner replay topics.
+optional /clock
+required /tf
+required /tf_static
+required /ap/v1/time
+required /ap/v1/pose/filtered
+required /ap/v1/twist/filtered
+required /ap/v1/status
+required /ap/v1/cmd_vel
+required /rangefinder/down/range
+required /rangefinder/down/status
+required /imu
+required /navlab/fcu/state
+required /navlab/fcu/controller/status
+required /navlab/fcu/setpoint/intent
+required /navlab/fcu/setpoint/output
+required /navlab/fcu/owner/status
+optional /scan
+optional /navlab/x2/vendor_scan
+optional /sim/x2/status
+optional /slam/odom
+optional /navlab/slam/status
+optional /external_nav/status
+optional /odometry
+optional /map
+optional /submap_list
+optional /trajectory_node_list

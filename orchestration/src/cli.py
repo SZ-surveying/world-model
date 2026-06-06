@@ -8,6 +8,7 @@ from rich.console import Console
 from src.tasks.acceptance import AcceptanceTask
 from src.tasks.build import BuildTask, ImageKind
 from src.tasks.doctor import DoctorTask
+from src.tasks.fcu_controller import FcuControllerAcceptanceTask, FcuControllerDoctorTask
 from src.tasks.hover import HoverAcceptanceTask
 from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
@@ -177,6 +178,29 @@ def slam_backend_acceptance_command(
     ] = None,
 ) -> None:
     task = cast(SlamBackendAcceptanceTask, TaskRegistry.create("slam-backend-acceptance"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+
+
+@app.command("fcu-controller-doctor")
+def fcu_controller_doctor_command(
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(FcuControllerDoctorTask, TaskRegistry.create("fcu-controller-doctor"))
+    raise typer.Exit(task.run(config_path=config, console=console))
+
+
+@app.command("fcu-controller-acceptance")
+def fcu_controller_acceptance_command(
+    duration_sec: Annotated[float, typer.Argument(help="P4 FCU controller acceptance duration in seconds")] = 90.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(FcuControllerAcceptanceTask, TaskRegistry.create("fcu-controller-acceptance"))
     raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
 
 

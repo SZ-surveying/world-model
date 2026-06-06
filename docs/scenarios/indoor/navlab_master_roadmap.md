@@ -56,7 +56,7 @@ Gazebo 物理世界
 | P1 | 官方 maze + NavLab X2 雷达 | 继续使用官方 `iris_maze` 和 Iris 模型，只把雷达链路换成 X2 机制 | `ardupilot_gz` + X2 driver | `todos/P1_official_maze_x2_todo.md` |
 | P2 | 下视 rangefinder 和 IMU 机制验收 | down rangefinder、IMU 和 FCU 接收状态来自正确机制 | `claudedrone` + Gazebo sensor | `todos/P2_rangefinder_imu_todo.md` |
 | P3 | SLAM backend 质量验收 | Cartographer 输出真实 `/odom`，并可对照诊断 | official Cartographer + PX4 SLAM | `todos/P3_slam_backend_quality_todo.md` |
-| P4 | FCU 状态机和唯一控制器 | 只有一个 owner 向 FCU 发运动 setpoint | `Altair-Silent` + `claudedrone` | 待建 |
+| P4 | FCU 状态机和唯一控制器 | 只有一个 owner 向 FCU 发运动 setpoint | `Altair-Silent` + `claudedrone` | `todos/P4_fcu_state_machine_todo.md` |
 | P5 | Frame contract 自动验收 | NED/ENU、FRD/FLU、TF 链和 scan 方向可自动检查 | PX4 odom converter | 待建 |
 | P6 | 真实 SLAM hover gate | SLAM ExternalNav 悬停稳定通过 | official + NavLab acceptance | 待建 |
 | P7 | 官方 maze 小范围运动 gate | 在官方 maze 中 forward/back/yaw scan/stop drift 都通过 | VehicleController | 待建 |
@@ -172,6 +172,8 @@ TODO：
 - 任务层只表达意图。
 - 只有一个 controller 向 FCU 发 setpoint。
 - FCU 未 ready 前不发运动 setpoint。
+- 用官方示例兼容 route 完成 GUIDED、arm、takeoff、local position ready 的状态机验收：
+  MAVLink bootstrap 负责起飞状态转换，DDS `/ap/v1/*` 负责状态观测和 `/ap/v1/cmd_vel` 运动输出。
 
 参考：
 
@@ -183,6 +185,16 @@ TODO：
 - summary 能证明 GUIDED、arm、takeoff、local position ready。
 - setpoint owner 唯一。
 - hover、yaw、local position target 都走同一个输出通道。
+- summary 明确 `hover_claim=not_evaluated`，不把 P4 当作 P6 hover completion。
+- summary 明确 `official_control_claim=false`、`mavlink_bootstrap_claim=true`，不把当前 route 误标为纯 DDS service control。
+
+设计文档：
+
+- `docs/scenarios/indoor/navlab_p4_fcu_state_machine_design.md`
+
+TODO：
+
+- `docs/scenarios/indoor/todos/P4_fcu_state_machine_todo.md`
 
 ### P5：Frame contract 自动验收
 

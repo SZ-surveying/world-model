@@ -70,6 +70,14 @@ navlab-slam-backend-doctor *args='':
 navlab-slam-backend-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} slam-backend-acceptance {{duration_sec}} {{args}}
 
+# Check P4 FCU state machine and unique controller prerequisites.
+navlab-fcu-controller-doctor *args='':
+    {{orchestration_cmd}} fcu-controller-doctor {{args}}
+
+# Run P4 FCU state machine and unique controller acceptance.
+navlab-fcu-controller-acceptance duration_sec='90' *args='':
+    {{orchestration_cmd}} fcu-controller-acceptance {{duration_sec}} {{args}}
+
 # Run NavLab companion + SITL + Gazebo obstacle acceptance with rosbag/Foxglove artifacts.
 navlab-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} acceptance {{duration_sec}} {{args}}

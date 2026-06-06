@@ -57,6 +57,7 @@ class TaskRegistry:
             "src.tasks.official_maze_x2",
             "src.tasks.rangefinder_imu",
             "src.tasks.slam_backend",
+            "src.tasks.fcu_controller",
         ):
             import_module(module_name)
 

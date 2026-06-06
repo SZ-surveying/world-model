@@ -21,6 +21,8 @@
 - `docs/scenarios/indoor/todos/P2_rangefinder_imu_todo.md`: P2 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_p3_slam_backend_quality_design.md`: P3 SLAM backend 质量验收设计
 - `docs/scenarios/indoor/todos/P3_slam_backend_quality_todo.md`: P3 TODO 和验收标准
+- `docs/scenarios/indoor/navlab_p4_fcu_state_machine_design.md`: P4 FCU 状态机和唯一控制器设计
+- `docs/scenarios/indoor/todos/P4_fcu_state_machine_todo.md`: P4 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`: 当前系统与官方路线的对齐审计
 - `docs/scenarios/indoor/navlab_reference_projects_analysis.md`: 四个参考仓库的综合分析和改进建议
 - `docs/scenarios/indoor/navlab_cartographer_real_machine_tuning.md`: Cartographer 真机调参记录口径
@@ -48,11 +50,13 @@
 7. `docs/scenarios/indoor/todos/P2_rangefinder_imu_todo.md`
 8. `docs/scenarios/indoor/navlab_p3_slam_backend_quality_design.md`
 9. `docs/scenarios/indoor/todos/P3_slam_backend_quality_todo.md`
-10. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
-11. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
-12. `docs/sim/x2_lidar_simulation_design.md`
-13. `docs/sim/x2_lidar_protocol_todo.md`
-14. `docs/general/lab_env_service_refactor_todo.md`
+10. `docs/scenarios/indoor/navlab_p4_fcu_state_machine_design.md`
+11. `docs/scenarios/indoor/todos/P4_fcu_state_machine_todo.md`
+12. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
+13. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
+14. `docs/sim/x2_lidar_simulation_design.md`
+15. `docs/sim/x2_lidar_protocol_todo.md`
+16. `docs/general/lab_env_service_refactor_todo.md`
 
 ## 当前目录结构
 
@@ -69,6 +73,7 @@ docs/
       navlab_p1_official_maze_x2_design.md
       navlab_p2_rangefinder_imu_design.md
       navlab_p3_slam_backend_quality_design.md
+      navlab_p4_fcu_state_machine_design.md
       navlab_ardupilot_ros2_official_alignment.md
       navlab_reference_projects_analysis.md
       navlab_cartographer_real_machine_tuning.md
@@ -77,6 +82,7 @@ docs/
         P1_official_maze_x2_todo.md
         P2_rangefinder_imu_todo.md
         P3_slam_backend_quality_todo.md
+        P4_fcu_state_machine_todo.md
   sim/
     README.md
     todo.md

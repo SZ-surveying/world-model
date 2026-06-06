@@ -19,6 +19,7 @@ from src.config import (
 from src.project_config import load_navlab_images_config, load_runtime_config, resolve_navlab_image_tag
 from src.tasks import acceptance as acceptance_task_module
 from src.tasks import build as build_task_module
+from src.tasks import fcu_controller as fcu_controller_task_module
 from src.tasks import hover as hover_task_module
 from src.tasks import hover_diagnostic as hover_diagnostic_task_module
 from src.tasks import hover_slam_diagnostic as hover_slam_diagnostic_task_module
@@ -27,6 +28,7 @@ from src.tasks import slam_backend as slam_backend_task_module
 from src.tasks.acceptance import AcceptanceTask
 from src.tasks.base import OrchestrationTask
 from src.tasks.build import BuildTask
+from src.tasks.fcu_controller import FcuControllerAcceptanceTask, FcuControllerDoctorTask
 from src.tasks.hover import HoverAcceptanceTask
 from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
@@ -213,6 +215,28 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.slam_backend.slam_odom_topic == "/slam/odom"
     assert config.slam_backend.slam_status_topic == "/navlab/slam/status"
     assert config.slam_backend.uses_gazebo_truth_as_input is False
+    assert config.fcu_controller.rosbag_profile == "profiles/navlab-fcu-controller-rosbag-topics.txt"
+    assert config.fcu_controller.control_route == "mavlink_bootstrap_plus_dds_cmd_vel"
+    assert config.fcu_controller.mavlink_bootstrap_endpoint == "udp:127.0.0.1:14550"
+    assert config.fcu_controller.mavlink_bootstrap_source_system == 246
+    assert config.fcu_controller.mavlink_bootstrap_source_component == 190
+    assert config.fcu_controller.owner_name == "navlab_fcu_controller"
+    assert config.fcu_controller.owner_id == "navlab-p4-fcu-controller"
+    assert config.fcu_controller.fcu_state_topic == "/navlab/fcu/state"
+    assert config.fcu_controller.controller_status_topic == "/navlab/fcu/controller/status"
+    assert config.fcu_controller.setpoint_intent_topic == "/navlab/fcu/setpoint/intent"
+    assert config.fcu_controller.setpoint_output_topic == "/navlab/fcu/setpoint/output"
+    assert config.fcu_controller.owner_status_topic == "/navlab/fcu/owner/status"
+    assert config.fcu_controller.prearm_service == "/ap/v1/prearm_check"
+    assert config.fcu_controller.mode_switch_service == "/ap/v1/mode_switch"
+    assert config.fcu_controller.arm_service == "/ap/v1/arm_motors"
+    assert config.fcu_controller.takeoff_service == "/ap/v1/experimental/takeoff"
+    assert config.fcu_controller.cmd_vel_topic == "/ap/v1/cmd_vel"
+    assert config.fcu_controller.guided_mode == 4
+    assert config.fcu_controller.takeoff_alt_m == 0.5
+    assert config.fcu_controller.require_slam_backend is True
+    assert config.fcu_controller.hover_claim == "not_evaluated"
+    assert config.fcu_controller.exploration_claim == "not_evaluated"
 
 
 def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> None:
@@ -420,11 +444,145 @@ def test_p3_slam_odom_quality_blocks_unstable_output() -> None:
     assert "SLAM odom stationary drift exceeds threshold" in blockers
 
 
+def test_p4_fcu_controller_rosbag_profile_contains_required_topics() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    profile = Path(config.fcu_controller_rosbag_profile)
+    content = profile.read_text(encoding="utf-8")
+
+    for topic in (
+        "/ap/v1/time",
+        "/ap/v1/pose/filtered",
+        "/ap/v1/twist/filtered",
+        "/rangefinder/down/range",
+        "/rangefinder/down/status",
+        "/imu",
+        "/navlab/fcu/state",
+        "/navlab/fcu/controller/status",
+        "/navlab/fcu/setpoint/intent",
+        "/navlab/fcu/setpoint/output",
+        "/navlab/fcu/owner/status",
+    ):
+        assert f"required {topic}" in content
+
+
+def test_p4_runtime_config_writes_controller_contract(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    runtime_config = tmp_path / "p4_fcu_controller_runtime.toml"
+
+    summary = fcu_controller_task_module._write_p4_runtime_config(config, runtime_config)
+
+    assert runtime_config.is_file()
+    runtime = summary["data"]["fcu_controller"]["runtime"]
+    assert runtime["control_route"] == "mavlink_bootstrap_plus_dds_cmd_vel"
+    assert runtime["mavlink_bootstrap_endpoint"] == "udp:127.0.0.1:14550"
+    assert runtime["owner_name"] == "navlab_fcu_controller"
+    assert runtime["cmd_vel_topic"] == "/ap/v1/cmd_vel"
+    assert runtime["prearm_service"] == "/ap/v1/prearm_check"
+    assert runtime["mode_switch_service"] == "/ap/v1/mode_switch"
+    assert runtime["arm_service"] == "/ap/v1/arm_motors"
+    assert runtime["takeoff_service"] == "/ap/v1/experimental/takeoff"
+    assert runtime["hover_claim"] == "not_evaluated"
+    assert runtime["exploration_claim"] == "not_evaluated"
+
+
+def test_p4_doctor_blocks_mavlink_fallback(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    orchestration = replace(
+        config.orchestration,
+        fcu_controller=replace(config.orchestration.fcu_controller, control_route="mavlink_fallback"),
+    )
+    unsafe_config = replace(config, orchestration=orchestration)
+    runtime_config = tmp_path / "p4_fcu_controller_runtime.toml"
+    fcu_controller_task_module._write_p4_runtime_config(unsafe_config, runtime_config)
+
+    monkeypatch.setattr(fcu_controller_task_module, "_build_doctor_summary", lambda _config: {"ok": True, "blockers": []})
+    monkeypatch.setattr(
+        host,
+        "_docker_run_ros_shell_capture",
+        lambda **_kwargs: (0, "interface ok"),
+    )
+
+    summary = fcu_controller_task_module._build_p4_doctor_summary(unsafe_config, runtime_config=runtime_config)
+
+    assert summary["ok"] is False
+    assert "control_route='mavlink_fallback' is not supported" in summary["blockers"]
+
+
+def test_p4_doctor_allows_mavlink_bootstrap_route(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    runtime_config = tmp_path / "p4_fcu_controller_runtime.toml"
+    fcu_controller_task_module._write_p4_runtime_config(config, runtime_config)
+
+    monkeypatch.setattr(fcu_controller_task_module, "_build_doctor_summary", lambda _config: {"ok": True, "blockers": []})
+    monkeypatch.setattr(
+        host,
+        "_docker_run_ros_shell_capture",
+        lambda **_kwargs: (0, "ok"),
+    )
+
+    summary = fcu_controller_task_module._build_p4_doctor_summary(config, runtime_config=runtime_config)
+
+    assert summary["ok"] is True
+    assert summary["p4_fcu_controller_doctor"]["official_control_claim"] is False
+    assert summary["p4_fcu_controller_doctor"]["mavlink_bootstrap_claim"] is True
+
+
+def test_p4_owner_blockers_detect_competing_publishers() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    blockers: list[str] = []
+
+    fcu_controller_task_module._append_owner_blockers(
+        blockers=blockers,
+        owner_summary={"unique": True, "set_pose_count": 0},
+        cmd_vel_publishers=["navlab_fcu_controller", "mission_controller"],
+        p4=config.orchestration.fcu_controller,
+    )
+
+    assert "movement output has competing publishers: ['mission_controller']" in blockers
+
+
+def test_p4_owner_blockers_detect_direct_set_pose() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    blockers: list[str] = []
+
+    fcu_controller_task_module._append_owner_blockers(
+        blockers=blockers,
+        owner_summary={"unique": True, "set_pose_count": 1},
+        cmd_vel_publishers=["navlab_fcu_controller"],
+        p4=config.orchestration.fcu_controller,
+    )
+
+    assert "direct set pose count is non-zero" in blockers
+
+
+def test_p4_controller_blockers_detect_pre_ready_output_and_direct_pose() -> None:
+    blockers: list[str] = []
+
+    fcu_controller_task_module._append_controller_blockers(
+        blockers=blockers,
+        controller={
+            "ok": True,
+            "command_results": {
+                "prearm_check": {"success": True},
+                "set_guided": {"success": True},
+                "arm": {"success": True},
+                "takeoff": {"success": True},
+            },
+            "counts": {"pose": 1, "rejected_before_ready": 0, "output": 0},
+        },
+    )
+
+    assert "controller did not reject a pre-ready movement intent" in blockers
+    assert "controller did not publish setpoint output diagnostics" in blockers
+
+
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.names() == (
         "acceptance",
         "build",
         "doctor",
+        "fcu-controller-acceptance",
+        "fcu-controller-doctor",
         "hover",
         "hover-diagnostic",
         "hover-slam-diagnostic",
@@ -439,6 +597,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.create("build").description
     assert TaskRegistry.create("doctor").description
     assert TaskRegistry.create("acceptance").description
+    assert TaskRegistry.create("fcu-controller-doctor").description
+    assert TaskRegistry.create("fcu-controller-acceptance").description
     assert TaskRegistry.create("hover").description
     assert TaskRegistry.create("hover-diagnostic").description
     assert TaskRegistry.create("hover-slam-diagnostic").description

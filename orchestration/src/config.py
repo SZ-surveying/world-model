@@ -166,6 +166,43 @@ class SlamBackendQualityConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class FcuControllerConfig:
+    rosbag_profile: str
+    control_route: str
+    mavlink_bootstrap_endpoint: str
+    mavlink_bootstrap_source_system: int
+    mavlink_bootstrap_source_component: int
+    owner_name: str
+    owner_id: str
+    fcu_state_topic: str
+    controller_status_topic: str
+    setpoint_intent_topic: str
+    setpoint_output_topic: str
+    owner_status_topic: str
+    time_topic: str
+    prearm_service: str
+    mode_switch_service: str
+    arm_service: str
+    takeoff_service: str
+    cmd_vel_topic: str
+    pose_topic: str
+    twist_topic: str
+    status_topic: str
+    rangefinder_range_topic: str
+    rangefinder_status_topic: str
+    imu_topic: str
+    slam_odom_topic: str
+    slam_status_topic: str
+    guided_mode: int
+    takeoff_alt_m: float
+    readiness_timeout_sec: float
+    hold_after_ready_sec: float
+    require_slam_backend: bool
+    hover_claim: str
+    exploration_claim: str
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -191,6 +228,7 @@ class OrchestrationConfig:
     official_maze_x2: OfficialMazeX2Config
     rangefinder_imu: RangefinderImuConfig
     slam_backend: SlamBackendQualityConfig
+    fcu_controller: FcuControllerConfig
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -207,6 +245,7 @@ class OrchestrationConfig:
         official_maze_x2 = _section(data, "official_maze_x2")
         rangefinder_imu = _section(data, "rangefinder_imu")
         slam_backend = _section(data, "slam_backend")
+        fcu_controller = _section(data, "fcu_controller")
         foxglove_upload = _section(data, "foxglove_upload")
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
@@ -448,6 +487,67 @@ class OrchestrationConfig:
                 truth_diagnostic_topic=_as_str(slam_backend.get("truth_diagnostic_topic"), "/odometry"),
                 uses_gazebo_truth_as_input=_as_bool(slam_backend.get("uses_gazebo_truth_as_input"), False),
             ),
+            fcu_controller=FcuControllerConfig(
+                rosbag_profile=_as_str(
+                    fcu_controller.get("rosbag_profile"),
+                    "profiles/navlab-fcu-controller-rosbag-topics.txt",
+                ),
+                control_route=_as_str(
+                    fcu_controller.get("control_route"),
+                    "mavlink_bootstrap_plus_dds_cmd_vel",
+                ),
+                mavlink_bootstrap_endpoint=_as_str(
+                    fcu_controller.get("mavlink_bootstrap_endpoint"),
+                    "udp:127.0.0.1:14550",
+                ),
+                mavlink_bootstrap_source_system=int(fcu_controller.get("mavlink_bootstrap_source_system", 246)),
+                mavlink_bootstrap_source_component=int(
+                    fcu_controller.get("mavlink_bootstrap_source_component", 190)
+                ),
+                owner_name=_as_str(fcu_controller.get("owner_name"), "navlab_fcu_controller"),
+                owner_id=_as_str(fcu_controller.get("owner_id"), "navlab-p4-fcu-controller"),
+                fcu_state_topic=_as_str(fcu_controller.get("fcu_state_topic"), "/navlab/fcu/state"),
+                controller_status_topic=_as_str(
+                    fcu_controller.get("controller_status_topic"),
+                    "/navlab/fcu/controller/status",
+                ),
+                setpoint_intent_topic=_as_str(
+                    fcu_controller.get("setpoint_intent_topic"),
+                    "/navlab/fcu/setpoint/intent",
+                ),
+                setpoint_output_topic=_as_str(
+                    fcu_controller.get("setpoint_output_topic"),
+                    "/navlab/fcu/setpoint/output",
+                ),
+                owner_status_topic=_as_str(fcu_controller.get("owner_status_topic"), "/navlab/fcu/owner/status"),
+                time_topic=_as_str(fcu_controller.get("time_topic"), "/ap/v1/time"),
+                prearm_service=_as_str(fcu_controller.get("prearm_service"), "/ap/v1/prearm_check"),
+                mode_switch_service=_as_str(fcu_controller.get("mode_switch_service"), "/ap/v1/mode_switch"),
+                arm_service=_as_str(fcu_controller.get("arm_service"), "/ap/v1/arm_motors"),
+                takeoff_service=_as_str(fcu_controller.get("takeoff_service"), "/ap/v1/experimental/takeoff"),
+                cmd_vel_topic=_as_str(fcu_controller.get("cmd_vel_topic"), "/ap/v1/cmd_vel"),
+                pose_topic=_as_str(fcu_controller.get("pose_topic"), "/ap/v1/pose/filtered"),
+                twist_topic=_as_str(fcu_controller.get("twist_topic"), "/ap/v1/twist/filtered"),
+                status_topic=_as_str(fcu_controller.get("status_topic"), "/ap/v1/status"),
+                rangefinder_range_topic=_as_str(
+                    fcu_controller.get("rangefinder_range_topic"),
+                    "/rangefinder/down/range",
+                ),
+                rangefinder_status_topic=_as_str(
+                    fcu_controller.get("rangefinder_status_topic"),
+                    "/rangefinder/down/status",
+                ),
+                imu_topic=_as_str(fcu_controller.get("imu_topic"), "/imu"),
+                slam_odom_topic=_as_str(fcu_controller.get("slam_odom_topic"), "/slam/odom"),
+                slam_status_topic=_as_str(fcu_controller.get("slam_status_topic"), "/navlab/slam/status"),
+                guided_mode=int(_as_float(fcu_controller.get("guided_mode"), 4.0)),
+                takeoff_alt_m=_as_float(fcu_controller.get("takeoff_alt_m"), 0.5),
+                readiness_timeout_sec=_as_float(fcu_controller.get("readiness_timeout_sec"), 45.0),
+                hold_after_ready_sec=_as_float(fcu_controller.get("hold_after_ready_sec"), 8.0),
+                require_slam_backend=_as_bool(fcu_controller.get("require_slam_backend"), True),
+                hover_claim=_as_str(fcu_controller.get("hover_claim"), "not_evaluated"),
+                exploration_claim=_as_str(fcu_controller.get("exploration_claim"), "not_evaluated"),
+            ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
                 api_url=_as_str(foxglove_upload.get("api_url"), "https://api.foxglove.dev/v1"),
@@ -534,6 +634,10 @@ class RunConfig:
     @property
     def slam_backend_rosbag_profile(self) -> str:
         return self.orchestration.slam_backend.rosbag_profile
+
+    @property
+    def fcu_controller_rosbag_profile(self) -> str:
+        return self.orchestration.fcu_controller.rosbag_profile
 
     @classmethod
     def from_config(

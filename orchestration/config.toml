@@ -166,6 +166,41 @@ max_stationary_drift_m = 2.0
 truth_diagnostic_topic = "/odometry"
 uses_gazebo_truth_as_input = false
 
+[fcu_controller]
+rosbag_profile = "profiles/navlab-fcu-controller-rosbag-topics.txt"
+control_route = "mavlink_bootstrap_plus_dds_cmd_vel"
+mavlink_bootstrap_endpoint = "udp:127.0.0.1:14550"
+mavlink_bootstrap_source_system = 246
+mavlink_bootstrap_source_component = 190
+owner_name = "navlab_fcu_controller"
+owner_id = "navlab-p4-fcu-controller"
+fcu_state_topic = "/navlab/fcu/state"
+controller_status_topic = "/navlab/fcu/controller/status"
+setpoint_intent_topic = "/navlab/fcu/setpoint/intent"
+setpoint_output_topic = "/navlab/fcu/setpoint/output"
+owner_status_topic = "/navlab/fcu/owner/status"
+time_topic = "/ap/v1/time"
+prearm_service = "/ap/v1/prearm_check"
+mode_switch_service = "/ap/v1/mode_switch"
+arm_service = "/ap/v1/arm_motors"
+takeoff_service = "/ap/v1/experimental/takeoff"
+cmd_vel_topic = "/ap/v1/cmd_vel"
+pose_topic = "/ap/v1/pose/filtered"
+twist_topic = "/ap/v1/twist/filtered"
+status_topic = "/ap/v1/status"
+rangefinder_range_topic = "/rangefinder/down/range"
+rangefinder_status_topic = "/rangefinder/down/status"
+imu_topic = "/imu"
+slam_odom_topic = "/slam/odom"
+slam_status_topic = "/navlab/slam/status"
+guided_mode = 4
+takeoff_alt_m = 0.5
+readiness_timeout_sec = 45.0
+hold_after_ready_sec = 8.0
+require_slam_backend = true
+hover_claim = "not_evaluated"
+exploration_claim = "not_evaluated"
+
 [foxglove_upload]
 enabled = true
 api_url = "https://api.foxglove.dev/v1"
