@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,7 +37,8 @@ def repo_root() -> Path:
 
 
 def resolve_navlab_config_file(path: str | Path | None = None) -> Path:
-    config_file = Path(path) if path is not None else DEFAULT_NAVLAB_CONFIG_FILE
+    raw_path = path or os.environ.get("NAVLAB_CONFIG") or DEFAULT_NAVLAB_CONFIG_FILE
+    config_file = Path(raw_path)
     if not config_file.is_absolute():
         config_file = repo_root() / config_file
     return config_file

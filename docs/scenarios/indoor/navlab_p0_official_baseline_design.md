@@ -296,8 +296,8 @@ P0 失败但有价值的情况：
 
 P0 完成后：
 
-- P1 才能把 NavLab world/model 接入官方结构。
-- P2 才能把 X2 和 rangefinder 接入官方/等价传感器口径。
+- P1 先保留官方 `iris_maze` world 和官方 Iris 模型，只把 X2 雷达链路接入官方结构。
+- P2 再接下视 rangefinder 和 IMU 机制验收。
 - P3 才能把 Cartographer backend 质量验收和官方 baseline 对齐。
 - P6 才能把真实 SLAM hover 作为完成标准。
 

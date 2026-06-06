@@ -12,9 +12,13 @@
 
 ### 室内无 GPS 主线
 
-- `docs/scenarios/indoor/navlab_master_roadmap.md`: 总 roadmap，定义 P0-P8 顺序和完成标准
+- `docs/scenarios/indoor/navlab_master_roadmap.md`: 总 roadmap，定义 P0-P9 顺序和完成标准
 - `docs/scenarios/indoor/navlab_p0_official_baseline_design.md`: P0 官方基线验收设计
 - `docs/scenarios/indoor/todos/P0_official_baseline_todo.md`: P0 TODO 和验收标准
+- `docs/scenarios/indoor/navlab_p1_official_maze_x2_design.md`: P1 官方 maze + NavLab X2 雷达接入设计
+- `docs/scenarios/indoor/todos/P1_official_maze_x2_todo.md`: P1 TODO 和验收标准
+- `docs/scenarios/indoor/navlab_p2_rangefinder_imu_design.md`: P2 下视 rangefinder 与 IMU 机制验收设计
+- `docs/scenarios/indoor/todos/P2_rangefinder_imu_todo.md`: P2 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`: 当前系统与官方路线的对齐审计
 - `docs/scenarios/indoor/navlab_reference_projects_analysis.md`: 四个参考仓库的综合分析和改进建议
 - `docs/scenarios/indoor/navlab_cartographer_real_machine_tuning.md`: Cartographer 真机调参记录口径
@@ -36,11 +40,15 @@
 1. `docs/scenarios/indoor/navlab_master_roadmap.md`
 2. `docs/scenarios/indoor/navlab_p0_official_baseline_design.md`
 3. `docs/scenarios/indoor/todos/P0_official_baseline_todo.md`
-4. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
-5. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
-6. `docs/sim/x2_lidar_simulation_design.md`
-7. `docs/sim/x2_lidar_protocol_todo.md`
-8. `docs/general/lab_env_service_refactor_todo.md`
+4. `docs/scenarios/indoor/navlab_p1_official_maze_x2_design.md`
+5. `docs/scenarios/indoor/todos/P1_official_maze_x2_todo.md`
+6. `docs/scenarios/indoor/navlab_p2_rangefinder_imu_design.md`
+7. `docs/scenarios/indoor/todos/P2_rangefinder_imu_todo.md`
+8. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
+9. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
+10. `docs/sim/x2_lidar_simulation_design.md`
+11. `docs/sim/x2_lidar_protocol_todo.md`
+12. `docs/general/lab_env_service_refactor_todo.md`
 
 ## 当前目录结构
 
@@ -54,11 +62,15 @@ docs/
     indoor/
       navlab_master_roadmap.md
       navlab_p0_official_baseline_design.md
+      navlab_p1_official_maze_x2_design.md
+      navlab_p2_rangefinder_imu_design.md
       navlab_ardupilot_ros2_official_alignment.md
       navlab_reference_projects_analysis.md
       navlab_cartographer_real_machine_tuning.md
       todos/
         P0_official_baseline_todo.md
+        P1_official_maze_x2_todo.md
+        P2_rangefinder_imu_todo.md
   sim/
     README.md
     todo.md

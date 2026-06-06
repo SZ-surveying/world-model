@@ -168,6 +168,15 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.official_baseline.cartographer_launch == "ros2 launch ardupilot_cartographer cartographer.launch.py"
     assert config.official_baseline.gazebo_bringup_mode == "official_gz_bringup"
     assert config.official_baseline.external_nav_route == "official_dds"
+    assert config.official_maze_x2.rosbag_profile == "profiles/navlab-official-maze-x2-rosbag-topics.txt"
+    assert config.official_maze_x2.world_source == "official_iris_maze"
+    assert config.official_maze_x2.vehicle_model_source == "official_iris_with_lidar"
+    assert config.official_maze_x2.gazebo_lidar_topic == "/lidar"
+    assert config.official_maze_x2.x2_scan_input_topic == "/lidar"
+    assert config.official_maze_x2.x2_scan_topic == "/scan"
+    assert config.official_maze_x2.x2_status_topic == "/sim/x2/status"
+    assert config.official_maze_x2.altitude_control_claim == "not_evaluated"
+    assert config.official_maze_x2.hover_claim == "not_evaluated"
 
 
 def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> None:
@@ -247,6 +256,7 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         "hover-slam-diagnostic",
         "official-baseline-acceptance",
         "official-baseline-doctor",
+        "official-maze-x2-acceptance",
     )
     assert TaskRegistry.create("build").description
     assert TaskRegistry.create("doctor").description

@@ -188,7 +188,11 @@ def _remove_official_baseline_container() -> None:
         pass
 
 
-def _start_official_baseline_container(config: RunConfig) -> None:
+def _start_official_baseline_container(
+    config: RunConfig,
+    *,
+    volume_overrides: list[tuple[Path, str]] | None = None,
+) -> None:
     _remove_official_baseline_container()
     baseline = config.orchestration.official_baseline
     launch_command = (
@@ -218,7 +222,7 @@ def _start_official_baseline_container(config: RunConfig) -> None:
         detach=True,
         name=OFFICIAL_BASELINE_CONTAINER,
         networks=["host"],
-        volumes=[(Path.cwd(), "/workspace")],
+        volumes=[(Path.cwd(), "/workspace"), *(volume_overrides or [])],
         workdir="/workspace",
         envs={
             "SESSION_ID": config.session_id,

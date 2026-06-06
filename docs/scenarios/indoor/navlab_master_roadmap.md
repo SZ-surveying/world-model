@@ -53,14 +53,15 @@ Gazebo 物理世界
 | Phase | 名称 | 完成标准 | 主要参考 | TODO |
 |---|---|---|---|---|
 | P0 | 官方基线验收 | 官方 `/ap/*`、SITL、Gazebo、Cartographer 基线可观测 | ArduPilot official | `todos/P0_official_baseline_todo.md` |
-| P1 | NavLab world/model 接入官方链路 | 8 字形 world 和 IQ quad 模型在官方结构下运行 | `ardupilot_gz` + NavLab world | 待建 |
-| P2 | 传感器机制验收 | X2 `/scan`、down rangefinder、IMU 都来自正确机制 | `claudedrone` + Gazebo ray | 待建 |
+| P1 | 官方 maze + NavLab X2 雷达 | 继续使用官方 `iris_maze` 和 Iris 模型，只把雷达链路换成 X2 机制 | `ardupilot_gz` + X2 driver | `todos/P1_official_maze_x2_todo.md` |
+| P2 | 下视 rangefinder 和 IMU 机制验收 | down rangefinder、IMU 和 FCU 接收状态来自正确机制 | `claudedrone` + Gazebo sensor | `todos/P2_rangefinder_imu_todo.md` |
 | P3 | SLAM backend 质量验收 | Cartographer 输出真实 `/odom`，并可对照诊断 | official Cartographer + PX4 SLAM | 待建 |
 | P4 | FCU 状态机和唯一控制器 | 只有一个 owner 向 FCU 发运动 setpoint | `Altair-Silent` + `claudedrone` | 待建 |
 | P5 | Frame contract 自动验收 | NED/ENU、FRD/FLU、TF 链和 scan 方向可自动检查 | PX4 odom converter | 待建 |
 | P6 | 真实 SLAM hover gate | SLAM ExternalNav 悬停稳定通过 | official + NavLab acceptance | 待建 |
-| P7 | 小范围运动 gate | forward/back/yaw scan/stop drift 都通过 | VehicleController | 待建 |
-| P8 | 8 字形探索任务 | 右环、中腰、左环探索可回放可验收 | Nav2 / exploration | 待建 |
+| P7 | 官方 maze 小范围运动 gate | 在官方 maze 中 forward/back/yaw scan/stop drift 都通过 | VehicleController | 待建 |
+| P8 | 官方 maze 探索任务 | 在官方 maze 中完成可回放探索，不碰撞 | Nav2 / exploration | 待建 |
+| P9 | NavLab world/model 迁移 | 可选地把官方 maze/Iris 替换为 NavLab world/model | `ardupilot_gz` + NavLab world | 待建 |
 
 ## 4. Phase 详细定义
 
@@ -69,7 +70,7 @@ Gazebo 物理世界
 目标：
 
 - 先跑通或至少明确实现官方 ArduPilot ROS2/Gazebo/Cartographer 的最小基线。
-- 确认 `/ap` 节点、DDS domain、SITL、Gazebo、Cartographer、EKF 参数这些基础机制。
+- 确认 `/ap/v1/time` sample、`/ap/v1/prearm_check` service、DDS domain、SITL、Gazebo、Cartographer、EKF 参数这些基础机制。
 - 建立以后所有 NavLab 自定义能力的对照标准。
 
 非目标：
@@ -87,32 +88,36 @@ TODO：
 
 - `docs/scenarios/indoor/todos/P0_official_baseline_todo.md`
 
-### P1：NavLab world/model 接入官方链路
+### P1：官方 maze + NavLab X2 雷达
 
 目标：
 
-- 在 P0 官方启动结构基础上换入 NavLab 的 8 字形 world 和 IQ quad 模型。
-- 保证无人机仍由 ArduPilot SITL 和 Gazebo plugin 控制。
-- Gazebo truth 只作为诊断。
+- 继续使用 P0 已跑通的官方 `ardupilot_gz_bringup iris_maze.launch.py`。
+- 继续使用官方 Iris / lidar 模型和官方 maze world，不在本 phase 替换 NavLab 8 字形 world 或自定义机体。
+- 只把雷达链路替换或旁路接入为 NavLab X2 机制：Gazebo ray / `/scan_ideal` -> X2 virtual serial -> vendor driver -> `/scan`。
+- 保证 Cartographer 消费的 `/scan` 来自 X2 vendor-driver 链路，而不是 synthetic fallback。
 
 非目标：
 
-- 不允许 Python direct set pose。
-- 不允许 companion 控制 Gazebo。
+- 不接 NavLab 8 字形 world。
+- 不接 NavLab 自定义无人机模型。
+- 不改变官方 Gazebo/SITL 启动结构。
+- 不允许 Python direct set pose 或 companion 控制 Gazebo。
 
 输出：
 
-- NavLab world/model 接入设计文档。
+- 官方 maze + X2 雷达接入设计文档。
 - P1 TODO。
-- Gazebo model/world acceptance。
+- X2 scan acceptance，包含 `/scan_ideal`、virtual serial status、vendor `/scan` 和 Cartographer 输入检查。
 
-### P2：传感器机制验收
+### P2：下视 rangefinder 和 IMU 机制验收
 
 目标：
 
-- X2 链路从 Gazebo ray sensor 到厂商 driver 输出 `/scan`。
 - 下视 rangefinder 作为飞控外设进入 ArduPilot。
 - IMU 链路按官方/真机口径输出给 SLAM。
+- 继续使用官方 maze/Iris baseline，不在 P2 替换 NavLab world/model。
+- summary 明确 P2 不代表 hover 完成，也不代表 SLAM `/odom` 质量完成。
 
 参考：
 
@@ -121,9 +126,16 @@ TODO：
 
 完成标准：
 
-- `/scan` 不使用 synthetic fallback。
 - `/rangefinder/down/range` 和 FCU 接收状态可验收。
-- scan 方向和 TF 正确。
+- `/imu` 输入来源、频率和 frame 可验收。
+
+设计文档：
+
+- `docs/scenarios/indoor/navlab_p2_rangefinder_imu_design.md`
+
+TODO：
+
+- `docs/scenarios/indoor/todos/P2_rangefinder_imu_todo.md`
 
 ### P3：SLAM backend 质量验收
 
@@ -197,11 +209,13 @@ TODO：
 - hover drift 在阈值内。
 - `set_pose_count == 0`。
 
-### P7：小范围运动 gate
+### P7：官方 maze 小范围运动 gate
 
 目标：
 
-- 在 hover gate 后验证最小水平运动。
+- 在官方 maze/Iris 场景中验证最小水平运动。
+- 保持 P1-P6 已验证的官方 bringup、X2、rangefinder/IMU、SLAM、ExternalNav、FCU 控制机制不变。
+- 每个动作都通过 FCU setpoint 执行，不直接控制 Gazebo。
 
 动作：
 
@@ -210,35 +224,61 @@ TODO：
 - yaw scan。
 - stop drift。
 
+非目标：
+
+- 不替换 NavLab 8 字形 world。
+- 不替换 NavLab 自定义机体模型。
+- 不把 Gazebo truth 作为规划或控制输入。
+
 完成标准：
 
 - 每个动作有 FCU setpoint、SLAM `/odom`、FCU local position、Gazebo truth 诊断对照。
 - 停止后漂移在阈值内。
+- 不碰撞。
+- `set_pose_count == 0`。
 
-### P8：8 字形探索任务
+### P8：官方 maze 探索任务
 
 目标：
 
-- 在机制稳定后做任务探索。
+- 在官方 maze/Iris 场景里做探索任务，因为官方 maze 比当前 NavLab 8 字形场景更复杂，更适合先验证导航策略。
+- 探索策略只能使用 SLAM map、scan、TF、FCU state 和任务状态，不直接读取 Gazebo truth。
 
-任务流：
+任务流示例：
 
 ```text
 起飞
   -> hover settle
-  -> 进入右环
-  -> 右环探索一圈
-  -> 中腰切换
-  -> 左环探索一圈
-  -> 回到安全点或 final hover
+  -> 建图/定位稳定
+  -> 选择局部目标
+  -> 前进
+  -> 必要时 yaw scan
+  -> 避开障碍
+  -> 覆盖 maze 中可达区域
+  -> final hover 或返航点
 ```
 
 完成标准：
 
-- rosbag/Foxglove 可复现完整任务。
+- rosbag/Foxglove 可复现完整探索任务。
 - 不碰撞。
 - 不直接读答案式 Gazebo truth 做规划输入。
 - scan_left/scan_right 只在必要时由规划策略触发。
+- summary 记录覆盖区域、碰撞状态、stuck 状态和最终任务状态。
+
+### P9：NavLab world/model 迁移
+
+目标：
+
+- 在官方 maze 场景已经完成 P1-P8 后，可选地把 world/model 替换为 NavLab 8 字形 world 和 NavLab 机体模型。
+- 这个阶段是迁移和定制，不是当前真实闭环主线的前置条件。
+- 保证替换 world/model 后，无人机仍由 ArduPilot SITL 和 Gazebo plugin 控制。
+
+完成标准：
+
+- NavLab world/model 可在官方 bringup 结构下启动。
+- 墙体、无人机、雷达和 TF 在 Foxglove 中固定参考系正确。
+- 替换 world/model 不破坏 P6 hover gate、P7 小范围运动 gate 和 P8 探索 gate。
 
 ## 5. 全局不可违反规则
 

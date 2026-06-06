@@ -187,3 +187,19 @@ Decision: set the P0 official baseline runtime to `rmw_cyclonedds_cpp` and keep 
 Basis: P0 manual probes and `just navlab-official-baseline-acceptance 30`.
 
 Reason: in the current ROS Jazzy environment, Fast DDS can discover ArduPilot bare DDS endpoints, but `/ap/v1/time` does not deliver samples to `ros2 topic echo` during the P0 probe. Cyclone DDS receives `/ap/v1/time` samples and records them into MCAP, although it may print type-hash warnings for bare DDS endpoints. ArduPilot's DDS launch defaults to domain `0`, so P0 aligns `ROS_DOMAIN_ID=0` with `DDS_DOMAIN_ID=0` for the official baseline while NavLab's normal custom runtime can keep its separate domain.
+
+## 2026-06-06: P1 keeps the official maze and swaps only the lidar path
+
+Decision: after P0, keep the official `ardupilot_gz_bringup iris_maze.launch.py` world and Iris lidar model for P1, and introduce only the NavLab X2 virtual-serial plus vendor-driver scan path.
+
+Basis: local comparison against `/home/nn/workspace/3588/ardupilot_ros` and current P0 baseline artifacts.
+
+Reason: replacing the world, vehicle model, lidar mechanism, and SLAM input at the same time makes failures hard to attribute. The official maze/Iris baseline already exercises ArduPilot Gazebo bringup, DDS, and Cartographer; P1 should isolate the next variable to the X2 mechanism: Gazebo scan source -> X2 protocol emulator -> `ydlidar_ros2_driver` -> `/scan`. P7/P8 should still stay in the official maze for motion and exploration because that scene is already richer than the current NavLab figure-eight world. NavLab's 8 字形 world and custom vehicle model move to a later optional migration phase after the official maze path has proven scan, rangefinder/IMU, SLAM quality, hover, motion, and exploration.
+
+## 2026-06-06: P1 overrides only the official scan bridge output
+
+Decision: keep launching `ardupilot_gz_bringup iris_maze.launch.py`, but bind-mount a P1 bridge YAML over the official `iris_3Dlidar_bridge.yaml` so the official `ros_gz_bridge` no longer publishes ROS `/scan`.
+
+Basis: official launch inspection inside `world-model/navlab-official-baseline:latest` and P1 acceptance runs.
+
+Reason: the official Iris lidar bridge maps Gazebo `/lidar` directly to ROS `/scan`. P1 needs `/scan` to mean “X2 virtual serial -> `ydlidar_ros2_driver` output”, otherwise Cartographer would receive a mixed topic from both `ros_gz_bridge` and the vendor driver. The bridge override preserves the official maze, Iris model, SITL, DDS, odometry, IMU, TF, and point cloud bridges, while freeing `/scan` for the vendor driver. The P1 acceptance blocks if `/scan` has a `ros_gz_bridge` publisher or if Cartographer is not subscribed to the vendor `/scan`.

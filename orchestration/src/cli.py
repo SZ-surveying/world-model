@@ -12,6 +12,7 @@ from src.tasks.hover import HoverAcceptanceTask
 from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
 from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
+from src.tasks.official_maze_x2 import OfficialMazeX2AcceptanceTask
 from src.tasks.registry import TaskRegistry
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -114,6 +115,19 @@ def official_baseline_acceptance_command(
     ] = None,
 ) -> None:
     task = cast(OfficialBaselineAcceptanceTask, TaskRegistry.create("official-baseline-acceptance"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+
+
+@app.command("official-maze-x2-acceptance")
+def official_maze_x2_acceptance_command(
+    duration_sec: Annotated[float, typer.Argument(help="Official maze + NavLab X2 acceptance duration in seconds")]
+    = 45.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(OfficialMazeX2AcceptanceTask, TaskRegistry.create("official-maze-x2-acceptance"))
     raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
 
 

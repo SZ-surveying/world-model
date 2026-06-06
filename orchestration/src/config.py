@@ -78,6 +78,21 @@ class OfficialBaselineConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class OfficialMazeX2Config:
+    rosbag_profile: str
+    world_source: str
+    vehicle_model_source: str
+    gazebo_lidar_topic: str
+    x2_scan_input_topic: str
+    x2_scan_topic: str
+    x2_status_topic: str
+    x2_virtual_serial_link: str
+    altitude_control_claim: str
+    hover_claim: str
+    cartographer_launch: str
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -100,6 +115,7 @@ class OrchestrationConfig:
     sensor: SensorContainerConfig
     slam: SlamContainerConfig
     official_baseline: OfficialBaselineConfig
+    official_maze_x2: OfficialMazeX2Config
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -113,6 +129,7 @@ class OrchestrationConfig:
         sensor = _section(data, "sensor")
         slam = _section(data, "slam")
         official_baseline = _section(data, "official_baseline")
+        official_maze_x2 = _section(data, "official_maze_x2")
         foxglove_upload = _section(data, "foxglove_upload")
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
@@ -195,6 +212,35 @@ class OrchestrationConfig:
                 gazebo_bringup_mode=_as_str(official_baseline.get("gazebo_bringup_mode"), "navlab_custom_bringup"),
                 external_nav_route=_as_str(official_baseline.get("external_nav_route"), "mavlink_fallback"),
             ),
+            official_maze_x2=OfficialMazeX2Config(
+                rosbag_profile=_as_str(
+                    official_maze_x2.get("rosbag_profile"),
+                    "profiles/navlab-official-maze-x2-rosbag-topics.txt",
+                ),
+                world_source=_as_str(official_maze_x2.get("world_source"), "official_iris_maze"),
+                vehicle_model_source=_as_str(
+                    official_maze_x2.get("vehicle_model_source"),
+                    "official_iris_with_lidar",
+                ),
+                gazebo_lidar_topic=_as_str(official_maze_x2.get("gazebo_lidar_topic"), "/lidar"),
+                x2_scan_input_topic=_as_str(official_maze_x2.get("x2_scan_input_topic"), "/lidar"),
+                x2_scan_topic=_as_str(official_maze_x2.get("x2_scan_topic"), "/scan"),
+                x2_status_topic=_as_str(official_maze_x2.get("x2_status_topic"), "/sim/x2/status"),
+                x2_virtual_serial_link=_as_str(
+                    official_maze_x2.get("x2_virtual_serial_link"),
+                    "/tmp/navlab_p1_x2",
+                ),
+                altitude_control_claim=_as_str(
+                    official_maze_x2.get("altitude_control_claim"),
+                    "not_evaluated",
+                ),
+                hover_claim=_as_str(official_maze_x2.get("hover_claim"), "not_evaluated"),
+                cartographer_launch=_as_str(
+                    official_maze_x2.get("cartographer_launch"),
+                    official_baseline.get("cartographer_launch")
+                    or "ros2 launch ardupilot_cartographer cartographer.launch.py",
+                ),
+            ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
                 api_url=_as_str(foxglove_upload.get("api_url"), "https://api.foxglove.dev/v1"),
@@ -269,6 +315,10 @@ class RunConfig:
     @property
     def official_baseline_rosbag_profile(self) -> str:
         return self.orchestration.official_baseline.rosbag_profile
+
+    @property
+    def official_maze_x2_rosbag_profile(self) -> str:
+        return self.orchestration.official_maze_x2.rosbag_profile
 
     @classmethod
     def from_config(
