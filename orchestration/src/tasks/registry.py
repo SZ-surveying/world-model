@@ -59,6 +59,7 @@ class TaskRegistry:
             "src.tasks.slam_backend",
             "src.tasks.fcu_controller",
             "src.tasks.frame_contract",
+            "src.tasks.slam_hover",
         ):
             import_module(module_name)
 

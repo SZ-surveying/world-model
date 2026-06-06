@@ -655,7 +655,13 @@ raise SystemExit(main())
 """
 
 
-def _write_controller_runtime_script(config: RunConfig, script_path: Path, *, duration_sec: float) -> dict[str, Any]:
+def _write_controller_runtime_script(
+    config: RunConfig,
+    script_path: Path,
+    *,
+    duration_sec: float,
+    hold_after_ready_sec: float | None = None,
+) -> dict[str, Any]:
     p4 = config.orchestration.fcu_controller
     summary_file = config.artifact_dir / "controller_runtime_summary.json"
     spec = {
@@ -689,7 +695,7 @@ def _write_controller_runtime_script(config: RunConfig, script_path: Path, *, du
         "guided_mode": p4.guided_mode,
         "takeoff_alt_m": p4.takeoff_alt_m,
         "readiness_timeout_sec": p4.readiness_timeout_sec,
-        "hold_after_ready_sec": p4.hold_after_ready_sec,
+        "hold_after_ready_sec": p4.hold_after_ready_sec if hold_after_ready_sec is None else hold_after_ready_sec,
         "hover_claim": p4.hover_claim,
         "exploration_claim": p4.exploration_claim,
     }

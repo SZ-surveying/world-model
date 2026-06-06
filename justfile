@@ -86,6 +86,14 @@ navlab-frame-contract-doctor *args='':
 navlab-frame-contract-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} frame-contract-acceptance {{duration_sec}} {{args}}
 
+# Check P6 real SLAM hover prerequisites.
+navlab-slam-hover-doctor *args='':
+    {{orchestration_cmd}} slam-hover-doctor {{args}}
+
+# Run P6 real SLAM hover acceptance.
+navlab-slam-hover-acceptance duration_sec='90' *args='':
+    {{orchestration_cmd}} slam-hover-acceptance {{duration_sec}} {{args}}
+
 # Run NavLab companion + SITL + Gazebo obstacle acceptance with rosbag/Foxglove artifacts.
 navlab-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} acceptance {{duration_sec}} {{args}}

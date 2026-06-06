@@ -239,6 +239,41 @@ class FrameContractConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SlamHoverConfig:
+    rosbag_profile: str
+    slam_odom_topic: str
+    slam_status_topic: str
+    external_nav_status_topic: str
+    fcu_pose_topic: str
+    fcu_twist_topic: str
+    fcu_status_topic: str
+    cmd_vel_topic: str
+    rangefinder_range_topic: str
+    rangefinder_status_topic: str
+    imu_topic: str
+    truth_diagnostic_topic: str
+    controller_status_topic: str
+    setpoint_intent_topic: str
+    setpoint_output_topic: str
+    owner_status_topic: str
+    hover_status_topic: str
+    settle_window_sec: float
+    hover_window_sec: float
+    final_hold_window_sec: float
+    max_hover_horizontal_drift_m: float
+    max_hover_altitude_error_m: float
+    max_hover_yaw_drift_rad: float
+    max_stop_drift_m: float
+    min_slam_odom_rate_hz: float
+    min_external_nav_rate_hz: float
+    min_fcu_local_position_rate_hz: float
+    max_latest_age_sec: float
+    uses_gazebo_truth_as_input: bool
+    hover_claim: str
+    exploration_claim: str
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -266,6 +301,7 @@ class OrchestrationConfig:
     slam_backend: SlamBackendQualityConfig
     fcu_controller: FcuControllerConfig
     frame_contract: FrameContractConfig
+    slam_hover: SlamHoverConfig
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -284,6 +320,7 @@ class OrchestrationConfig:
         slam_backend = _section(data, "slam_backend")
         fcu_controller = _section(data, "fcu_controller")
         frame_contract = _section(data, "frame_contract")
+        slam_hover = _section(data, "slam_hover")
         foxglove_upload = _section(data, "foxglove_upload")
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
@@ -641,6 +678,63 @@ class OrchestrationConfig:
                 exploration_claim=_as_str(frame_contract.get("exploration_claim"), "not_evaluated"),
                 uses_gazebo_truth_as_input=_as_bool(frame_contract.get("uses_gazebo_truth_as_input"), False),
             ),
+            slam_hover=SlamHoverConfig(
+                rosbag_profile=_as_str(
+                    slam_hover.get("rosbag_profile"),
+                    "profiles/navlab-slam-hover-rosbag-topics.txt",
+                ),
+                slam_odom_topic=_as_str(slam_hover.get("slam_odom_topic"), "/slam/odom"),
+                slam_status_topic=_as_str(slam_hover.get("slam_status_topic"), "/navlab/slam/status"),
+                external_nav_status_topic=_as_str(slam_hover.get("external_nav_status_topic"), "/external_nav/status"),
+                fcu_pose_topic=_as_str(slam_hover.get("fcu_pose_topic"), "/ap/v1/pose/filtered"),
+                fcu_twist_topic=_as_str(slam_hover.get("fcu_twist_topic"), "/ap/v1/twist/filtered"),
+                fcu_status_topic=_as_str(slam_hover.get("fcu_status_topic"), "/ap/v1/status"),
+                cmd_vel_topic=_as_str(slam_hover.get("cmd_vel_topic"), "/ap/v1/cmd_vel"),
+                rangefinder_range_topic=_as_str(
+                    slam_hover.get("rangefinder_range_topic"),
+                    "/rangefinder/down/range",
+                ),
+                rangefinder_status_topic=_as_str(
+                    slam_hover.get("rangefinder_status_topic"),
+                    "/rangefinder/down/status",
+                ),
+                imu_topic=_as_str(slam_hover.get("imu_topic"), "/imu"),
+                truth_diagnostic_topic=_as_str(slam_hover.get("truth_diagnostic_topic"), "/odometry"),
+                controller_status_topic=_as_str(
+                    slam_hover.get("controller_status_topic"),
+                    "/navlab/fcu/controller/status",
+                ),
+                setpoint_intent_topic=_as_str(
+                    slam_hover.get("setpoint_intent_topic"),
+                    "/navlab/fcu/setpoint/intent",
+                ),
+                setpoint_output_topic=_as_str(
+                    slam_hover.get("setpoint_output_topic"),
+                    "/navlab/fcu/setpoint/output",
+                ),
+                owner_status_topic=_as_str(slam_hover.get("owner_status_topic"), "/navlab/fcu/owner/status"),
+                hover_status_topic=_as_str(slam_hover.get("hover_status_topic"), "/navlab/hover/status"),
+                settle_window_sec=_as_float(slam_hover.get("settle_window_sec"), 8.0),
+                hover_window_sec=_as_float(slam_hover.get("hover_window_sec"), 18.0),
+                final_hold_window_sec=_as_float(slam_hover.get("final_hold_window_sec"), 5.0),
+                max_hover_horizontal_drift_m=_as_float(
+                    slam_hover.get("max_hover_horizontal_drift_m"),
+                    0.35,
+                ),
+                max_hover_altitude_error_m=_as_float(slam_hover.get("max_hover_altitude_error_m"), 0.30),
+                max_hover_yaw_drift_rad=_as_float(slam_hover.get("max_hover_yaw_drift_rad"), 0.45),
+                max_stop_drift_m=_as_float(slam_hover.get("max_stop_drift_m"), 0.25),
+                min_slam_odom_rate_hz=_as_float(slam_hover.get("min_slam_odom_rate_hz"), 1.0),
+                min_external_nav_rate_hz=_as_float(slam_hover.get("min_external_nav_rate_hz"), 5.0),
+                min_fcu_local_position_rate_hz=_as_float(
+                    slam_hover.get("min_fcu_local_position_rate_hz"),
+                    2.0,
+                ),
+                max_latest_age_sec=_as_float(slam_hover.get("max_latest_age_sec"), 1.5),
+                uses_gazebo_truth_as_input=_as_bool(slam_hover.get("uses_gazebo_truth_as_input"), False),
+                hover_claim=_as_str(slam_hover.get("hover_claim"), "evaluated"),
+                exploration_claim=_as_str(slam_hover.get("exploration_claim"), "not_evaluated"),
+            ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
                 api_url=_as_str(foxglove_upload.get("api_url"), "https://api.foxglove.dev/v1"),
@@ -735,6 +829,10 @@ class RunConfig:
     @property
     def frame_contract_rosbag_profile(self) -> str:
         return self.orchestration.frame_contract.rosbag_profile
+
+    @property
+    def slam_hover_rosbag_profile(self) -> str:
+        return self.orchestration.slam_hover.rosbag_profile
 
     @classmethod
     def from_config(

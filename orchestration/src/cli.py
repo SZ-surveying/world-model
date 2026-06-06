@@ -17,6 +17,7 @@ from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, Official
 from src.tasks.official_maze_x2 import OfficialMazeX2AcceptanceTask
 from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
 from src.tasks.registry import TaskRegistry
+from src.tasks.slam_hover import SlamHoverAcceptanceTask, SlamHoverDoctorTask
 from src.tasks.slam_backend import SlamBackendAcceptanceTask, SlamBackendDoctorTask
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -225,6 +226,29 @@ def frame_contract_acceptance_command(
     ] = None,
 ) -> None:
     task = cast(FrameContractAcceptanceTask, TaskRegistry.create("frame-contract-acceptance"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+
+
+@app.command("slam-hover-doctor")
+def slam_hover_doctor_command(
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(SlamHoverDoctorTask, TaskRegistry.create("slam-hover-doctor"))
+    raise typer.Exit(task.run(config_path=config, console=console))
+
+
+@app.command("slam-hover-acceptance")
+def slam_hover_acceptance_command(
+    duration_sec: Annotated[float, typer.Argument(help="P6 real SLAM hover acceptance duration in seconds")] = 90.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(SlamHoverAcceptanceTask, TaskRegistry.create("slam-hover-acceptance"))
     raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
 
 

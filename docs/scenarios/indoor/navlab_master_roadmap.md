@@ -58,7 +58,7 @@ Gazebo 物理世界
 | P3 | SLAM backend 质量验收 | Cartographer 输出真实 `/odom`，并可对照诊断 | official Cartographer + PX4 SLAM | `todos/P3_slam_backend_quality_todo.md` |
 | P4 | FCU 状态机和唯一控制器 | 只有一个 owner 向 FCU 发运动 setpoint | `Altair-Silent` + `claudedrone` | `todos/P4_fcu_state_machine_todo.md` |
 | P5 | Frame contract 自动验收 | TF 链、传感器 frame、scan 前向、rangefinder/IMU frame 和 rosbag contract 自动通过；动态运动方向留给 P6/P7 | PX4 odom converter | `todos/P5_frame_contract_todo.md` |
-| P6 | 真实 SLAM hover gate | SLAM ExternalNav 悬停稳定通过 | official + NavLab acceptance | 待建 |
+| P6 | 真实 SLAM hover gate | `/slam/odom -> ExternalNav -> EKF -> FCU hover` 稳定通过 | official + NavLab acceptance | `todos/P6_slam_hover_gate_todo.md` |
 | P7 | 官方 maze 小范围运动 gate | 在官方 maze 中 forward/back/yaw scan/stop drift 都通过 | VehicleController | 待建 |
 | P8 | 官方 maze 探索任务 | 在官方 maze 中完成可回放探索，不碰撞 | Nav2 / exploration | 待建 |
 | P9 | NavLab world/model 迁移 | 可选地把官方 maze/Iris 替换为 NavLab world/model | `ardupilot_gz` + NavLab world | 待建 |
@@ -240,7 +240,23 @@ TODO：
 
 目标：
 
-- 真正证明 SLAM ExternalNav 支撑悬停。
+- 真正证明 SLAM `/slam/odom` 通过 ExternalNav 进入 ArduPilot EKF 后，可以支撑官方 maze/Iris 场景中的稳定悬停。
+- 复用 P4 唯一 FCU controller，不新增第二个 movement owner。
+- 复用 P5 frame contract，不允许靠 Gazebo truth、fake odom 或 direct set pose 兜底。
+
+要覆盖：
+
+- `/slam/odom` 是 ExternalNav 输入。
+- ExternalNav 持续 healthy，并能证明没有读取 Gazebo truth。
+- ArduPilot EKF / local position 持续输出。
+- GUIDED、arm、takeoff、hover settle、hover hold、final hold。
+- hover window 内水平漂移、高度误差、yaw drift 和 stop drift。
+
+非目标：
+
+- 不做 P7 小范围运动。
+- 不做 P8 探索任务。
+- 不替换 NavLab 8 字形 world/model。
 
 完成标准：
 
@@ -249,6 +265,16 @@ TODO：
 - EKF 接收 ExternalNav。
 - hover drift 在阈值内。
 - `set_pose_count == 0`。
+- Gazebo truth 没有进入控制、规划、SLAM 或 ExternalNav 输入。
+- rosbag required topics 全部有数据。
+
+设计文档：
+
+- `docs/scenarios/indoor/navlab_p6_slam_hover_gate_design.md`
+
+TODO：
+
+- `docs/scenarios/indoor/todos/P6_slam_hover_gate_todo.md`
 
 ### P7：官方 maze 小范围运动 gate
 

@@ -25,6 +25,7 @@ from src.tasks import hover as hover_task_module
 from src.tasks import hover_diagnostic as hover_diagnostic_task_module
 from src.tasks import hover_slam_diagnostic as hover_slam_diagnostic_task_module
 from src.tasks import official_baseline as official_baseline_task_module
+from src.tasks import slam_hover as slam_hover_task_module
 from src.tasks import slam_backend as slam_backend_task_module
 from src.tasks.acceptance import AcceptanceTask
 from src.tasks.base import OrchestrationTask
@@ -37,6 +38,7 @@ from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
 from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
 from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
 from src.tasks.registry import TaskRegistry
+from src.tasks.slam_hover import SlamHoverAcceptanceTask, SlamHoverDoctorTask
 from src.tasks.slam_backend import SlamBackendAcceptanceTask, SlamBackendDoctorTask
 
 from navlab.companion.config import (
@@ -266,6 +268,21 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.frame_contract.status_topic == "/navlab/frame_contract/status"
     assert config.frame_contract.require_motion_direction_check is False
     assert config.frame_contract.uses_gazebo_truth_as_input is False
+    assert config.slam_hover.rosbag_profile == "profiles/navlab-slam-hover-rosbag-topics.txt"
+    assert config.slam_hover.slam_odom_topic == "/slam/odom"
+    assert config.slam_hover.external_nav_status_topic == "/external_nav/status"
+    assert config.slam_hover.fcu_pose_topic == "/ap/v1/pose/filtered"
+    assert config.slam_hover.cmd_vel_topic == "/ap/v1/cmd_vel"
+    assert config.slam_hover.rangefinder_range_topic == "/rangefinder/down/range"
+    assert config.slam_hover.imu_topic == "/imu"
+    assert config.slam_hover.truth_diagnostic_topic == "/odometry"
+    assert config.slam_hover.hover_status_topic == "/navlab/hover/status"
+    assert config.slam_hover.hover_window_sec == 18.0
+    assert config.slam_hover.max_hover_horizontal_drift_m == 0.35
+    assert config.slam_hover.min_external_nav_rate_hz == 5.0
+    assert config.slam_hover.uses_gazebo_truth_as_input is False
+    assert config.slam_hover.hover_claim == "evaluated"
+    assert config.slam_hover.exploration_claim == "not_evaluated"
 
 
 def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> None:
@@ -336,6 +353,7 @@ def test_navlab_run_config_is_derived_from_config() -> None:
     assert config.rangefinder_imu_rosbag_profile == "profiles/navlab-rangefinder-imu-rosbag-topics.txt"
     assert config.slam_backend_rosbag_profile == "profiles/navlab-slam-backend-rosbag-topics.txt"
     assert config.frame_contract_rosbag_profile == "profiles/navlab-frame-contract-rosbag-topics.txt"
+    assert config.slam_hover_rosbag_profile == "profiles/navlab-slam-hover-rosbag-topics.txt"
 
 
 def test_p2_rangefinder_imu_rosbag_profile_contains_required_topics() -> None:
@@ -717,6 +735,114 @@ def test_p5_blockers_detect_failed_frame_contract() -> None:
     assert "/navlab/frame_contract/status was not recorded" in blockers
 
 
+def test_p6_slam_hover_rosbag_profile_contains_required_topics() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    profile = Path(config.slam_hover_rosbag_profile)
+    content = profile.read_text(encoding="utf-8")
+
+    for topic in (
+        "/clock",
+        "/tf",
+        "/tf_static",
+        "/scan",
+        "/imu",
+        "/rangefinder/down/range",
+        "/rangefinder/down/status",
+        "/slam/odom",
+        "/navlab/slam/status",
+        "/external_nav/status",
+        "/ap/v1/time",
+        "/ap/v1/pose/filtered",
+        "/ap/v1/twist/filtered",
+        "/ap/v1/status",
+        "/ap/v1/cmd_vel",
+        "/navlab/fcu/state",
+        "/navlab/fcu/controller/status",
+        "/navlab/fcu/setpoint/intent",
+        "/navlab/fcu/setpoint/output",
+        "/navlab/fcu/owner/status",
+        "/navlab/hover/status",
+    ):
+        assert f"required {topic}" in content
+
+
+def test_p6_runtime_config_writes_slam_hover_contract(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    runtime_config = tmp_path / "p6_slam_hover_runtime.toml"
+
+    summary = slam_hover_task_module._write_p6_runtime_config(config, runtime_config)
+
+    assert runtime_config.is_file()
+    runtime = summary["data"]["slam_hover"]["runtime"]
+    assert runtime["slam_odom_topic"] == "/slam/odom"
+    assert runtime["external_nav_status_topic"] == "/external_nav/status"
+    assert runtime["fcu_pose_topic"] == "/ap/v1/pose/filtered"
+    assert runtime["hover_status_topic"] == "/navlab/hover/status"
+    assert runtime["uses_gazebo_truth_as_input"] is False
+    assert runtime["hover_claim"] == "evaluated"
+    assert runtime["exploration_claim"] == "not_evaluated"
+
+
+def test_p6_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    orchestration = replace(
+        config.orchestration,
+        slam_hover=replace(config.orchestration.slam_hover, uses_gazebo_truth_as_input=True),
+    )
+    unsafe_config = replace(config, orchestration=orchestration, artifact_dir=tmp_path)
+    runtime_config = tmp_path / "p6_slam_hover_runtime.toml"
+    slam_hover_task_module._write_p6_runtime_config(unsafe_config, runtime_config)
+
+    monkeypatch.setattr(slam_hover_task_module, "_build_doctor_summary", lambda _config: {"ok": True, "blockers": []})
+    monkeypatch.setattr(
+        slam_hover_task_module,
+        "_build_p3_doctor_summary",
+        lambda _config, runtime_config: {"ok": True, "blockers": []},
+    )
+    monkeypatch.setattr(
+        slam_hover_task_module,
+        "_build_p4_doctor_summary",
+        lambda _config, runtime_config: {"ok": True, "blockers": []},
+    )
+    monkeypatch.setattr(
+        slam_hover_task_module,
+        "_build_p5_doctor_summary",
+        lambda _config, runtime_config: {"ok": True, "blockers": []},
+    )
+
+    summary = slam_hover_task_module._build_p6_doctor_summary(unsafe_config, runtime_config=runtime_config)
+
+    assert summary["ok"] is False
+    assert "P6 must not use Gazebo truth as a control/planning/SLAM/ExternalNav input" in summary["blockers"]
+
+
+def test_p6_blockers_detect_failed_hover_gate() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    blockers: list[str] = []
+
+    slam_hover_task_module._append_p6_blockers(
+        blockers=blockers,
+        hover_summary={
+            "ok": False,
+            "blockers": ["P6 hover drift gate did not pass"],
+            "slam_odom": {"ok": False},
+            "external_nav": {"ok": False},
+            "fcu": {"local_position_ok": False},
+            "hover": {"ok": False},
+        },
+        rosbag_profile={"ok": False},
+        counts={},
+        p6=config.orchestration.slam_hover,
+    )
+
+    assert "P6 hover drift gate did not pass" in blockers
+    assert "P6 SLAM odom gate did not pass" in blockers
+    assert "P6 ExternalNav gate did not pass" in blockers
+    assert "P6 FCU local position gate did not pass" in blockers
+    assert "P6 rosbag profile did not pass" in blockers
+    assert "/navlab/hover/status was not recorded" in blockers
+
+
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.names() == (
         "acceptance",
@@ -736,6 +862,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         "rangefinder-imu-doctor",
         "slam-backend-acceptance",
         "slam-backend-doctor",
+        "slam-hover-acceptance",
+        "slam-hover-doctor",
     )
     assert TaskRegistry.create("build").description
     assert TaskRegistry.create("doctor").description
@@ -751,6 +879,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.create("official-baseline-acceptance").description
     assert TaskRegistry.create("slam-backend-doctor").description
     assert TaskRegistry.create("slam-backend-acceptance").description
+    assert TaskRegistry.create("slam-hover-doctor").description
+    assert TaskRegistry.create("slam-hover-acceptance").description
 
 
 def test_orchestration_task_registry_requires_task_name() -> None:

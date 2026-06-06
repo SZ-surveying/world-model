@@ -25,6 +25,8 @@
 - `docs/scenarios/indoor/todos/P4_fcu_state_machine_todo.md`: P4 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_p5_frame_contract_design.md`: P5 Frame contract 自动验收设计
 - `docs/scenarios/indoor/todos/P5_frame_contract_todo.md`: P5 TODO 和验收标准
+- `docs/scenarios/indoor/navlab_p6_slam_hover_gate_design.md`: P6 真实 SLAM hover gate 设计
+- `docs/scenarios/indoor/todos/P6_slam_hover_gate_todo.md`: P6 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`: 当前系统与官方路线的对齐审计
 - `docs/scenarios/indoor/navlab_reference_projects_analysis.md`: 四个参考仓库的综合分析和改进建议
 - `docs/scenarios/indoor/navlab_cartographer_real_machine_tuning.md`: Cartographer 真机调参记录口径
@@ -56,11 +58,13 @@
 11. `docs/scenarios/indoor/todos/P4_fcu_state_machine_todo.md`
 12. `docs/scenarios/indoor/navlab_p5_frame_contract_design.md`
 13. `docs/scenarios/indoor/todos/P5_frame_contract_todo.md`
-14. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
-15. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
-16. `docs/sim/x2_lidar_simulation_design.md`
-17. `docs/sim/x2_lidar_protocol_todo.md`
-18. `docs/general/lab_env_service_refactor_todo.md`
+14. `docs/scenarios/indoor/navlab_p6_slam_hover_gate_design.md`
+15. `docs/scenarios/indoor/todos/P6_slam_hover_gate_todo.md`
+16. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
+17. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
+18. `docs/sim/x2_lidar_simulation_design.md`
+19. `docs/sim/x2_lidar_protocol_todo.md`
+20. `docs/general/lab_env_service_refactor_todo.md`
 
 ## 当前目录结构
 
@@ -79,6 +83,7 @@ docs/
       navlab_p3_slam_backend_quality_design.md
       navlab_p4_fcu_state_machine_design.md
       navlab_p5_frame_contract_design.md
+      navlab_p6_slam_hover_gate_design.md
       navlab_ardupilot_ros2_official_alignment.md
       navlab_reference_projects_analysis.md
       navlab_cartographer_real_machine_tuning.md
@@ -89,6 +94,7 @@ docs/
         P3_slam_backend_quality_todo.md
         P4_fcu_state_machine_todo.md
         P5_frame_contract_todo.md
+        P6_slam_hover_gate_todo.md
   sim/
     README.md
     todo.md
