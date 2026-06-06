@@ -13,6 +13,7 @@ from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
 from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
 from src.tasks.official_maze_x2 import OfficialMazeX2AcceptanceTask
+from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
 from src.tasks.registry import TaskRegistry
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -128,6 +129,29 @@ def official_maze_x2_acceptance_command(
     ] = None,
 ) -> None:
     task = cast(OfficialMazeX2AcceptanceTask, TaskRegistry.create("official-maze-x2-acceptance"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+
+
+@app.command("rangefinder-imu-doctor")
+def rangefinder_imu_doctor_command(
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(RangefinderImuDoctorTask, TaskRegistry.create("rangefinder-imu-doctor"))
+    raise typer.Exit(task.run(config_path=config, console=console))
+
+
+@app.command("rangefinder-imu-acceptance")
+def rangefinder_imu_acceptance_command(
+    duration_sec: Annotated[float, typer.Argument(help="P2 rangefinder/IMU acceptance duration in seconds")] = 60.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(RangefinderImuAcceptanceTask, TaskRegistry.create("rangefinder-imu-acceptance"))
     raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
 
 

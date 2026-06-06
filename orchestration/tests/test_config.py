@@ -29,6 +29,7 @@ from src.tasks.hover import HoverAcceptanceTask
 from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
 from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
+from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
 from src.tasks.registry import TaskRegistry
 
 from navlab.companion.config import (
@@ -177,6 +178,28 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.official_maze_x2.x2_status_topic == "/sim/x2/status"
     assert config.official_maze_x2.altitude_control_claim == "not_evaluated"
     assert config.official_maze_x2.hover_claim == "not_evaluated"
+    assert config.rangefinder_imu.rosbag_profile == "profiles/navlab-rangefinder-imu-rosbag-topics.txt"
+    assert config.rangefinder_imu.world_source == "official_iris_maze"
+    assert config.rangefinder_imu.vehicle_model_source == "official_iris_with_lidar"
+    assert config.rangefinder_imu.model_overlay_source == "official_iris_with_lidar_plus_down_rangefinder"
+    assert config.rangefinder_imu.x2_scan_topic == "/scan"
+    assert config.rangefinder_imu.x2_status_topic == "/sim/x2/status"
+    assert config.rangefinder_imu.rangefinder_scan_ideal_topic == "/rangefinder/down/scan_ideal"
+    assert config.rangefinder_imu.rangefinder_range_topic == "/rangefinder/down/range"
+    assert config.rangefinder_imu.rangefinder_status_topic == "/rangefinder/down/status"
+    assert config.rangefinder_imu.rangefinder_frame_id == "rangefinder_down_frame"
+    assert config.rangefinder_imu.rangefinder_endpoint == "udpin:0.0.0.0:14550"
+    assert config.rangefinder_imu.rangefinder_fcu_probe_endpoint == "udpin:0.0.0.0:14551"
+    assert config.rangefinder_imu.rangefinder_mavlink_orientation == "MAV_SENSOR_ROTATION_PITCH_270"
+    assert config.rangefinder_imu.rangefinder_rate_hz == 20.0
+    assert config.rangefinder_imu.rangefinder_min_distance_m == 0.05
+    assert config.rangefinder_imu.rangefinder_max_distance_m == 6.0
+    assert config.rangefinder_imu.imu_source_route == "official_gazebo_imu_bridge"
+    assert config.rangefinder_imu.imu_output_topic == "/imu"
+    assert config.rangefinder_imu.imu_frame_id == "imu_link"
+    assert config.rangefinder_imu.synthetic_fallback_enabled is False
+    assert config.rangefinder_imu.altitude_control_claim == "not_evaluated"
+    assert config.rangefinder_imu.hover_claim == "not_evaluated"
 
 
 def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> None:
@@ -244,6 +267,30 @@ def test_navlab_run_config_is_derived_from_config() -> None:
     assert config.duration_sec == 45.0
     assert config.run_id == "20260603_000000"
     assert config.artifact_dir.as_posix() == "artifacts/ros/navlab_companion_sitl_gazebo/20260603_000000"
+    assert config.rangefinder_imu_rosbag_profile == "profiles/navlab-rangefinder-imu-rosbag-topics.txt"
+
+
+def test_p2_rangefinder_imu_rosbag_profile_contains_required_topics() -> None:
+    profile = Path("profiles/navlab-rangefinder-imu-rosbag-topics.txt")
+    lines = profile.read_text(encoding="utf-8").splitlines()
+    required = {
+        line.split(maxsplit=1)[1]
+        for line in lines
+        if line.strip().startswith("required ") and len(line.split(maxsplit=1)) == 2
+    }
+
+    assert {
+        "/clock",
+        "/tf",
+        "/tf_static",
+        "/ap/v1/time",
+        "/scan",
+        "/sim/x2/status",
+        "/rangefinder/down/scan_ideal",
+        "/rangefinder/down/range",
+        "/rangefinder/down/status",
+        "/imu",
+    }.issubset(required)
 
 
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
@@ -257,6 +304,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         "official-baseline-acceptance",
         "official-baseline-doctor",
         "official-maze-x2-acceptance",
+        "rangefinder-imu-acceptance",
+        "rangefinder-imu-doctor",
     )
     assert TaskRegistry.create("build").description
     assert TaskRegistry.create("doctor").description

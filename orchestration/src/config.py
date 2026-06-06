@@ -93,6 +93,47 @@ class OfficialMazeX2Config:
 
 
 @dataclass(frozen=True, slots=True)
+class RangefinderImuConfig:
+    rosbag_profile: str
+    world_source: str
+    vehicle_model_source: str
+    model_overlay_source: str
+    gazebo_lidar_topic: str
+    x2_scan_input_topic: str
+    x2_scan_topic: str
+    x2_status_topic: str
+    x2_virtual_serial_link: str
+    rangefinder_scan_ideal_topic: str
+    rangefinder_range_topic: str
+    rangefinder_status_topic: str
+    rangefinder_frame_id: str
+    rangefinder_model_pose: str
+    rangefinder_model_update_rate_hz: float
+    rangefinder_model_ray_count: str
+    rangefinder_model_noise_stddev_m: float
+    rangefinder_endpoint: str
+    rangefinder_fcu_probe_endpoint: str
+    rangefinder_mavlink_orientation: str
+    rangefinder_source_system: str
+    rangefinder_source_component: str
+    rangefinder_sensor_id: str
+    rangefinder_rate_hz: float
+    rangefinder_min_distance_m: float
+    rangefinder_max_distance_m: float
+    rangefinder_covariance_cm: str
+    imu_source_route: str
+    imu_source_topic: str
+    imu_output_topic: str
+    imu_status_topic: str
+    imu_frame_id: str
+    imu_min_rate_hz: float
+    synthetic_fallback_enabled: bool
+    altitude_control_claim: str
+    hover_claim: str
+    cartographer_launch: str
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -116,6 +157,7 @@ class OrchestrationConfig:
     slam: SlamContainerConfig
     official_baseline: OfficialBaselineConfig
     official_maze_x2: OfficialMazeX2Config
+    rangefinder_imu: RangefinderImuConfig
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -130,6 +172,7 @@ class OrchestrationConfig:
         slam = _section(data, "slam")
         official_baseline = _section(data, "official_baseline")
         official_maze_x2 = _section(data, "official_maze_x2")
+        rangefinder_imu = _section(data, "rangefinder_imu")
         foxglove_upload = _section(data, "foxglove_upload")
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
@@ -241,6 +284,91 @@ class OrchestrationConfig:
                     or "ros2 launch ardupilot_cartographer cartographer.launch.py",
                 ),
             ),
+            rangefinder_imu=RangefinderImuConfig(
+                rosbag_profile=_as_str(
+                    rangefinder_imu.get("rosbag_profile"),
+                    "profiles/navlab-rangefinder-imu-rosbag-topics.txt",
+                ),
+                world_source=_as_str(rangefinder_imu.get("world_source"), "official_iris_maze"),
+                vehicle_model_source=_as_str(
+                    rangefinder_imu.get("vehicle_model_source"),
+                    "official_iris_with_lidar",
+                ),
+                model_overlay_source=_as_str(
+                    rangefinder_imu.get("model_overlay_source"),
+                    "official_iris_with_lidar_plus_down_rangefinder",
+                ),
+                gazebo_lidar_topic=_as_str(rangefinder_imu.get("gazebo_lidar_topic"), "/lidar"),
+                x2_scan_input_topic=_as_str(rangefinder_imu.get("x2_scan_input_topic"), "/lidar"),
+                x2_scan_topic=_as_str(rangefinder_imu.get("x2_scan_topic"), "/scan"),
+                x2_status_topic=_as_str(rangefinder_imu.get("x2_status_topic"), "/sim/x2/status"),
+                x2_virtual_serial_link=_as_str(
+                    rangefinder_imu.get("x2_virtual_serial_link"),
+                    "/tmp/navlab_p2_x2",
+                ),
+                rangefinder_scan_ideal_topic=_as_str(
+                    rangefinder_imu.get("rangefinder_scan_ideal_topic"),
+                    "/rangefinder/down/scan_ideal",
+                ),
+                rangefinder_range_topic=_as_str(
+                    rangefinder_imu.get("rangefinder_range_topic"),
+                    "/rangefinder/down/range",
+                ),
+                rangefinder_status_topic=_as_str(
+                    rangefinder_imu.get("rangefinder_status_topic"),
+                    "/rangefinder/down/status",
+                ),
+                rangefinder_frame_id=_as_str(
+                    rangefinder_imu.get("rangefinder_frame_id"),
+                    "rangefinder_down_frame",
+                ),
+                rangefinder_model_pose=_as_str(
+                    rangefinder_imu.get("rangefinder_model_pose"),
+                    "0 0 -0.02 0 1.5707963267948966 0",
+                ),
+                rangefinder_model_update_rate_hz=_as_float(
+                    rangefinder_imu.get("rangefinder_model_update_rate_hz"),
+                    20.0,
+                ),
+                rangefinder_model_ray_count=_as_str(rangefinder_imu.get("rangefinder_model_ray_count"), "1"),
+                rangefinder_model_noise_stddev_m=_as_float(
+                    rangefinder_imu.get("rangefinder_model_noise_stddev_m"),
+                    0.0,
+                ),
+                rangefinder_endpoint=_as_str(rangefinder_imu.get("rangefinder_endpoint"), "tcp:127.0.0.1:5760"),
+                rangefinder_fcu_probe_endpoint=_as_str(
+                    rangefinder_imu.get("rangefinder_fcu_probe_endpoint"),
+                    "udpin:0.0.0.0:14551",
+                ),
+                rangefinder_mavlink_orientation=_as_str(
+                    rangefinder_imu.get("rangefinder_mavlink_orientation"),
+                    "MAV_SENSOR_ROTATION_PITCH_270",
+                ),
+                rangefinder_source_system=_as_str(rangefinder_imu.get("rangefinder_source_system"), "1"),
+                rangefinder_source_component=_as_str(rangefinder_imu.get("rangefinder_source_component"), "158"),
+                rangefinder_sensor_id=_as_str(rangefinder_imu.get("rangefinder_sensor_id"), "1"),
+                rangefinder_rate_hz=_as_float(rangefinder_imu.get("rangefinder_rate_hz"), 20.0),
+                rangefinder_min_distance_m=_as_float(rangefinder_imu.get("rangefinder_min_distance_m"), 0.05),
+                rangefinder_max_distance_m=_as_float(rangefinder_imu.get("rangefinder_max_distance_m"), 6.0),
+                rangefinder_covariance_cm=_as_str(rangefinder_imu.get("rangefinder_covariance_cm"), "2"),
+                imu_source_route=_as_str(rangefinder_imu.get("imu_source_route"), "official_gazebo_imu_bridge"),
+                imu_source_topic=_as_str(rangefinder_imu.get("imu_source_topic"), "/imu"),
+                imu_output_topic=_as_str(rangefinder_imu.get("imu_output_topic"), "/imu"),
+                imu_status_topic=_as_str(rangefinder_imu.get("imu_status_topic"), "/imu/status"),
+                imu_frame_id=_as_str(rangefinder_imu.get("imu_frame_id"), "imu_link"),
+                imu_min_rate_hz=_as_float(rangefinder_imu.get("imu_min_rate_hz"), 4.0),
+                synthetic_fallback_enabled=_as_bool(rangefinder_imu.get("synthetic_fallback_enabled"), False),
+                altitude_control_claim=_as_str(
+                    rangefinder_imu.get("altitude_control_claim"),
+                    "not_evaluated",
+                ),
+                hover_claim=_as_str(rangefinder_imu.get("hover_claim"), "not_evaluated"),
+                cartographer_launch=_as_str(
+                    rangefinder_imu.get("cartographer_launch"),
+                    official_baseline.get("cartographer_launch")
+                    or "ros2 launch ardupilot_cartographer cartographer.launch.py",
+                ),
+            ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
                 api_url=_as_str(foxglove_upload.get("api_url"), "https://api.foxglove.dev/v1"),
@@ -320,6 +448,10 @@ class RunConfig:
     def official_maze_x2_rosbag_profile(self) -> str:
         return self.orchestration.official_maze_x2.rosbag_profile
 
+    @property
+    def rangefinder_imu_rosbag_profile(self) -> str:
+        return self.orchestration.rangefinder_imu.rosbag_profile
+
     @classmethod
     def from_config(
         cls,
@@ -359,6 +491,12 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).lower() in {"1", "true", "yes", "on"}
+
+
+def _as_float(value: Any, default: float) -> float:
+    if value is None:
+        return default
+    return float(value)
 
 
 def _as_args(value: Any) -> tuple[str, ...]:

@@ -54,6 +54,14 @@ navlab-official-baseline-acceptance duration_sec='30' *args='':
 navlab-official-maze-x2-acceptance duration_sec='45' *args='':
     {{orchestration_cmd}} official-maze-x2-acceptance {{duration_sec}} {{args}}
 
+# Check P2 official maze rangefinder/IMU mechanism prerequisites.
+navlab-rangefinder-imu-doctor *args='':
+    {{orchestration_cmd}} rangefinder-imu-doctor {{args}}
+
+# Run P2 official maze down rangefinder + IMU mechanism acceptance.
+navlab-rangefinder-imu-acceptance duration_sec='60' *args='':
+    {{orchestration_cmd}} rangefinder-imu-acceptance {{duration_sec}} {{args}}
+
 # Run NavLab companion + SITL + Gazebo obstacle acceptance with rosbag/Foxglove artifacts.
 navlab-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} acceptance {{duration_sec}} {{args}}

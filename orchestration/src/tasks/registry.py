@@ -55,6 +55,7 @@ class TaskRegistry:
             "src.tasks.hover_slam_diagnostic",
             "src.tasks.official_baseline",
             "src.tasks.official_maze_x2",
+            "src.tasks.rangefinder_imu",
         ):
             import_module(module_name)
 

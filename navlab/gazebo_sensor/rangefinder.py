@@ -68,6 +68,7 @@ def run(argv: list[str] | None = None) -> int:
                 source_component=config.source_component,
                 dialect="ardupilotmega",
             )
+            self._mavlink_peer_observed = self._wait_for_mavlink_peer()
             self._latest: RangefinderReading | None = None
             self._input_count = 0
             self._sent_count = 0
@@ -84,6 +85,19 @@ def run(argv: list[str] | None = None) -> int:
                 config.endpoint,
                 config.rate_hz,
             )
+
+        def _wait_for_mavlink_peer(self) -> bool:
+            if not config.endpoint.startswith(("udpin:", "tcp:")):
+                return True
+            logger.info("down rangefinder waiting for MAVLink peer on {}", config.endpoint)
+            try:
+                heartbeat = self._connection.wait_heartbeat(timeout=5)
+            except Exception as exc:
+                logger.warning("down rangefinder did not observe MAVLink heartbeat: {}", exc)
+                return False
+            observed = heartbeat is not None
+            logger.info("down rangefinder MAVLink peer observed={}", observed)
+            return observed
 
         def _handle_scan(self, msg: LaserScan) -> None:
             distance = select_down_range_m(msg.ranges, min_m=config.min_distance_m, max_m=config.max_distance_m)
@@ -143,6 +157,7 @@ def run(argv: list[str] | None = None) -> int:
                     "source_system": config.source_system,
                     "source_component": config.source_component,
                     "sensor_id": config.sensor_id,
+                    "mavlink_peer_observed": self._mavlink_peer_observed,
                     "input_count": self._input_count,
                     "sent_count": self._sent_count,
                     "latest_distance_m": None if self._latest is None else self._latest.distance_m,
