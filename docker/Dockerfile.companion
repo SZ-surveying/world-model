@@ -32,12 +32,12 @@ COPY --from=companion-python-builder /opt/companion-venv /opt/companion-venv
 
 WORKDIR /opt/navlab_ws
 
-COPY x3/src/ydlidar_interfaces /opt/navlab_ws/x3/src/ydlidar_interfaces
+COPY navlab/interfaces/ydlidar_interfaces /opt/navlab_ws/navlab_interfaces/ydlidar_interfaces
 
 RUN bash -lc "\
   source /opt/ros/jazzy/setup.bash && \
   colcon --log-base /tmp/navlab_companion-log build \
-    --base-paths x3/src \
+    --base-paths navlab_interfaces \
     --packages-select ydlidar_interfaces \
     --build-base /tmp/navlab_companion-build \
     --install-base /opt/navlab_ws/install \

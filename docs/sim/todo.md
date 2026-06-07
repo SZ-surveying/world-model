@@ -35,7 +35,7 @@
 ### 还没做完
 
 - [ ] 把 `SCAN_SOURCE=gazebo|real` 这类显式 source 切换机制收成稳定配置入口
-- [ ] 把真实 `x3` 接入这条链路再跑一遍同口径验证，确认 `/scan -> /scan_features` 一致
+- [ ] 把真实 YDLidar 驱动接入这条链路再跑一遍同口径验证，确认 `/scan -> /scan_features` 一致
 - [ ] 把 `auto` 默认 rosbag 的目录级 metadata / `ros2 bag info` 可用性补一次验收并收口
 - [x] 给旧 sim CLI 收成明确的 `manual|auto` 两种启动模式入口
 - [x] `manual` 模式文档已补上 Foxglove 操作路径和 `/planner/cmd_vel` preset
@@ -47,7 +47,7 @@
 
 ## P1：Gazebo Lidar 仿真输入
 
-目标：让 Gazebo 世界输出真实可运动的 `/scan`，并与真实 `x3` 的 ROS2 契约对齐。
+目标：让 Gazebo 世界输出真实可运动的 `/scan`，并与真实 YDLidar 驱动的 ROS2 契约对齐。
 
 ### P1.1 世界与障碍物布局
 
@@ -157,27 +157,27 @@
 - [x] SLAM / 基础 scan 契约仍以原始 `/scan` 为统一输入边界
 - [x] 行为类下游当前优先消费 `/scan_features`
 - [ ] 把 `gazebo|real` source 切换机制收成明确配置
-- [ ] 把 real `x3` 也跑到同样的 `/scan_features` 行为主线里再验一次
+- [ ] 把真实 YDLidar 驱动也跑到同样的 `/scan_features` 行为主线里再验一次
 
 验收：
 
 - [x] 行为类下游默认只依赖 `/scan_features`
-- [x] 原始 `/scan` 仍保持与真实 `x3` 对齐的契约
+- [x] 原始 `/scan` 仍保持与真实 YDLidar 驱动对齐的契约
 - [ ] Gazebo 和 real 两种 source 可通过统一配置切换
 
-### P2.4 真实 `x3` 接入边界
+### P2.4 真实 YDLidar 驱动接入边界
 
 状态：部分完成
 
-- [x] 仿真代码不依赖 `x3` 内部实现
+- [x] 仿真代码不依赖真实传感器工作空间内部实现
 - [x] `/scan` 契约仍集中在 `docs/sim/README.md`
 - [x] `/scan_features` 契约复用 `ydlidar_interfaces/msg/ScanFeatures`
-- [ ] 真实 `x3` 接入时再跑一轮端到端验证
+- [ ] 真实 YDLidar 驱动接入时再跑一轮端到端验证
 
 验收：
 
 - [x] 文档已经区分 raw `/scan` 与结构化 `/scan_features`
-- [x] 仿真代码不依赖 `x3` 内部实现
+- [x] 仿真代码不依赖真实传感器工作空间内部实现
 - [ ] 真实接入时只替换传感器来源，不改行为类下游接口
 
 ### P2.5 旧 sim CLI 启动模式分层
@@ -215,8 +215,8 @@
 
 当前还没有打勾的主线是：
 
-- [ ] real `x3` 与 Gazebo 的统一 source 切换入口
-- [ ] real `x3` 的同口径 `/scan_features` 端到端验证
+- [ ] 真实 YDLidar 驱动与 Gazebo 的统一 source 切换入口
+- [ ] 真实 YDLidar 驱动的同口径 `/scan_features` 端到端验证
 - [x] 旧 sim CLI 的 `manual|auto` 双模式入口
 - [x] 自动模式的航点 `yaml` 最小直线执行
 - [x] `/sim/log` 统一日志输出 topic
