@@ -52,6 +52,7 @@ from src.tasks.rangefinder_imu import (
 from src.tasks.registry import TaskRegistry
 
 SLAM_BACKEND_CONTAINER = "navlab-p3-slam-backend"
+OFFICIAL_IRIS_LIDAR_Z_M = "0.075077"
 P3_ROSBAG_CONTAINER = "navlab-p3-rosbag"
 
 
@@ -97,6 +98,15 @@ def _write_p3_slam_runtime_config(config: RunConfig, path: Path) -> dict[str, An
                 "base_frame_id": p3.base_frame_id,
                 "imu_frame_id": p3.imu_frame_id,
                 "laser_frame_id": p3.laser_frame_id,
+                "base_frame": p3.base_frame_id,
+                "imu_frame": p3.imu_frame_id,
+                "laser_frame": p3.laser_frame_id,
+                "laser_x": "0",
+                "laser_y": "0",
+                "laser_z": OFFICIAL_IRIS_LIDAR_Z_M,
+                "laser_roll": "0",
+                "laser_pitch": "0",
+                "laser_yaw": "0",
             }
         }
     }

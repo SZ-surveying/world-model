@@ -19,6 +19,7 @@ from src.config import (
 from src.project_config import load_navlab_images_config, load_runtime_config, resolve_navlab_image_tag
 from src.tasks import acceptance as acceptance_task_module
 from src.tasks import build as build_task_module
+from src.tasks import exploration_gate as exploration_gate_task_module
 from src.tasks import fcu_controller as fcu_controller_task_module
 from src.tasks import frame_contract as frame_contract_task_module
 from src.tasks import hover as hover_task_module
@@ -31,6 +32,7 @@ from src.tasks import slam_backend as slam_backend_task_module
 from src.tasks.acceptance import AcceptanceTask
 from src.tasks.base import OrchestrationTask
 from src.tasks.build import BuildTask
+from src.tasks.exploration_gate import ExplorationGateAcceptanceTask, ExplorationGateDoctorTask
 from src.tasks.fcu_controller import FcuControllerAcceptanceTask, FcuControllerDoctorTask
 from src.tasks.frame_contract import FrameContractAcceptanceTask, FrameContractDoctorTask
 from src.tasks.hover import HoverAcceptanceTask
@@ -474,6 +476,10 @@ def test_p3_slam_runtime_config_writes_canonical_backend_contract(tmp_path) -> N
     assert runtime["cartographer_odometry_topic"] == "/odometry"
     assert runtime["odom_topic"] == "/slam/odom"
     assert runtime["external_nav_input_odom_topic"] == "/slam/odom"
+    assert runtime["base_frame"] == "base_link"
+    assert runtime["imu_frame"] == "imu_link"
+    assert runtime["laser_frame"] == "base_scan"
+    assert runtime["laser_z"] == "0.075077"
 
 
 def test_p3_doctor_blocks_gazebo_truth_as_slam_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
@@ -1110,11 +1116,176 @@ def test_p7_blockers_detect_failed_motion_gate() -> None:
     assert "/navlab/motion/status was not recorded" in blockers
 
 
+def test_p8_exploration_gate_config_loads() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+
+    assert config.exploration_gate_rosbag_profile == "profiles/navlab-exploration-gate-rosbag-topics.txt"
+    assert config.orchestration.exploration_gate.strategy == "frontier_lite"
+    assert config.orchestration.exploration_gate.slam_odom_topic == "/slam/odom"
+    assert config.orchestration.exploration_gate.map_topic == "/map"
+    assert config.orchestration.exploration_gate.cmd_vel_topic == "/ap/v1/cmd_vel"
+    assert config.orchestration.exploration_gate.exploration_status_topic == "/navlab/exploration/status"
+    assert config.orchestration.exploration_gate.exploration_goal_topic == "/navlab/exploration/goal"
+    assert config.orchestration.exploration_gate.exploration_coverage_topic == "/navlab/exploration/coverage"
+    assert config.orchestration.exploration_gate.min_accepted_goals == 3
+    assert config.orchestration.exploration_gate.min_clearance_m == 0.35
+    assert config.orchestration.exploration_gate.uses_gazebo_truth_as_input is False
+    assert config.orchestration.exploration_gate.hover_claim == "evaluated"
+    assert config.orchestration.exploration_gate.motion_claim == "evaluated"
+    assert config.orchestration.exploration_gate.exploration_claim == "evaluated"
+
+
+def test_p8_exploration_gate_rosbag_profile_contains_required_topics() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    profile = Path(config.exploration_gate_rosbag_profile)
+    content = profile.read_text(encoding="utf-8")
+
+    for topic in (
+        "/clock",
+        "/tf",
+        "/tf_static",
+        "/scan",
+        "/imu",
+        "/rangefinder/down/range",
+        "/rangefinder/down/status",
+        "/slam/odom",
+        "/navlab/slam/status",
+        "/external_nav/status",
+        "/map",
+        "/submap_list",
+        "/trajectory_node_list",
+        "/ap/v1/time",
+        "/ap/v1/pose/filtered",
+        "/ap/v1/twist/filtered",
+        "/ap/v1/status",
+        "/ap/v1/cmd_vel",
+        "/navlab/fcu/state",
+        "/navlab/fcu/controller/status",
+        "/navlab/fcu/setpoint/intent",
+        "/navlab/fcu/setpoint/output",
+        "/navlab/fcu/owner/status",
+        "/navlab/hover/status",
+        "/navlab/motion/status",
+        "/navlab/exploration/status",
+        "/navlab/exploration/goal",
+        "/navlab/exploration/coverage",
+    ):
+        assert f"required {topic}" in content
+
+
+def test_p8_runtime_config_writes_exploration_gate_contract(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    runtime_config = tmp_path / "p8_exploration_gate_runtime.toml"
+
+    summary = exploration_gate_task_module._write_p8_runtime_config(config, runtime_config)
+
+    assert runtime_config.is_file()
+    runtime = summary["data"]["exploration_gate"]["runtime"]
+    assert runtime["strategy"] == "frontier_lite"
+    assert runtime["slam_odom_topic"] == "/slam/odom"
+    assert runtime["map_topic"] == "/map"
+    assert runtime["cmd_vel_topic"] == "/ap/v1/cmd_vel"
+    assert runtime["exploration_status_topic"] == "/navlab/exploration/status"
+    assert runtime["min_accepted_goals"] == 3
+    assert runtime["uses_gazebo_truth_as_input"] is False
+    assert runtime["hover_claim"] == "evaluated"
+    assert runtime["motion_claim"] == "evaluated"
+    assert runtime["exploration_claim"] == "evaluated"
+
+
+def test_p8_exploration_coordinator_does_not_publish_cmd_vel(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(
+        config_path="orchestration/config.toml",
+        artifact_dir=tmp_path,
+        run_id="20260603_000000",
+    )
+    script_path = tmp_path / "p8_exploration_gate_probe.py"
+
+    exploration_gate_task_module._write_exploration_probe_script(config, script_path)
+    script = script_path.read_text(encoding="utf-8")
+
+    assert 'rclpy.create_node("navlab_p8_exploration_coordinator")' in script
+    assert 'create_publisher(TwistStamped, SPEC["cmd_vel_topic"]' not in script
+    assert 'create_subscription(TwistStamped, SPEC["cmd_vel_topic"]' in script
+    assert 'self.intent_pub = self.node.create_publisher(String, SPEC["setpoint_intent_topic"], 10)' in script
+
+
+def test_p8_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    orchestration = replace(
+        config.orchestration,
+        exploration_gate=replace(config.orchestration.exploration_gate, uses_gazebo_truth_as_input=True),
+    )
+    unsafe_config = replace(config, orchestration=orchestration, artifact_dir=tmp_path)
+    runtime_config = tmp_path / "p8_exploration_gate_runtime.toml"
+    exploration_gate_task_module._write_p8_runtime_config(unsafe_config, runtime_config)
+
+    monkeypatch.setattr(
+        exploration_gate_task_module,
+        "_build_p6_doctor_summary",
+        lambda _config, runtime_config: {"ok": True, "blockers": []},
+    )
+    monkeypatch.setattr(
+        exploration_gate_task_module,
+        "_build_p7_doctor_summary",
+        lambda _config, runtime_config, include_dependencies=False: {"ok": True, "blockers": []},
+    )
+
+    summary = exploration_gate_task_module._build_p8_doctor_summary(unsafe_config, runtime_config=runtime_config)
+
+    assert summary["ok"] is False
+    assert "P8 must not use Gazebo truth as a control/planning/SLAM/ExternalNav input" in summary["blockers"]
+
+
+def test_p8_blockers_detect_failed_exploration_gate() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    blockers: list[str] = []
+
+    exploration_gate_task_module._append_p8_blockers(
+        blockers=blockers,
+        exploration_summary={
+            "ok": False,
+            "blockers": ["P8 coverage/progress below threshold"],
+            "p6_hover_prerequisite": {"ok": False},
+            "p7_motion_prerequisite": {"ok": False},
+            "p8_exploration": {"ok": False},
+            "coverage": {"ok": False},
+            "safety": {"ok": False},
+            "collision": {"detected": True},
+            "stuck": {"blocked": True},
+            "slam_odom": {"ok": False},
+            "external_nav": {"ok": False},
+            "fcu": {"local_position_ok": False},
+        },
+        rosbag_profile={"ok": False},
+        counts={},
+        p8=config.orchestration.exploration_gate,
+    )
+
+    assert "P8 coverage/progress below threshold" in blockers
+    assert "P8 P6 hover prerequisite did not pass" in blockers
+    assert "P8 P7 motion prerequisite did not pass" in blockers
+    assert "P8 exploration gate did not pass" in blockers
+    assert "P8 coverage/progress gate did not pass" in blockers
+    assert "P8 safety gate did not pass" in blockers
+    assert "P8 collision diagnostic triggered" in blockers
+    assert "P8 stuck gate did not pass" in blockers
+    assert "P8 SLAM odom gate did not pass" in blockers
+    assert "P8 ExternalNav gate did not pass" in blockers
+    assert "P8 FCU local position gate did not pass" in blockers
+    assert "P8 rosbag profile did not pass" in blockers
+    assert "/navlab/exploration/status was not recorded" in blockers
+    assert "/navlab/exploration/goal was not recorded" in blockers
+    assert "/navlab/exploration/coverage was not recorded" in blockers
+
+
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.names() == (
         "acceptance",
         "build",
         "doctor",
+        "exploration-gate-acceptance",
+        "exploration-gate-doctor",
         "fcu-controller-acceptance",
         "fcu-controller-doctor",
         "frame-contract-acceptance",
@@ -1137,6 +1308,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.create("build").description
     assert TaskRegistry.create("doctor").description
     assert TaskRegistry.create("acceptance").description
+    assert TaskRegistry.create("exploration-gate-doctor").description
+    assert TaskRegistry.create("exploration-gate-acceptance").description
     assert TaskRegistry.create("fcu-controller-doctor").description
     assert TaskRegistry.create("fcu-controller-acceptance").description
     assert TaskRegistry.create("frame-contract-doctor").description

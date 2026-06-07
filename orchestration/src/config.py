@@ -330,6 +330,61 @@ class MotionGateConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ExplorationGateConfig:
+    rosbag_profile: str
+    strategy: str
+    slam_odom_topic: str
+    slam_status_topic: str
+    external_nav_status_topic: str
+    map_topic: str
+    submap_list_topic: str
+    trajectory_node_list_topic: str
+    fcu_pose_topic: str
+    fcu_twist_topic: str
+    fcu_status_topic: str
+    cmd_vel_topic: str
+    rangefinder_range_topic: str
+    rangefinder_status_topic: str
+    imu_topic: str
+    scan_topic: str
+    truth_diagnostic_topic: str
+    controller_status_topic: str
+    setpoint_intent_topic: str
+    setpoint_output_topic: str
+    owner_status_topic: str
+    hover_status_topic: str
+    motion_status_topic: str
+    exploration_status_topic: str
+    exploration_goal_topic: str
+    exploration_coverage_topic: str
+    exploration_frontiers_topic: str
+    exploration_path_topic: str
+    exploration_markers_topic: str
+    settle_window_sec: float
+    exploration_window_sec: float
+    forward_probe_window_sec: float
+    yaw_scan_window_sec: float
+    stop_hold_window_sec: float
+    final_hold_window_sec: float
+    motion_speed_mps: float
+    yaw_rate_radps: float
+    min_accepted_goals: int
+    min_path_length_m: float
+    min_known_cell_growth: int
+    max_stop_drift_m: float
+    min_clearance_m: float
+    stuck_timeout_sec: float
+    min_slam_odom_rate_hz: float
+    min_external_nav_rate_hz: float
+    min_fcu_local_position_rate_hz: float
+    max_latest_age_sec: float
+    uses_gazebo_truth_as_input: bool
+    hover_claim: str
+    motion_claim: str
+    exploration_claim: str
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -359,6 +414,7 @@ class OrchestrationConfig:
     frame_contract: FrameContractConfig
     slam_hover: SlamHoverConfig
     motion_gate: MotionGateConfig
+    exploration_gate: ExplorationGateConfig
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -379,6 +435,7 @@ class OrchestrationConfig:
         frame_contract = _section(data, "frame_contract")
         slam_hover = _section(data, "slam_hover")
         motion_gate = _section(data, "motion_gate")
+        exploration_gate = _section(data, "exploration_gate")
         foxglove_upload = _section(data, "foxglove_upload")
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
@@ -883,6 +940,104 @@ class OrchestrationConfig:
                 motion_claim=_as_str(motion_gate.get("motion_claim"), "evaluated"),
                 exploration_claim=_as_str(motion_gate.get("exploration_claim"), "not_evaluated"),
             ),
+            exploration_gate=ExplorationGateConfig(
+                rosbag_profile=_as_str(
+                    exploration_gate.get("rosbag_profile"),
+                    "profiles/navlab-exploration-gate-rosbag-topics.txt",
+                ),
+                strategy=_as_str(exploration_gate.get("strategy"), "frontier_lite"),
+                slam_odom_topic=_as_str(exploration_gate.get("slam_odom_topic"), "/slam/odom"),
+                slam_status_topic=_as_str(exploration_gate.get("slam_status_topic"), "/navlab/slam/status"),
+                external_nav_status_topic=_as_str(
+                    exploration_gate.get("external_nav_status_topic"),
+                    "/external_nav/status",
+                ),
+                map_topic=_as_str(exploration_gate.get("map_topic"), "/map"),
+                submap_list_topic=_as_str(exploration_gate.get("submap_list_topic"), "/submap_list"),
+                trajectory_node_list_topic=_as_str(
+                    exploration_gate.get("trajectory_node_list_topic"),
+                    "/trajectory_node_list",
+                ),
+                fcu_pose_topic=_as_str(exploration_gate.get("fcu_pose_topic"), "/ap/v1/pose/filtered"),
+                fcu_twist_topic=_as_str(exploration_gate.get("fcu_twist_topic"), "/ap/v1/twist/filtered"),
+                fcu_status_topic=_as_str(exploration_gate.get("fcu_status_topic"), "/ap/v1/status"),
+                cmd_vel_topic=_as_str(exploration_gate.get("cmd_vel_topic"), "/ap/v1/cmd_vel"),
+                rangefinder_range_topic=_as_str(
+                    exploration_gate.get("rangefinder_range_topic"),
+                    "/rangefinder/down/range",
+                ),
+                rangefinder_status_topic=_as_str(
+                    exploration_gate.get("rangefinder_status_topic"),
+                    "/rangefinder/down/status",
+                ),
+                imu_topic=_as_str(exploration_gate.get("imu_topic"), "/imu"),
+                scan_topic=_as_str(exploration_gate.get("scan_topic"), "/scan"),
+                truth_diagnostic_topic=_as_str(exploration_gate.get("truth_diagnostic_topic"), "/odometry"),
+                controller_status_topic=_as_str(
+                    exploration_gate.get("controller_status_topic"),
+                    "/navlab/fcu/controller/status",
+                ),
+                setpoint_intent_topic=_as_str(
+                    exploration_gate.get("setpoint_intent_topic"),
+                    "/navlab/fcu/setpoint/intent",
+                ),
+                setpoint_output_topic=_as_str(
+                    exploration_gate.get("setpoint_output_topic"),
+                    "/navlab/fcu/setpoint/output",
+                ),
+                owner_status_topic=_as_str(exploration_gate.get("owner_status_topic"), "/navlab/fcu/owner/status"),
+                hover_status_topic=_as_str(exploration_gate.get("hover_status_topic"), "/navlab/hover/status"),
+                motion_status_topic=_as_str(exploration_gate.get("motion_status_topic"), "/navlab/motion/status"),
+                exploration_status_topic=_as_str(
+                    exploration_gate.get("exploration_status_topic"),
+                    "/navlab/exploration/status",
+                ),
+                exploration_goal_topic=_as_str(
+                    exploration_gate.get("exploration_goal_topic"),
+                    "/navlab/exploration/goal",
+                ),
+                exploration_coverage_topic=_as_str(
+                    exploration_gate.get("exploration_coverage_topic"),
+                    "/navlab/exploration/coverage",
+                ),
+                exploration_frontiers_topic=_as_str(
+                    exploration_gate.get("exploration_frontiers_topic"),
+                    "/navlab/exploration/frontiers",
+                ),
+                exploration_path_topic=_as_str(
+                    exploration_gate.get("exploration_path_topic"),
+                    "/navlab/exploration/path",
+                ),
+                exploration_markers_topic=_as_str(
+                    exploration_gate.get("exploration_markers_topic"),
+                    "/navlab/exploration/markers",
+                ),
+                settle_window_sec=_as_float(exploration_gate.get("settle_window_sec"), 4.0),
+                exploration_window_sec=_as_float(exploration_gate.get("exploration_window_sec"), 26.0),
+                forward_probe_window_sec=_as_float(exploration_gate.get("forward_probe_window_sec"), 3.0),
+                yaw_scan_window_sec=_as_float(exploration_gate.get("yaw_scan_window_sec"), 3.0),
+                stop_hold_window_sec=_as_float(exploration_gate.get("stop_hold_window_sec"), 4.0),
+                final_hold_window_sec=_as_float(exploration_gate.get("final_hold_window_sec"), 8.0),
+                motion_speed_mps=_as_float(exploration_gate.get("motion_speed_mps"), 0.10),
+                yaw_rate_radps=_as_float(exploration_gate.get("yaw_rate_radps"), 0.18),
+                min_accepted_goals=int(_as_float(exploration_gate.get("min_accepted_goals"), 3.0)),
+                min_path_length_m=_as_float(exploration_gate.get("min_path_length_m"), 0.35),
+                min_known_cell_growth=int(_as_float(exploration_gate.get("min_known_cell_growth"), 0.0)),
+                max_stop_drift_m=_as_float(exploration_gate.get("max_stop_drift_m"), 0.30),
+                min_clearance_m=_as_float(exploration_gate.get("min_clearance_m"), 0.35),
+                stuck_timeout_sec=_as_float(exploration_gate.get("stuck_timeout_sec"), 8.0),
+                min_slam_odom_rate_hz=_as_float(exploration_gate.get("min_slam_odom_rate_hz"), 1.0),
+                min_external_nav_rate_hz=_as_float(exploration_gate.get("min_external_nav_rate_hz"), 5.0),
+                min_fcu_local_position_rate_hz=_as_float(
+                    exploration_gate.get("min_fcu_local_position_rate_hz"),
+                    1.5,
+                ),
+                max_latest_age_sec=_as_float(exploration_gate.get("max_latest_age_sec"), 1.5),
+                uses_gazebo_truth_as_input=_as_bool(exploration_gate.get("uses_gazebo_truth_as_input"), False),
+                hover_claim=_as_str(exploration_gate.get("hover_claim"), "evaluated"),
+                motion_claim=_as_str(exploration_gate.get("motion_claim"), "evaluated"),
+                exploration_claim=_as_str(exploration_gate.get("exploration_claim"), "evaluated"),
+            ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
                 api_url=_as_str(foxglove_upload.get("api_url"), "https://api.foxglove.dev/v1"),
@@ -985,6 +1140,10 @@ class RunConfig:
     @property
     def motion_gate_rosbag_profile(self) -> str:
         return self.orchestration.motion_gate.rosbag_profile
+
+    @property
+    def exploration_gate_rosbag_profile(self) -> str:
+        return self.orchestration.exploration_gate.rosbag_profile
 
     @classmethod
     def from_config(

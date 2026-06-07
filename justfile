@@ -100,6 +100,18 @@ navlab-motion-gate-doctor *args='':
 navlab-motion-gate-acceptance duration_sec='120' *args='':
     {{orchestration_cmd}} motion-gate-acceptance {{duration_sec}} {{args}}
 
+# Check P8 official maze exploration gate prerequisites.
+navlab-exploration-gate-doctor *args='':
+    {{orchestration_cmd}} exploration-gate-doctor {{args}}
+
+# Run P8 official maze exploration gate acceptance.
+navlab-exploration-gate-acceptance duration_sec='150' *args='':
+    {{orchestration_cmd}} exploration-gate-acceptance {{duration_sec}} {{args}}
+
+# Upload the latest P8 MCAP + summary artifact to Foxglove, or pass a run id.
+foxglove-upload date='':
+    scripts/upload_foxglove_mcap.py {{date}} --force
+
 # Run NavLab companion + SITL + Gazebo obstacle acceptance with rosbag/Foxglove artifacts.
 navlab-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} acceptance {{duration_sec}} {{args}}

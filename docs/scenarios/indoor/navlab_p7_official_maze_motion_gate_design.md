@@ -465,4 +465,4 @@ P7 不说明：
 - NavLab 8 字形 world/model 已迁移完成；
 - 真机参数已经最终调好。
 
-这些分别进入 P8、P9 和真机迁移记录。
+这些分别进入 P8、后续 world/model migration 和真机迁移记录。

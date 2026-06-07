@@ -433,4 +433,4 @@ P6 不说明：
 - NavLab 8 字形 world/model 已经迁移完成；
 - 真机参数已经最终调好。
 
-这些分别进入 P7、P8 和 P9。
+这些分别进入 P7、P8 和后续 world/model migration。

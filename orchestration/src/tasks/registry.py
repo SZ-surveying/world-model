@@ -61,6 +61,7 @@ class TaskRegistry:
             "src.tasks.frame_contract",
             "src.tasks.slam_hover",
             "src.tasks.motion_gate",
+            "src.tasks.exploration_gate",
         ):
             import_module(module_name)
 

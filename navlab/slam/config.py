@@ -39,6 +39,12 @@ class RuntimeConfig:
     laser_frame: str = "laser_frame"
     imu_frame: str = "imu_link"
     base_frame: str = "base_link"
+    laser_x: str = "0"
+    laser_y: str = "0"
+    laser_z: str = "0"
+    laser_roll: str = "0"
+    laser_pitch: str = "0"
+    laser_yaw: str = "0"
 
     @classmethod
     def load(cls, path: str | Path | None = None, *, backend: str | None = None) -> RuntimeConfig:
@@ -73,9 +79,15 @@ class RuntimeConfig:
             slam_status_topic=as_str(runtime.get("slam_status_topic"), "/navlab/slam/status"),
             external_nav_status_topic=as_str(runtime.get("external_nav_status_topic"), "/external_nav/status"),
             gazebo_truth_odom_topic=as_str(runtime.get("gazebo_truth_odom_topic"), "/gazebo/truth/odom"),
-            laser_frame=as_str(runtime.get("laser_frame"), "laser_frame"),
-            imu_frame=as_str(runtime.get("imu_frame"), "imu_link"),
-            base_frame=as_str(runtime.get("base_frame"), "base_link"),
+            laser_frame=as_str(runtime.get("laser_frame"), as_str(runtime.get("laser_frame_id"), "laser_frame")),
+            imu_frame=as_str(runtime.get("imu_frame"), as_str(runtime.get("imu_frame_id"), "imu_link")),
+            base_frame=as_str(runtime.get("base_frame"), as_str(runtime.get("base_frame_id"), "base_link")),
+            laser_x=as_str(runtime.get("laser_x"), "0"),
+            laser_y=as_str(runtime.get("laser_y"), "0"),
+            laser_z=as_str(runtime.get("laser_z"), "0"),
+            laser_roll=as_str(runtime.get("laser_roll"), "0"),
+            laser_pitch=as_str(runtime.get("laser_pitch"), "0"),
+            laser_yaw=as_str(runtime.get("laser_yaw"), "0"),
         )
 
     @property
@@ -102,6 +114,12 @@ class RuntimeConfig:
             "laser_frame": self.laser_frame,
             "imu_frame": self.imu_frame,
             "base_frame": self.base_frame,
+            "laser_x": self.laser_x,
+            "laser_y": self.laser_y,
+            "laser_z": self.laser_z,
+            "laser_roll": self.laser_roll,
+            "laser_pitch": self.laser_pitch,
+            "laser_yaw": self.laser_yaw,
             "require_imu_for_external_nav": self.require_imu_for_external_nav,
             "external_nav_input_odom_topic": self.external_nav_input_odom_topic,
             "require_height_for_external_nav": self.require_height_for_external_nav,

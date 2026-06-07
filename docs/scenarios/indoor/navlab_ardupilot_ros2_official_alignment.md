@@ -218,7 +218,7 @@ Gazebo lidar/ray source
   -> ardupilot_cartographer
 ```
 
-这样可以先证明 NavLab 的 X2 协议级仿真和厂商 driver 链路不会破坏官方 SLAM baseline。后续 P7/P8 仍然优先留在官方 maze 中做小范围运动和探索，因为官方 maze 比当前 NavLab 8 字形场景更复杂，更适合先验证导航策略。NavLab 8 字形 world 和自定义机体后移到 P9，作为机制稳定后的可选迁移。
+这样可以先证明 NavLab 的 X2 协议级仿真和厂商 driver 链路不会破坏官方 SLAM baseline。后续 P7/P8 仍然优先留在官方 maze 中做小范围运动和探索，因为官方 maze 比当前 NavLab 8 字形场景更复杂，更适合先验证导航策略。NavLab 8 字形 world 和自定义机体后移到后续独立 migration phase，作为机制和 replay artifact 稳定后的可选迁移。
 
 ### 3. SLAM backend 仍有自定义 adapter
 

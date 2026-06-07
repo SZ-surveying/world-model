@@ -8,6 +8,7 @@ from rich.console import Console
 from src.tasks.acceptance import AcceptanceTask
 from src.tasks.build import BuildTask, ImageKind
 from src.tasks.doctor import DoctorTask
+from src.tasks.exploration_gate import ExplorationGateAcceptanceTask, ExplorationGateDoctorTask
 from src.tasks.fcu_controller import FcuControllerAcceptanceTask, FcuControllerDoctorTask
 from src.tasks.frame_contract import FrameContractAcceptanceTask, FrameContractDoctorTask
 from src.tasks.hover import HoverAcceptanceTask
@@ -274,6 +275,30 @@ def motion_gate_acceptance_command(
     ] = None,
 ) -> None:
     task = cast(MotionGateAcceptanceTask, TaskRegistry.create("motion-gate-acceptance"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+
+
+@app.command("exploration-gate-doctor")
+def exploration_gate_doctor_command(
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(ExplorationGateDoctorTask, TaskRegistry.create("exploration-gate-doctor"))
+    raise typer.Exit(task.run(config_path=config, console=console))
+
+
+@app.command("exploration-gate-acceptance")
+def exploration_gate_acceptance_command(
+    duration_sec: Annotated[float, typer.Argument(help="P8 official maze exploration acceptance duration in seconds")]
+    = 150.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(ExplorationGateAcceptanceTask, TaskRegistry.create("exploration-gate-acceptance"))
     raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
 
 

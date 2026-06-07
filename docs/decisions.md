@@ -243,3 +243,19 @@ Decision: set the default P7 `yaw_window_sec` to 4.0 seconds while keeping `yaw_
 Basis: split coordinator/controller P7 acceptance run `artifacts/ros/navlab_companion_sitl_gazebo/20260607_120406/summary.json`.
 
 Reason: after routing motion through the FCU controller intent path, the yaw command includes an extra intent-to-output hop and startup/settle latency. A 3 second yaw window produced about 0.243 rad, just below the gate, while the same controller path with a 4 second window produced 0.450 rad in `artifacts/ros/navlab_companion_sitl_gazebo/20260607_121115/summary.json`. Extending the action window preserves the stricter yaw delta gate instead of lowering the minimum accepted motion.
+
+## 2026-06-07: P8 starts with bounded frontier-lite exploration
+
+Decision: implement P8 as a bounded `frontier_lite` exploration gate that publishes exploration goals and FCU setpoint intents, while the existing `navlab_fcu_controller` remains the only `/ap/v1/cmd_vel` owner.
+
+Basis: P8 design/TODO and the verified P7 coordinator/controller split.
+
+Reason: P8 needs to prove an exploration claim without prematurely requiring a full production Nav2 stack. The bounded strategy uses SLAM map growth, scan clearance, TF/FCU readiness, and task state to choose forward probes or yaw scans, records coverage/progress metrics, and blocks on safety/stuck/owner/truth-input violations. This preserves the P6 hover and P7 motion boundaries while adding a real exploration acceptance artifact: `artifacts/ros/navlab_companion_sitl_gazebo/20260607_144800/summary.json`.
+
+## 2026-06-07: P8 records the official Iris lidar TF as static
+
+Decision: publish `base_link -> base_scan` from the SLAM bringup static TF path with the official Iris lidar offset `z=0.075077`, and make generated official-maze SLAM runtime files pass `laser_frame=base_scan` instead of only `laser_frame_id`.
+
+Basis: Foxglove inspection of `artifacts/ros/navlab_companion_sitl_gazebo/20260607_153832/rosbag/rosbag_0.mcap` and comparison with `/home/nn/workspace/3588/ardupilot_gz/ardupilot_gz_description/models/iris_with_lidar/model.sdf`.
+
+Reason: the original bag used `/scan.header.frame_id=base_scan`, but `/tf_static` contained `base_link -> laser_frame` while `base_link -> base_scan` appeared only on dynamic `/tf`. Foxglove can then report `Missing transform from frame <base_scan> to frame <map>` when visualizing scans/maps. The official model fixes the lidar at `base_link -> base_scan` with `z=0.075077`, so future P3-P8 runs should record that relationship on `/tf_static` directly instead of relying on a post-process MCAP patch.

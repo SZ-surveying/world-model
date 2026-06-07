@@ -60,8 +60,8 @@ Gazebo 物理世界
 | P5 | Frame contract 自动验收 | TF 链、传感器 frame、scan 前向、rangefinder/IMU frame 和 rosbag contract 自动通过；动态运动方向留给 P6/P7 | PX4 odom converter | `todos/P5_frame_contract_todo.md` |
 | P6 | 真实 SLAM hover gate | `/slam/odom -> ExternalNav -> EKF -> FCU hover` 稳定通过 | official + NavLab acceptance | `todos/P6_slam_hover_gate_todo.md` |
 | P7 | 官方 maze 小范围运动 gate | 在官方 maze 中 forward/back/yaw scan/stop drift 都通过 | VehicleController | `todos/P7_official_maze_motion_gate_todo.md` |
-| P8 | 官方 maze 探索任务 | 在官方 maze 中完成可回放探索，不碰撞 | Nav2 / exploration | 待建 |
-| P9 | NavLab world/model 迁移 | 可选地把官方 maze/Iris 替换为 NavLab world/model | `ardupilot_gz` + NavLab world | 待建 |
+| P8 | 官方 maze 探索任务 | 在官方 maze 中完成可回放探索，不碰撞 | Nav2 / exploration | `todos/P8_official_maze_exploration_todo.md` |
+| P9 | 官方 maze 底图叠加与 Foxglove-lite 回放 | 官方 maze 1:1 底图、SLAM 叠加、裁剪和轻量 MCAP 上传 | `ardupilot_gz` maze.sdf + Foxglove | `todos/P9_official_maze_overlay_replay_todo.md` |
 
 ## 4. Phase 详细定义
 
@@ -317,7 +317,9 @@ TODO：
 目标：
 
 - 在官方 maze/Iris 场景里做探索任务，因为官方 maze 比当前 NavLab 8 字形场景更复杂，更适合先验证导航策略。
+- 复用 P6 hover readiness 和 P7 motion readiness，不跳过前置 gate。
 - 探索策略只能使用 SLAM map、scan、TF、FCU state 和任务状态，不直接读取 Gazebo truth。
+- exploration coordinator 只发布 intent，继续由唯一 FCU controller 发布 `/ap/v1/cmd_vel`。
 
 任务流示例：
 
@@ -337,23 +339,55 @@ TODO：
 
 - rosbag/Foxglove 可复现完整探索任务。
 - 不碰撞。
+- 不 stuck。
 - 不直接读答案式 Gazebo truth 做规划输入。
-- scan_left/scan_right 只在必要时由规划策略触发。
+- coverage 或 map growth 达到配置阈值。
+- scan_left/scan_right 或 yaw scan 只在必要时由规划策略触发。
 - summary 记录覆盖区域、碰撞状态、stuck 状态和最终任务状态。
+- summary 明确 `exploration_claim=evaluated`，且 P8 不代表 P9 replay/visualization artifact 已完成。
 
-### P9：NavLab world/model 迁移
+设计文档：
+
+- `docs/scenarios/indoor/navlab_p8_official_maze_exploration_design.md`
+
+TODO：
+
+- `docs/scenarios/indoor/todos/P8_official_maze_exploration_todo.md`
+
+### P9：官方 maze 底图叠加与 Foxglove-lite 回放
 
 目标：
 
-- 在官方 maze 场景已经完成 P1-P8 后，可选地把 world/model 替换为 NavLab 8 字形 world 和 NavLab 机体模型。
-- 这个阶段是迁移和定制，不是当前真实闭环主线的前置条件。
-- 保证替换 world/model 后，无人机仍由 ArduPilot SITL 和 Gazebo plugin 控制。
+- 在 P8 官方 maze 探索任务通过后，生成一个更适合 Foxglove 查看和上传的轻量 replay artifact。
+- 解析官方 `maze.sdf` 的真实墙体，生成 1:1 米制官方底图。
+- 把官方底图、SLAM `/map`、`/scan`、轨迹和 exploration 状态叠加到同一 `map` frame。
+- 默认按 SLAM/轨迹 bbox 裁剪底图，而不是缩小 Gazebo world 或缩放坐标。
+- 输出 `rosbag_foxglove/rosbag_foxglove_0.mcap`，上传时优先使用这个轻量 MCAP。
+
+非目标：
+
+- 不把官方底图作为 SLAM、planning、ExternalNav 或控制输入。
+- 不物理缩小官方 maze。
+- 不替换 NavLab 8 字形 world/model。
+- 不重新声明 P8 exploration 是否通过。
 
 完成标准：
 
-- NavLab world/model 可在官方 bringup 结构下启动。
-- 墙体、无人机、雷达和 TF 在 Foxglove 中固定参考系正确。
-- 替换 world/model 不破坏 P6 hover gate、P7 小范围运动 gate 和 P8 探索 gate。
+- 官方 `maze.sdf` 解析成功。
+- `/navlab/official_maze/map` 使用 `map` frame、scale=1.0，且可与 SLAM `/map` 叠加。
+- 默认 crop 窗口覆盖 SLAM known cells 和轨迹，并记录 bbox。
+- Foxglove-lite MCAP 存在、非空，并包含 replay required topics。
+- Foxglove-lite MCAP 小于 raw acceptance MCAP，或 summary 明确解释原因。
+- summary 明确 `uses_official_maze_as_input=false`，官方底图仅用于 visualization。
+- 上传脚本在存在 `rosbag_foxglove` 时优先上传轻量 MCAP。
+
+设计文档：
+
+- `docs/scenarios/indoor/navlab_p9_official_maze_overlay_replay_design.md`
+
+TODO：
+
+- `docs/scenarios/indoor/todos/P9_official_maze_overlay_replay_todo.md`
 
 ## 5. 全局不可违反规则
 

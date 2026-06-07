@@ -31,12 +31,37 @@ def test_cartographer_backend_generates_launch_command_from_runtime_config() -> 
     assert "publish_placeholder_odom:=false" in command
     assert "scan_topic:=/scan" in command
     assert "imu_topic:=/imu" in command
+    assert "laser_frame:=laser_frame" in command
+    assert "laser_z:=0" in command
     assert "cartographer_odometry_topic:=/odometry" in command
     assert "odom_topic:=/odom" in command
     assert "slam_status_topic:=/navlab/slam/status" in command
     assert "imu_source_topic:=/ap/imu/experimental/data" in command
     assert "external_nav_input_odom_topic:=/odom" in command
     assert "external_nav_input_odom_topic:=/gazebo/truth/odom" not in command
+
+
+def test_slam_runtime_accepts_frame_id_aliases(tmp_path) -> None:
+    config_path = tmp_path / "slam_runtime.toml"
+    config_path.write_text(
+        "\n".join(
+            (
+                "[slam.runtime]",
+                'laser_frame_id = "base_scan"',
+                'imu_frame_id = "imu_link"',
+                'base_frame_id = "base_link"',
+                'laser_z = "0.075077"',
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    config = RuntimeConfig.load(config_path)
+
+    assert config.laser_frame == "base_scan"
+    assert config.imu_frame == "imu_link"
+    assert config.base_frame == "base_link"
+    assert config.laser_z == "0.075077"
 
 
 def test_slam_backend_registry_exposes_cartographer() -> None:

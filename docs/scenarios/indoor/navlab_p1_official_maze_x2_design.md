@@ -34,7 +34,7 @@ P1 不做：
 - exploration / avoid。
 - direct Gazebo set pose。
 
-NavLab world/model 后移到 P9，等官方 maze + X2 + SLAM + hover + motion + exploration 基础机制稳定后再作为可选迁移。
+NavLab world/model 后移到后续独立 migration phase，等官方 maze + X2 + SLAM + hover + motion + exploration 和 replay artifact 基础机制稳定后再作为可选迁移。
 
 ## 3. 目标架构
 
@@ -194,6 +194,6 @@ P1 完成后：
 - P3 验证 Cartographer `/odom` 质量。
 - P6 做真实 SLAM hover gate。
 - P7/P8 继续在官方 maze 中做小范围运动和探索。
-- P9 再可选替换 NavLab 8 字形 world 和自定义机体。
+- 后续 migration phase 再可选替换 NavLab 8 字形 world 和自定义机体。
 
 如果 P1 没完成，不能进入 motion、exploration 或 NavLab world/model 迁移，因为雷达链路还没有被证明能在官方 baseline 中稳定工作。
