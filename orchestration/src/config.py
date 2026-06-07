@@ -257,6 +257,11 @@ class SlamHoverConfig:
     setpoint_output_topic: str
     owner_status_topic: str
     hover_status_topic: str
+    vehicle_marker_topic: str
+    vehicle_marker_pose_topic: str
+    vehicle_marker_frame_id: str
+    vehicle_marker_rate_hz: float
+    record_visualization_markers: bool
     settle_window_sec: float
     hover_window_sec: float
     final_hold_window_sec: float
@@ -714,6 +719,14 @@ class OrchestrationConfig:
                 ),
                 owner_status_topic=_as_str(slam_hover.get("owner_status_topic"), "/navlab/fcu/owner/status"),
                 hover_status_topic=_as_str(slam_hover.get("hover_status_topic"), "/navlab/hover/status"),
+                vehicle_marker_topic=_as_str(slam_hover.get("vehicle_marker_topic"), "/navlab/vehicle/markers"),
+                vehicle_marker_pose_topic=_as_str(
+                    slam_hover.get("vehicle_marker_pose_topic"),
+                    "/ap/v1/pose/filtered",
+                ),
+                vehicle_marker_frame_id=_as_str(slam_hover.get("vehicle_marker_frame_id"), ""),
+                vehicle_marker_rate_hz=_as_float(slam_hover.get("vehicle_marker_rate_hz"), 10.0),
+                record_visualization_markers=_as_bool(slam_hover.get("record_visualization_markers"), False),
                 settle_window_sec=_as_float(slam_hover.get("settle_window_sec"), 8.0),
                 hover_window_sec=_as_float(slam_hover.get("hover_window_sec"), 18.0),
                 final_hold_window_sec=_as_float(slam_hover.get("final_hold_window_sec"), 5.0),

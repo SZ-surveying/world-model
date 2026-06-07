@@ -341,7 +341,7 @@ def _collect_topic_info(config: RunConfig, *, image: str, topics: tuple[str, ...
         rc, output = host._docker_run_ros_shell_capture(
             config=config,
             image=image,
-            shell_command=f"ros2 topic info -v {shlex.quote(topic)}",
+            shell_command=f"timeout --signal=INT 8s ros2 topic info -v {shlex.quote(topic)}",
             name=None,
             network="host",
             envs={

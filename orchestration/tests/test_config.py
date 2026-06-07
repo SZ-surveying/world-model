@@ -280,6 +280,11 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.slam_hover.imu_topic == "/imu"
     assert config.slam_hover.truth_diagnostic_topic == "/odometry"
     assert config.slam_hover.hover_status_topic == "/navlab/hover/status"
+    assert config.slam_hover.vehicle_marker_topic == "/navlab/vehicle/markers"
+    assert config.slam_hover.vehicle_marker_pose_topic == "/ap/v1/pose/filtered"
+    assert config.slam_hover.vehicle_marker_frame_id == ""
+    assert config.slam_hover.record_visualization_markers is False
+    assert config.slam_hover.vehicle_marker_rate_hz == 10.0
     assert config.slam_hover.hover_window_sec == 18.0
     assert config.slam_hover.max_hover_horizontal_drift_m == 0.35
     assert config.slam_hover.min_external_nav_rate_hz == 5.0
@@ -792,6 +797,7 @@ def test_p6_slam_hover_rosbag_profile_contains_required_topics() -> None:
         "/navlab/hover/status",
     ):
         assert f"required {topic}" in content
+    assert "required /navlab/vehicle/markers" not in content
 
 
 def test_p6_runtime_config_writes_slam_hover_contract(tmp_path) -> None:  # noqa: ANN001
@@ -806,9 +812,45 @@ def test_p6_runtime_config_writes_slam_hover_contract(tmp_path) -> None:  # noqa
     assert runtime["external_nav_status_topic"] == "/external_nav/status"
     assert runtime["fcu_pose_topic"] == "/ap/v1/pose/filtered"
     assert runtime["hover_status_topic"] == "/navlab/hover/status"
+    assert runtime["vehicle_marker_topic"] == "/navlab/vehicle/markers"
+    assert runtime["vehicle_marker_pose_topic"] == "/ap/v1/pose/filtered"
+    assert runtime["vehicle_marker_frame_id"] == ""
+    assert runtime["vehicle_marker_rate_hz"] == 10.0
+    assert runtime["record_visualization_markers"] is False
     assert runtime["uses_gazebo_truth_as_input"] is False
     assert runtime["hover_claim"] == "evaluated"
     assert runtime["exploration_claim"] == "not_evaluated"
+
+
+def test_p6_effective_rosbag_profile_adds_vehicle_markers_only_when_enabled(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(
+        config_path="orchestration/config.toml",
+        run_id="20260603_000000",
+        artifact_dir=tmp_path / "disabled",
+    )
+
+    disabled_profile, disabled_required, _, disabled_topics = slam_hover_task_module._write_p6_effective_rosbag_profile(
+        config
+    )
+
+    assert disabled_profile.is_file()
+    assert config.orchestration.slam_hover.vehicle_marker_topic not in disabled_required
+    assert config.orchestration.slam_hover.vehicle_marker_topic not in disabled_topics
+
+    enabled_orchestration = replace(
+        config.orchestration,
+        slam_hover=replace(config.orchestration.slam_hover, record_visualization_markers=True),
+    )
+    enabled_config = replace(config, orchestration=enabled_orchestration, artifact_dir=tmp_path / "enabled")
+
+    enabled_profile, enabled_required, _, enabled_topics = slam_hover_task_module._write_p6_effective_rosbag_profile(
+        enabled_config
+    )
+
+    assert enabled_profile.is_file()
+    assert enabled_config.orchestration.slam_hover.vehicle_marker_topic in enabled_required
+    assert enabled_config.orchestration.slam_hover.vehicle_marker_topic in enabled_topics
+    assert "record_visualization_markers: true" in enabled_profile.read_text(encoding="utf-8")
 
 
 def test_p6_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
@@ -869,6 +911,32 @@ def test_p6_blockers_detect_failed_hover_gate() -> None:
     assert "P6 FCU local position gate did not pass" in blockers
     assert "P6 rosbag profile did not pass" in blockers
     assert "/navlab/hover/status was not recorded" in blockers
+
+
+def test_p6_blockers_require_vehicle_marker_only_when_recording_enabled() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    enabled_orchestration = replace(
+        config.orchestration,
+        slam_hover=replace(config.orchestration.slam_hover, record_visualization_markers=True),
+    )
+    enabled_config = replace(config, orchestration=enabled_orchestration)
+    blockers: list[str] = []
+
+    slam_hover_task_module._append_p6_blockers(
+        blockers=blockers,
+        hover_summary={
+            "ok": True,
+            "slam_odom": {"ok": True},
+            "external_nav": {"ok": True},
+            "fcu": {"local_position_ok": True},
+            "hover": {"ok": True},
+        },
+        rosbag_profile={"ok": True},
+        counts={config.orchestration.slam_hover.hover_status_topic: 1},
+        p6=enabled_config.orchestration.slam_hover,
+    )
+
+    assert "/navlab/vehicle/markers was not recorded" in blockers
 
 
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
@@ -941,14 +1009,16 @@ def test_navlab_official_baseline_doctor_writes_cartographer_summary(monkeypatch
         command = kwargs["shell_command"]
         if command == "true":
             return 0, ""
-        if command == "ros2 pkg prefix cartographer_ros":
+        if command == "timeout --signal=INT 8s ros2 pkg prefix cartographer_ros":
             return 0, "/opt/ros/jazzy\n"
-        if command == "ros2 pkg executables cartographer_ros":
+        if command == "timeout --signal=INT 8s ros2 pkg executables cartographer_ros":
             return 0, (
                 "cartographer_ros cartographer_node\n"
                 "cartographer_ros cartographer_occupancy_grid_node\n"
             )
-        if command.startswith("ros2 pkg prefix ardupilot_") or command == "ros2 pkg prefix micro_ros_agent":
+        if command.startswith("timeout --signal=INT 8s ros2 pkg prefix ardupilot_"):
+            return 0, "/opt/navlab_official_ws/install\n"
+        if command == "timeout --signal=INT 8s ros2 pkg prefix micro_ros_agent":
             return 0, "/opt/navlab_official_ws/install\n"
         if "MicroXRCEAgent" in command:
             return 0, f"/usr/bin/{command.rsplit(maxsplit=1)[-1]}\n"
@@ -1013,14 +1083,16 @@ def test_navlab_official_baseline_acceptance_blocks_mavlink_fallback_without_ap_
         command = kwargs["shell_command"]
         if command == "true":
             return 0, ""
-        if command == "ros2 pkg prefix cartographer_ros":
+        if command == "timeout --signal=INT 8s ros2 pkg prefix cartographer_ros":
             return 0, "/opt/ros/jazzy\n"
-        if command == "ros2 pkg executables cartographer_ros":
+        if command == "timeout --signal=INT 8s ros2 pkg executables cartographer_ros":
             return 0, (
                 "cartographer_ros cartographer_node\n"
                 "cartographer_ros cartographer_occupancy_grid_node\n"
             )
-        if command.startswith("ros2 pkg prefix ardupilot_") or command == "ros2 pkg prefix micro_ros_agent":
+        if command.startswith("timeout --signal=INT 8s ros2 pkg prefix ardupilot_"):
+            return 0, "/opt/navlab_official_ws/install\n"
+        if command == "timeout --signal=INT 8s ros2 pkg prefix micro_ros_agent":
             return 0, "/opt/navlab_official_ws/install\n"
         if "MicroXRCEAgent" in command:
             return 0, f"/usr/bin/{command.rsplit(maxsplit=1)[-1]}\n"

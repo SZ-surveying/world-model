@@ -77,13 +77,13 @@ def _cartographer_dependency_summary(config: RunConfig) -> dict[str, Any]:
     prefix_rc, prefix_output = host._docker_run_ros_shell_capture(
         config=config,
         image=config.slam_image,
-        shell_command="ros2 pkg prefix cartographer_ros",
+        shell_command="timeout --signal=INT 8s ros2 pkg prefix cartographer_ros",
         name=None,
     )
     executables_rc, executables_output = host._docker_run_ros_shell_capture(
         config=config,
         image=config.slam_image,
-        shell_command="ros2 pkg executables cartographer_ros",
+        shell_command="timeout --signal=INT 8s ros2 pkg executables cartographer_ros",
         name=None,
     )
     executables = [line.strip() for line in executables_output.splitlines() if line.strip()]
@@ -172,7 +172,7 @@ def _official_ros_dependency_summary(config: RunConfig) -> dict[str, Any]:
         rc, output = host._docker_run_ros_shell_capture(
             config=config,
             image=baseline.runtime_image,
-            shell_command=f"ros2 pkg prefix {shlex.quote(package)}",
+            shell_command=f"timeout --signal=INT 8s ros2 pkg prefix {shlex.quote(package)}",
             name=None,
         )
         packages[package] = {
@@ -187,7 +187,7 @@ def _official_ros_dependency_summary(config: RunConfig) -> dict[str, Any]:
             image=baseline.runtime_image,
             shell_command=(
                 f"command -v {shlex.quote(binary)} || "
-                "ros2 pkg executables micro_ros_agent | "
+                "timeout --signal=INT 8s ros2 pkg executables micro_ros_agent | "
                 f"awk '{{print $2}}' | grep -Fx {shlex.quote(binary)}"
             ),
             name=None,

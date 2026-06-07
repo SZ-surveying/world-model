@@ -24,6 +24,14 @@ Basis: codebase research and Foxglove replay constraints.
 
 Reason: the Gazebo world already flies `model://navlab_iq_quad`, but ROS MCAP replay cannot directly render Gazebo's nested model tree. File-path mesh resources such as `file:///workspace/...` only work on machines with that exact path, so they fail for Foxglove Cloud and for other developers' local replay. MCAP attachments are not automatically resolved by `visualization_msgs/Marker` mesh resources, and large Collada payloads are not a good fit for repeated ROS Marker messages. Primitive markers are portable and visible anywhere the MCAP is opened. Exact mesh replay should be added later as a Foxglove `SceneUpdate` channel using `ModelPrimitive.data`, not as ROS Marker `file://` resources.
 
+## 2026-06-07: NavLab P6 records a portable vehicle shell layer
+
+Decision: record `/navlab/vehicle/markers` in the P6 SLAM hover MCAP and generate it from the FCU pose with primitive `MarkerArray` geometry.
+
+Basis: current replay gap and Foxglove portability.
+
+Reason: P6 already proves the SLAM -> ExternalNav -> EKF -> hover loop, but Foxglove replay still needs a vehicle shell layer to make the motion readable. The shell must not depend on local mesh paths because the same MCAP should open on another laptop or in Foxglove Cloud. A primitive `MarkerArray` following `/ap/v1/pose/filtered` is self-contained, portable, and easy to keep in acceptance as a required topic.
+
 ## 2026-06-04: NavLab hover gate requires SLAM-derived ExternalNav
 
 Decision: current completion gate must feed `external_nav_bridge` from SLAM `/odom`, not from `/gazebo/truth/odom`.
