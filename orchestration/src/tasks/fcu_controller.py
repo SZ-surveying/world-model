@@ -171,12 +171,19 @@ class P4Controller:
             "range_status": None,
             "imu": None,
         }}
+        self.motion_command = {{"kind": "hold", "linear_x_mps": 0.0, "angular_z_radps": 0.0, "updated_monotonic": 0.0}}
+        self.stop_requested = False
         self.state_pub = self.node.create_publisher(String, SPEC["fcu_state_topic"], 10)
         self.status_pub = self.node.create_publisher(String, SPEC["controller_status_topic"], 10)
         self.intent_pub = self.node.create_publisher(String, SPEC["setpoint_intent_topic"], 10)
         self.output_pub = self.node.create_publisher(String, SPEC["setpoint_output_topic"], 10)
         self.owner_pub = self.node.create_publisher(String, SPEC["owner_status_topic"], 10)
         self.cmd_vel_pub = self.node.create_publisher(TwistStamped, SPEC["cmd_vel_topic"], 10)
+        self.hover_pub = None
+        if SPEC.get("hover_status_topic"):
+            self.hover_pub = self.node.create_publisher(String, SPEC["hover_status_topic"], 10)
+        if SPEC.get("enable_motion_intent_control", False):
+            self.node.create_subscription(String, SPEC["setpoint_intent_topic"], self._motion_intent_cb, 10)
         self.fcu_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
@@ -243,6 +250,32 @@ class P4Controller:
             "monotonic": time.monotonic(),
         }}
 
+    def _motion_intent_cb(self, msg: String) -> None:
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        if payload.get("source") == "navlab_fcu_controller":
+            return
+        kind = str(payload.get("kind") or "hold")
+        if kind not in {{"forward", "back", "yaw_scan", "stop", "final_hold", "complete"}}:
+            return
+        if not self.ready:
+            self.publish_intent(kind, accepted=False, reason="controller_not_ready")
+            return
+        if kind == "complete":
+            self.motion_command = {{"kind": "hold", "linear_x_mps": 0.0, "angular_z_radps": 0.0, "updated_monotonic": time.monotonic()}}
+            self.publish_intent(kind, accepted=True, reason="motion_gate_complete")
+            self.stop_requested = True
+            return
+        self.motion_command = {{
+            "kind": kind,
+            "linear_x_mps": float(payload.get("linear_x_mps") or 0.0),
+            "angular_z_radps": float(payload.get("angular_z_radps") or 0.0),
+            "updated_monotonic": time.monotonic(),
+        }}
+        self.publish_intent(kind, accepted=True, reason="motion_intent_accepted")
+
     def spin_for(self, seconds: float) -> None:
         end = time.monotonic() + seconds
         while time.monotonic() < end:
@@ -308,6 +341,8 @@ class P4Controller:
         self.state_pub.publish(self._json_msg(state_payload))
         self.owner_pub.publish(self._json_msg(owner_payload))
         self.status_pub.publish(self._json_msg(status_payload))
+        if self.hover_pub is not None:
+            self.hover_pub.publish(self._json_msg({{**status_payload, "phase": "p6_hover_prerequisite"}}))
 
     def publish_intent(self, kind: str, *, accepted: bool, reason: str) -> None:
         self.seq += 1
@@ -329,7 +364,15 @@ class P4Controller:
         if not accepted:
             self.publish_output(kind, sent_to_fcu=False, reason=reason)
 
-    def publish_output(self, kind: str, *, sent_to_fcu: bool, reason: str) -> None:
+    def publish_output(
+        self,
+        kind: str,
+        *,
+        sent_to_fcu: bool,
+        reason: str,
+        linear_x_mps: float = 0.0,
+        angular_z_radps: float = 0.0,
+    ) -> None:
         self.counts["output"] += 1
         payload = {{
             "source": "navlab_fcu_controller",
@@ -341,6 +384,8 @@ class P4Controller:
             "output_topic": SPEC["cmd_vel_topic"] if sent_to_fcu else "",
             "control_route": SPEC["control_route"],
             "reason": reason,
+            "linear_x_mps": linear_x_mps,
+            "angular_z_radps": angular_z_radps,
             "updated_ms": now_ms(),
         }}
         self.output_pub.publish(self._json_msg(payload))
@@ -348,6 +393,8 @@ class P4Controller:
             cmd = TwistStamped()
             cmd.header.stamp = self.node.get_clock().now().to_msg()
             cmd.header.frame_id = "base_link"
+            cmd.twist.linear.x = float(linear_x_mps)
+            cmd.twist.angular.z = float(angular_z_radps)
             self.cmd_vel_pub.publish(cmd)
             self.counts["cmd_vel"] += 1
 
@@ -580,9 +627,20 @@ class P4Controller:
             self.publish_output(kind, sent_to_fcu=(kind in {{"hover", "yaw", "hold"}}), reason="single_owner_output")
             self.spin_for(0.4)
         hold_end = min(self.deadline, time.monotonic() + float(SPEC["hold_after_ready_sec"]))
-        while time.monotonic() < hold_end:
-            self.publish_output("hold", sent_to_fcu=True, reason="final_hold")
-            self.spin_for(0.5)
+        while time.monotonic() < hold_end and not self.stop_requested:
+            command = self.motion_command
+            command_age = time.monotonic() - float(command.get("updated_monotonic") or 0.0)
+            if SPEC.get("enable_motion_intent_control", False) and command_age <= 1.0:
+                self.publish_output(
+                    str(command.get("kind") or "hold"),
+                    sent_to_fcu=True,
+                    reason="motion_intent_control",
+                    linear_x_mps=float(command.get("linear_x_mps") or 0.0),
+                    angular_z_radps=float(command.get("angular_z_radps") or 0.0),
+                )
+            else:
+                self.publish_output("hold", sent_to_fcu=True, reason="final_hold")
+            self.spin_for(0.1)
         return self.finish("complete")
 
     def finish(self, final_state: str) -> dict:
@@ -661,6 +719,8 @@ def _write_controller_runtime_script(
     *,
     duration_sec: float,
     hold_after_ready_sec: float | None = None,
+    enable_motion_intent_control: bool = False,
+    hover_status_topic: str = "",
 ) -> dict[str, Any]:
     p4 = config.orchestration.fcu_controller
     summary_file = config.artifact_dir / "controller_runtime_summary.json"
@@ -696,6 +756,8 @@ def _write_controller_runtime_script(
         "takeoff_alt_m": p4.takeoff_alt_m,
         "readiness_timeout_sec": p4.readiness_timeout_sec,
         "hold_after_ready_sec": p4.hold_after_ready_sec if hold_after_ready_sec is None else hold_after_ready_sec,
+        "enable_motion_intent_control": enable_motion_intent_control,
+        "hover_status_topic": hover_status_topic,
         "hover_claim": p4.hover_claim,
         "exploration_claim": p4.exploration_claim,
     }

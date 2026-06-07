@@ -6,6 +6,7 @@ from src.tasks.doctor import DoctorTask
 from src.tasks.hover import HoverAcceptanceTask
 from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
+from src.tasks.motion_gate import MotionGateAcceptanceTask, MotionGateDoctorTask
 from src.tasks.registry import TaskRegistry
 
 __all__ = [
@@ -15,5 +16,7 @@ __all__ = [
     "HoverAcceptanceTask",
     "HoverDiagnosticTask",
     "HoverSlamDiagnosticTask",
+    "MotionGateAcceptanceTask",
+    "MotionGateDoctorTask",
     "TaskRegistry",
 ]

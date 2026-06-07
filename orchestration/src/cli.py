@@ -13,6 +13,7 @@ from src.tasks.frame_contract import FrameContractAcceptanceTask, FrameContractD
 from src.tasks.hover import HoverAcceptanceTask
 from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
+from src.tasks.motion_gate import MotionGateAcceptanceTask, MotionGateDoctorTask
 from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
 from src.tasks.official_maze_x2 import OfficialMazeX2AcceptanceTask
 from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
@@ -249,6 +250,30 @@ def slam_hover_acceptance_command(
     ] = None,
 ) -> None:
     task = cast(SlamHoverAcceptanceTask, TaskRegistry.create("slam-hover-acceptance"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+
+
+@app.command("motion-gate-doctor")
+def motion_gate_doctor_command(
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(MotionGateDoctorTask, TaskRegistry.create("motion-gate-doctor"))
+    raise typer.Exit(task.run(config_path=config, console=console))
+
+
+@app.command("motion-gate-acceptance")
+def motion_gate_acceptance_command(
+    duration_sec: Annotated[float, typer.Argument(help="P7 official maze motion acceptance duration in seconds")]
+    = 120.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(MotionGateAcceptanceTask, TaskRegistry.create("motion-gate-acceptance"))
     raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
 
 

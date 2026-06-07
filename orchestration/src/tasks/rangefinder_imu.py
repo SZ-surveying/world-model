@@ -368,7 +368,7 @@ def _message_counts(config: RunConfig) -> dict[str, int]:
     return _load_rosbag_metadata_counts(metadata)
 
 
-def _collect_rangefinder_probe(config: RunConfig, *, image: str) -> dict[str, Any]:
+def _collect_rangefinder_probe(config: RunConfig, *, image: str, artifact_name: str = "rangefinder_probe.txt") -> dict[str, Any]:
     p2 = config.orchestration.rangefinder_imu
     baseline = config.orchestration.official_baseline
     script = f"""
@@ -445,7 +445,7 @@ print(json.dumps(result, sort_keys=True))
             "RMW_IMPLEMENTATION": baseline.rmw_implementation,
         },
     )
-    _write_text(config.artifact_dir / "rangefinder_probe.txt", output)
+    _write_text(config.artifact_dir / artifact_name, output)
     parsed: dict[str, Any] = {}
     if rc == 0:
         for line in reversed([line.strip() for line in output.splitlines() if line.strip()]):

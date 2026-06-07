@@ -60,6 +60,7 @@ class TaskRegistry:
             "src.tasks.fcu_controller",
             "src.tasks.frame_contract",
             "src.tasks.slam_hover",
+            "src.tasks.motion_gate",
         ):
             import_module(module_name)
 

@@ -92,6 +92,14 @@ navlab-slam-hover-doctor *args='':
 navlab-slam-hover-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} slam-hover-acceptance {{duration_sec}} {{args}}
 
+# Check P7 official maze motion gate prerequisites.
+navlab-motion-gate-doctor *args='':
+    {{orchestration_cmd}} motion-gate-doctor {{args}}
+
+# Run P7 official maze motion gate acceptance.
+navlab-motion-gate-acceptance duration_sec='120' *args='':
+    {{orchestration_cmd}} motion-gate-acceptance {{duration_sec}} {{args}}
+
 # Run NavLab companion + SITL + Gazebo obstacle acceptance with rosbag/Foxglove artifacts.
 navlab-acceptance duration_sec='90' *args='':
     {{orchestration_cmd}} acceptance {{duration_sec}} {{args}}

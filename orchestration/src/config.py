@@ -279,6 +279,57 @@ class SlamHoverConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class MotionGateConfig:
+    rosbag_profile: str
+    slam_odom_topic: str
+    slam_status_topic: str
+    external_nav_status_topic: str
+    fcu_pose_topic: str
+    fcu_twist_topic: str
+    fcu_status_topic: str
+    cmd_vel_topic: str
+    rangefinder_range_topic: str
+    rangefinder_status_topic: str
+    imu_topic: str
+    scan_topic: str
+    truth_diagnostic_topic: str
+    controller_status_topic: str
+    setpoint_intent_topic: str
+    setpoint_output_topic: str
+    owner_status_topic: str
+    hover_status_topic: str
+    motion_status_topic: str
+    settle_window_sec: float
+    forward_window_sec: float
+    back_window_sec: float
+    yaw_window_sec: float
+    stop_hold_window_sec: float
+    final_hold_window_sec: float
+    motion_distance_m: float
+    motion_speed_mps: float
+    yaw_scan_rad: float
+    yaw_rate_radps: float
+    min_forward_displacement_m: float
+    max_forward_displacement_m: float
+    min_back_displacement_m: float
+    max_back_displacement_m: float
+    min_yaw_delta_rad: float
+    max_yaw_delta_rad: float
+    max_lateral_error_m: float
+    max_motion_altitude_error_m: float
+    max_stop_drift_m: float
+    min_clearance_m: float
+    min_slam_odom_rate_hz: float
+    min_external_nav_rate_hz: float
+    min_fcu_local_position_rate_hz: float
+    max_latest_age_sec: float
+    uses_gazebo_truth_as_input: bool
+    hover_claim: str
+    motion_claim: str
+    exploration_claim: str
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -307,6 +358,7 @@ class OrchestrationConfig:
     fcu_controller: FcuControllerConfig
     frame_contract: FrameContractConfig
     slam_hover: SlamHoverConfig
+    motion_gate: MotionGateConfig
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -326,6 +378,7 @@ class OrchestrationConfig:
         fcu_controller = _section(data, "fcu_controller")
         frame_contract = _section(data, "frame_contract")
         slam_hover = _section(data, "slam_hover")
+        motion_gate = _section(data, "motion_gate")
         foxglove_upload = _section(data, "foxglove_upload")
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
@@ -748,6 +801,88 @@ class OrchestrationConfig:
                 hover_claim=_as_str(slam_hover.get("hover_claim"), "evaluated"),
                 exploration_claim=_as_str(slam_hover.get("exploration_claim"), "not_evaluated"),
             ),
+            motion_gate=MotionGateConfig(
+                rosbag_profile=_as_str(
+                    motion_gate.get("rosbag_profile"),
+                    "profiles/navlab-motion-gate-rosbag-topics.txt",
+                ),
+                slam_odom_topic=_as_str(motion_gate.get("slam_odom_topic"), "/slam/odom"),
+                slam_status_topic=_as_str(motion_gate.get("slam_status_topic"), "/navlab/slam/status"),
+                external_nav_status_topic=_as_str(
+                    motion_gate.get("external_nav_status_topic"),
+                    "/external_nav/status",
+                ),
+                fcu_pose_topic=_as_str(motion_gate.get("fcu_pose_topic"), "/ap/v1/pose/filtered"),
+                fcu_twist_topic=_as_str(motion_gate.get("fcu_twist_topic"), "/ap/v1/twist/filtered"),
+                fcu_status_topic=_as_str(motion_gate.get("fcu_status_topic"), "/ap/v1/status"),
+                cmd_vel_topic=_as_str(motion_gate.get("cmd_vel_topic"), "/ap/v1/cmd_vel"),
+                rangefinder_range_topic=_as_str(
+                    motion_gate.get("rangefinder_range_topic"),
+                    "/rangefinder/down/range",
+                ),
+                rangefinder_status_topic=_as_str(
+                    motion_gate.get("rangefinder_status_topic"),
+                    "/rangefinder/down/status",
+                ),
+                imu_topic=_as_str(motion_gate.get("imu_topic"), "/imu"),
+                scan_topic=_as_str(motion_gate.get("scan_topic"), "/scan"),
+                truth_diagnostic_topic=_as_str(motion_gate.get("truth_diagnostic_topic"), "/odometry"),
+                controller_status_topic=_as_str(
+                    motion_gate.get("controller_status_topic"),
+                    "/navlab/fcu/controller/status",
+                ),
+                setpoint_intent_topic=_as_str(
+                    motion_gate.get("setpoint_intent_topic"),
+                    "/navlab/fcu/setpoint/intent",
+                ),
+                setpoint_output_topic=_as_str(
+                    motion_gate.get("setpoint_output_topic"),
+                    "/navlab/fcu/setpoint/output",
+                ),
+                owner_status_topic=_as_str(motion_gate.get("owner_status_topic"), "/navlab/fcu/owner/status"),
+                hover_status_topic=_as_str(motion_gate.get("hover_status_topic"), "/navlab/hover/status"),
+                motion_status_topic=_as_str(motion_gate.get("motion_status_topic"), "/navlab/motion/status"),
+                settle_window_sec=_as_float(motion_gate.get("settle_window_sec"), 4.0),
+                forward_window_sec=_as_float(motion_gate.get("forward_window_sec"), 4.0),
+                back_window_sec=_as_float(motion_gate.get("back_window_sec"), 4.0),
+                yaw_window_sec=_as_float(motion_gate.get("yaw_window_sec"), 3.0),
+                stop_hold_window_sec=_as_float(motion_gate.get("stop_hold_window_sec"), 5.0),
+                final_hold_window_sec=_as_float(motion_gate.get("final_hold_window_sec"), 8.0),
+                motion_distance_m=_as_float(motion_gate.get("motion_distance_m"), 0.40),
+                motion_speed_mps=_as_float(motion_gate.get("motion_speed_mps"), 0.12),
+                yaw_scan_rad=_as_float(motion_gate.get("yaw_scan_rad"), 0.50),
+                yaw_rate_radps=_as_float(motion_gate.get("yaw_rate_radps"), 0.20),
+                min_forward_displacement_m=_as_float(
+                    motion_gate.get("min_forward_displacement_m"),
+                    0.20,
+                ),
+                max_forward_displacement_m=_as_float(
+                    motion_gate.get("max_forward_displacement_m"),
+                    0.80,
+                ),
+                min_back_displacement_m=_as_float(motion_gate.get("min_back_displacement_m"), 0.20),
+                max_back_displacement_m=_as_float(motion_gate.get("max_back_displacement_m"), 0.80),
+                min_yaw_delta_rad=_as_float(motion_gate.get("min_yaw_delta_rad"), 0.25),
+                max_yaw_delta_rad=_as_float(motion_gate.get("max_yaw_delta_rad"), 0.90),
+                max_lateral_error_m=_as_float(motion_gate.get("max_lateral_error_m"), 0.30),
+                max_motion_altitude_error_m=_as_float(
+                    motion_gate.get("max_motion_altitude_error_m"),
+                    0.30,
+                ),
+                max_stop_drift_m=_as_float(motion_gate.get("max_stop_drift_m"), 0.25),
+                min_clearance_m=_as_float(motion_gate.get("min_clearance_m"), 0.35),
+                min_slam_odom_rate_hz=_as_float(motion_gate.get("min_slam_odom_rate_hz"), 1.0),
+                min_external_nav_rate_hz=_as_float(motion_gate.get("min_external_nav_rate_hz"), 5.0),
+                min_fcu_local_position_rate_hz=_as_float(
+                    motion_gate.get("min_fcu_local_position_rate_hz"),
+                    2.0,
+                ),
+                max_latest_age_sec=_as_float(motion_gate.get("max_latest_age_sec"), 1.5),
+                uses_gazebo_truth_as_input=_as_bool(motion_gate.get("uses_gazebo_truth_as_input"), False),
+                hover_claim=_as_str(motion_gate.get("hover_claim"), "evaluated"),
+                motion_claim=_as_str(motion_gate.get("motion_claim"), "evaluated"),
+                exploration_claim=_as_str(motion_gate.get("exploration_claim"), "not_evaluated"),
+            ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
                 api_url=_as_str(foxglove_upload.get("api_url"), "https://api.foxglove.dev/v1"),
@@ -846,6 +981,10 @@ class RunConfig:
     @property
     def slam_hover_rosbag_profile(self) -> str:
         return self.orchestration.slam_hover.rosbag_profile
+
+    @property
+    def motion_gate_rosbag_profile(self) -> str:
+        return self.orchestration.motion_gate.rosbag_profile
 
     @classmethod
     def from_config(

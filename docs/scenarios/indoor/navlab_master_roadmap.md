@@ -59,7 +59,7 @@ Gazebo 物理世界
 | P4 | FCU 状态机和唯一控制器 | 只有一个 owner 向 FCU 发运动 setpoint | `Altair-Silent` + `claudedrone` | `todos/P4_fcu_state_machine_todo.md` |
 | P5 | Frame contract 自动验收 | TF 链、传感器 frame、scan 前向、rangefinder/IMU frame 和 rosbag contract 自动通过；动态运动方向留给 P6/P7 | PX4 odom converter | `todos/P5_frame_contract_todo.md` |
 | P6 | 真实 SLAM hover gate | `/slam/odom -> ExternalNav -> EKF -> FCU hover` 稳定通过 | official + NavLab acceptance | `todos/P6_slam_hover_gate_todo.md` |
-| P7 | 官方 maze 小范围运动 gate | 在官方 maze 中 forward/back/yaw scan/stop drift 都通过 | VehicleController | 待建 |
+| P7 | 官方 maze 小范围运动 gate | 在官方 maze 中 forward/back/yaw scan/stop drift 都通过 | VehicleController | `todos/P7_official_maze_motion_gate_todo.md` |
 | P8 | 官方 maze 探索任务 | 在官方 maze 中完成可回放探索，不碰撞 | Nav2 / exploration | 待建 |
 | P9 | NavLab world/model 迁移 | 可选地把官方 maze/Iris 替换为 NavLab world/model | `ardupilot_gz` + NavLab world | 待建 |
 
@@ -261,7 +261,7 @@ TODO：
 完成标准：
 
 - FCU 定高稳定。
-- SLAM `/odom` 是 ExternalNav 输入。
+- SLAM `/slam/odom` 是 ExternalNav 输入。
 - EKF 接收 ExternalNav。
 - hover drift 在阈值内。
 - `set_pose_count == 0`。
@@ -299,10 +299,18 @@ TODO：
 
 完成标准：
 
-- 每个动作有 FCU setpoint、SLAM `/odom`、FCU local position、Gazebo truth 诊断对照。
+- 每个动作有 FCU setpoint、SLAM `/slam/odom`、FCU local position、Gazebo truth 诊断对照。
 - 停止后漂移在阈值内。
 - 不碰撞。
 - `set_pose_count == 0`。
+
+设计文档：
+
+- `docs/scenarios/indoor/navlab_p7_official_maze_motion_gate_design.md`
+
+TODO：
+
+- `docs/scenarios/indoor/todos/P7_official_maze_motion_gate_todo.md`
 
 ### P8：官方 maze 探索任务
 

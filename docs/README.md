@@ -27,6 +27,8 @@
 - `docs/scenarios/indoor/todos/P5_frame_contract_todo.md`: P5 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_p6_slam_hover_gate_design.md`: P6 真实 SLAM hover gate 设计
 - `docs/scenarios/indoor/todos/P6_slam_hover_gate_todo.md`: P6 TODO 和验收标准
+- `docs/scenarios/indoor/navlab_p7_official_maze_motion_gate_design.md`: P7 官方 maze 小范围运动 gate 设计
+- `docs/scenarios/indoor/todos/P7_official_maze_motion_gate_todo.md`: P7 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`: 当前系统与官方路线的对齐审计
 - `docs/scenarios/indoor/navlab_reference_projects_analysis.md`: 四个参考仓库的综合分析和改进建议
 - `docs/scenarios/indoor/navlab_cartographer_real_machine_tuning.md`: Cartographer 真机调参记录口径
@@ -60,11 +62,13 @@
 13. `docs/scenarios/indoor/todos/P5_frame_contract_todo.md`
 14. `docs/scenarios/indoor/navlab_p6_slam_hover_gate_design.md`
 15. `docs/scenarios/indoor/todos/P6_slam_hover_gate_todo.md`
-16. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
-17. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
-18. `docs/sim/x2_lidar_simulation_design.md`
-19. `docs/sim/x2_lidar_protocol_todo.md`
-20. `docs/general/lab_env_service_refactor_todo.md`
+16. `docs/scenarios/indoor/navlab_p7_official_maze_motion_gate_design.md`
+17. `docs/scenarios/indoor/todos/P7_official_maze_motion_gate_todo.md`
+18. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
+19. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
+20. `docs/sim/x2_lidar_simulation_design.md`
+21. `docs/sim/x2_lidar_protocol_todo.md`
+22. `docs/general/lab_env_service_refactor_todo.md`
 
 ## 当前目录结构
 
@@ -84,6 +88,7 @@ docs/
       navlab_p4_fcu_state_machine_design.md
       navlab_p5_frame_contract_design.md
       navlab_p6_slam_hover_gate_design.md
+      navlab_p7_official_maze_motion_gate_design.md
       navlab_ardupilot_ros2_official_alignment.md
       navlab_reference_projects_analysis.md
       navlab_cartographer_real_machine_tuning.md
@@ -95,6 +100,7 @@ docs/
         P4_fcu_state_machine_todo.md
         P5_frame_contract_todo.md
         P6_slam_hover_gate_todo.md
+        P7_official_maze_motion_gate_todo.md
   sim/
     README.md
     todo.md
@@ -112,7 +118,7 @@ docs/
 - companion 等价于机载计算盒子。
 - P0 必须先证明官方 `/ap/*` DDS baseline，而不是直接把自定义 MAVLink bridge 当作完成标准。
 - SLAM 必须消费 `/scan + /imu + /odometry`，不能消费 Gazebo truth 或 FCU fused local position。
-- ExternalNav 验收必须来自真实 SLAM `/odom` 或官方等价 ExternalNav 路线。
+- ExternalNav 验收必须来自真实 SLAM `/slam/odom` 或官方等价 ExternalNav 路线。
 - Gazebo truth 只能用于诊断和误差对照。
 - 上游代码不能直接 `set_pose` 移动 Gazebo 无人机。
 - 每次 acceptance 必须输出 MCAP rosbag，方便 Foxglove 回放。

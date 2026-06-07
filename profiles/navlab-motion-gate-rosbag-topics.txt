@@ -1,0 +1,35 @@
+# Required topics for P7 official maze motion gate.
+required /clock
+required /tf
+required /tf_static
+required /scan
+required /imu
+required /rangefinder/down/range
+required /rangefinder/down/status
+required /slam/odom
+required /navlab/slam/status
+required /external_nav/status
+required /ap/v1/time
+required /ap/v1/pose/filtered
+required /ap/v1/twist/filtered
+required /ap/v1/status
+required /ap/v1/cmd_vel
+required /navlab/fcu/state
+required /navlab/fcu/controller/status
+required /navlab/fcu/setpoint/intent
+required /navlab/fcu/setpoint/output
+required /navlab/fcu/owner/status
+required /navlab/hover/status
+required /navlab/motion/status
+
+# Optional diagnostic topics for Foxglove replay.
+optional /map
+optional /submap_list
+optional /trajectory_node_list
+optional /odometry
+optional /navlab/frame_contract/status
+optional /navlab/x2/vendor_scan
+optional /navlab/x2/scan_ideal
+optional /sim/x2/status
+optional /rangefinder/down/scan_ideal
+optional /navlab/vehicle/markers

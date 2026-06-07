@@ -36,6 +36,8 @@ from src.tasks.frame_contract import FrameContractAcceptanceTask, FrameContractD
 from src.tasks.hover import HoverAcceptanceTask
 from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
+from src.tasks import motion_gate as motion_gate_task_module
+from src.tasks.motion_gate import MotionGateAcceptanceTask, MotionGateDoctorTask
 from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
 from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
 from src.tasks.registry import TaskRegistry
@@ -291,6 +293,22 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.slam_hover.uses_gazebo_truth_as_input is False
     assert config.slam_hover.hover_claim == "evaluated"
     assert config.slam_hover.exploration_claim == "not_evaluated"
+    assert config.motion_gate.rosbag_profile == "profiles/navlab-motion-gate-rosbag-topics.txt"
+    assert config.motion_gate.slam_odom_topic == "/slam/odom"
+    assert config.motion_gate.external_nav_status_topic == "/external_nav/status"
+    assert config.motion_gate.fcu_pose_topic == "/ap/v1/pose/filtered"
+    assert config.motion_gate.cmd_vel_topic == "/ap/v1/cmd_vel"
+    assert config.motion_gate.scan_topic == "/scan"
+    assert config.motion_gate.motion_status_topic == "/navlab/motion/status"
+    assert config.motion_gate.motion_distance_m == 0.40
+    assert config.motion_gate.motion_speed_mps == 0.12
+    assert config.motion_gate.yaw_scan_rad == 0.50
+    assert config.motion_gate.yaw_window_sec == 4.0
+    assert config.motion_gate.min_clearance_m == 0.35
+    assert config.motion_gate.uses_gazebo_truth_as_input is False
+    assert config.motion_gate.hover_claim == "evaluated"
+    assert config.motion_gate.motion_claim == "evaluated"
+    assert config.motion_gate.exploration_claim == "not_evaluated"
 
 
 def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> None:
@@ -939,6 +957,159 @@ def test_p6_blockers_require_vehicle_marker_only_when_recording_enabled() -> Non
     assert "/navlab/vehicle/markers was not recorded" in blockers
 
 
+def test_p7_motion_gate_rosbag_profile_contains_required_topics() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    profile = Path(config.motion_gate_rosbag_profile)
+    content = profile.read_text(encoding="utf-8")
+
+    for topic in (
+        "/clock",
+        "/tf",
+        "/tf_static",
+        "/scan",
+        "/imu",
+        "/rangefinder/down/range",
+        "/rangefinder/down/status",
+        "/slam/odom",
+        "/navlab/slam/status",
+        "/external_nav/status",
+        "/ap/v1/time",
+        "/ap/v1/pose/filtered",
+        "/ap/v1/twist/filtered",
+        "/ap/v1/status",
+        "/ap/v1/cmd_vel",
+        "/navlab/fcu/state",
+        "/navlab/fcu/controller/status",
+        "/navlab/fcu/setpoint/intent",
+        "/navlab/fcu/setpoint/output",
+        "/navlab/fcu/owner/status",
+        "/navlab/hover/status",
+        "/navlab/motion/status",
+    ):
+        assert f"required {topic}" in content
+
+
+def test_p7_runtime_config_writes_motion_gate_contract(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    runtime_config = tmp_path / "p7_motion_gate_runtime.toml"
+
+    summary = motion_gate_task_module._write_p7_runtime_config(config, runtime_config)
+
+    assert runtime_config.is_file()
+    runtime = summary["data"]["motion_gate"]["runtime"]
+    assert runtime["slam_odom_topic"] == "/slam/odom"
+    assert runtime["external_nav_status_topic"] == "/external_nav/status"
+    assert runtime["fcu_pose_topic"] == "/ap/v1/pose/filtered"
+    assert runtime["cmd_vel_topic"] == "/ap/v1/cmd_vel"
+    assert runtime["scan_topic"] == "/scan"
+    assert runtime["motion_status_topic"] == "/navlab/motion/status"
+    assert runtime["motion_distance_m"] == 0.40
+    assert runtime["motion_speed_mps"] == 0.12
+    assert runtime["yaw_scan_rad"] == 0.50
+    assert runtime["uses_gazebo_truth_as_input"] is False
+    assert runtime["hover_claim"] == "evaluated"
+    assert runtime["motion_claim"] == "evaluated"
+    assert runtime["exploration_claim"] == "not_evaluated"
+
+
+def test_p7_motion_coordinator_does_not_publish_cmd_vel(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(
+        config_path="orchestration/config.toml",
+        artifact_dir=tmp_path,
+        run_id="20260603_000000",
+    )
+    script_path = tmp_path / "p7_motion_gate_probe.py"
+
+    motion_gate_task_module._write_motion_probe_script(config, script_path)
+    script = script_path.read_text(encoding="utf-8")
+
+    assert 'rclpy.create_node("navlab_p7_motion_gate_coordinator")' in script
+    assert 'create_publisher(TwistStamped, SPEC["cmd_vel_topic"]' not in script
+    assert 'create_subscription(TwistStamped, SPEC["cmd_vel_topic"]' in script
+
+
+def test_p7_controller_script_can_consume_motion_intents(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(
+        config_path="orchestration/config.toml",
+        artifact_dir=tmp_path,
+        run_id="20260603_000000",
+    )
+    script_path = tmp_path / "p7_fcu_controller_runtime.py"
+
+    summary = fcu_controller_task_module._write_controller_runtime_script(
+        config,
+        script_path,
+        duration_sec=120.0,
+        hold_after_ready_sec=90.0,
+        enable_motion_intent_control=True,
+        hover_status_topic=config.orchestration.motion_gate.hover_status_topic,
+    )
+    script = script_path.read_text(encoding="utf-8")
+
+    assert summary["spec"]["enable_motion_intent_control"] is True
+    assert summary["spec"]["hover_status_topic"] == "/navlab/hover/status"
+    assert 'self.node.create_subscription(String, SPEC["setpoint_intent_topic"], self._motion_intent_cb, 10)' in script
+    assert 'self.cmd_vel_pub = self.node.create_publisher(TwistStamped, SPEC["cmd_vel_topic"], 10)' in script
+
+
+def test_p7_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    orchestration = replace(
+        config.orchestration,
+        motion_gate=replace(config.orchestration.motion_gate, uses_gazebo_truth_as_input=True),
+    )
+    unsafe_config = replace(config, orchestration=orchestration, artifact_dir=tmp_path)
+    runtime_config = tmp_path / "p7_motion_gate_runtime.toml"
+    motion_gate_task_module._write_p7_runtime_config(unsafe_config, runtime_config)
+
+    monkeypatch.setattr(
+        motion_gate_task_module,
+        "_build_p6_doctor_summary",
+        lambda _config, runtime_config: {"ok": True, "blockers": []},
+    )
+
+    summary = motion_gate_task_module._build_p7_doctor_summary(unsafe_config, runtime_config=runtime_config)
+
+    assert summary["ok"] is False
+    assert "P7 must not use Gazebo truth as a control/planning/SLAM/ExternalNav input" in summary["blockers"]
+
+
+def test_p7_blockers_detect_failed_motion_gate() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    blockers: list[str] = []
+
+    motion_gate_task_module._append_p7_blockers(
+        blockers=blockers,
+        motion_summary={
+            "ok": False,
+            "blockers": ["P7 forward displacement below threshold"],
+            "motion_actions": {
+                "forward": {"ok": False},
+                "back": {"ok": False},
+                "yaw_scan": {"ok": False},
+            },
+            "clearance": {"ok": False},
+            "slam_odom": {"ok": False},
+            "external_nav": {"ok": False},
+            "fcu": {"local_position_ok": False},
+        },
+        rosbag_profile={"ok": False},
+        counts={},
+        p7=config.orchestration.motion_gate,
+    )
+
+    assert "P7 forward displacement below threshold" in blockers
+    assert "P7 forward motion gate did not pass" in blockers
+    assert "P7 back motion gate did not pass" in blockers
+    assert "P7 yaw scan gate did not pass" in blockers
+    assert "P7 clearance gate did not pass" in blockers
+    assert "P7 SLAM odom gate did not pass" in blockers
+    assert "P7 ExternalNav gate did not pass" in blockers
+    assert "P7 FCU local position gate did not pass" in blockers
+    assert "P7 rosbag profile did not pass" in blockers
+    assert "/navlab/motion/status was not recorded" in blockers
+
+
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.names() == (
         "acceptance",
@@ -951,6 +1122,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         "hover",
         "hover-diagnostic",
         "hover-slam-diagnostic",
+        "motion-gate-acceptance",
+        "motion-gate-doctor",
         "official-baseline-acceptance",
         "official-baseline-doctor",
         "official-maze-x2-acceptance",
@@ -971,6 +1144,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.create("hover").description
     assert TaskRegistry.create("hover-diagnostic").description
     assert TaskRegistry.create("hover-slam-diagnostic").description
+    assert TaskRegistry.create("motion-gate-doctor").description
+    assert TaskRegistry.create("motion-gate-acceptance").description
     assert TaskRegistry.create("official-baseline-doctor").description
     assert TaskRegistry.create("official-baseline-acceptance").description
     assert TaskRegistry.create("slam-backend-doctor").description

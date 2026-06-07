@@ -32,6 +32,14 @@ Basis: current replay gap and Foxglove portability.
 
 Reason: P6 already proves the SLAM -> ExternalNav -> EKF -> hover loop, but Foxglove replay still needs a vehicle shell layer to make the motion readable. The shell must not depend on local mesh paths because the same MCAP should open on another laptop or in Foxglove Cloud. A primitive `MarkerArray` following `/ap/v1/pose/filtered` is self-contained, portable, and easy to keep in acceptance as a required topic.
 
+## 2026-06-07: NavLab P7 doctor stays a fast config gate
+
+Decision: make `motion-gate-doctor` validate P7 configuration, rosbag profile, topic contracts, and truth-control boundaries without re-running the full P0-P6 dependency doctor chain by default.
+
+Basis: local P7 implementation and doctor runtime behavior.
+
+Reason: P7 acceptance already launches and validates the full official stack, sensors, SLAM, frame contract, FCU bootstrap, and motion gate. Nesting all prior doctor dependency probes inside P7 doctor makes the lightweight prerequisite check slow enough to obscure config failures. The fast doctor keeps P7 iteration usable while preserving full-stack proof in `motion-gate-acceptance`.
+
 ## 2026-06-04: NavLab hover gate requires SLAM-derived ExternalNav
 
 Decision: current completion gate must feed `external_nav_bridge` from SLAM `/odom`, not from `/gazebo/truth/odom`.
@@ -211,3 +219,27 @@ Decision: keep launching `ardupilot_gz_bringup iris_maze.launch.py`, but bind-mo
 Basis: official launch inspection inside `world-model/navlab-official-baseline:latest` and P1 acceptance runs.
 
 Reason: the official Iris lidar bridge maps Gazebo `/lidar` directly to ROS `/scan`. P1 needs `/scan` to mean “X2 virtual serial -> `ydlidar_ros2_driver` output”, otherwise Cartographer would receive a mixed topic from both `ros_gz_bridge` and the vendor driver. The bridge override preserves the official maze, Iris model, SITL, DDS, odometry, IMU, TF, and point cloud bridges, while freeing `/scan` for the vendor driver. The P1 acceptance blocks if `/scan` has a `ros_gz_bridge` publisher or if Cartographer is not subscribed to the vendor `/scan`.
+
+## 2026-06-07: P7 FCU local-position rate gate allows DDS jitter
+
+Decision: set the P7 `min_fcu_local_position_rate_hz` threshold to 1.5 Hz while keeping the latest-age gate at 1.5 seconds.
+
+Basis: P7 acceptance artifact `artifacts/ros/navlab_companion_sitl_gazebo/20260607_114343/summary.json`.
+
+Reason: the ArduPilot DDS filtered local-position stream is nominally about 2 Hz, but a full P7 run measured 1.93 Hz across the motion-probe window while latest samples stayed fresh and all motion, SLAM, ExternalNav, rangefinder, and rosbag gates passed. A 1.5 Hz floor preserves a real liveness/rate check without failing on scheduler jitter around the nominal 2 Hz publisher.
+
+## 2026-06-07: P7 separates motion coordination from FCU setpoint ownership
+
+Decision: run P7 as a motion coordinator plus the existing `navlab_fcu_controller` owner instead of letting the P7 probe publish `/ap/v1/cmd_vel` directly.
+
+Basis: P7 design/TODO audit after the first green acceptance artifact.
+
+Reason: the P7 design requires the mission/coordinator layer to publish motion intent while the unique FCU controller converts that intent into the movement setpoint output. The first accepted run proved motion but used the probe as the setpoint publisher, which made the owner boundary weaker than the written contract. The P7 controller runtime now subscribes to `/navlab/fcu/setpoint/intent`, publishes `/navlab/fcu/setpoint/output`, `/navlab/fcu/controller/status`, `/navlab/fcu/owner/status`, `/navlab/hover/status`, and owns `/ap/v1/cmd_vel`; the P7 coordinator publishes `/navlab/motion/status` and intent only. The verified artifact is `artifacts/ros/navlab_companion_sitl_gazebo/20260607_121115/summary.json`.
+
+## 2026-06-07: P7 yaw scan window is four seconds
+
+Decision: set the default P7 `yaw_window_sec` to 4.0 seconds while keeping `yaw_rate_radps=0.20` and `min_yaw_delta_rad=0.25`.
+
+Basis: split coordinator/controller P7 acceptance run `artifacts/ros/navlab_companion_sitl_gazebo/20260607_120406/summary.json`.
+
+Reason: after routing motion through the FCU controller intent path, the yaw command includes an extra intent-to-output hop and startup/settle latency. A 3 second yaw window produced about 0.243 rad, just below the gate, while the same controller path with a 4 second window produced 0.450 rad in `artifacts/ros/navlab_companion_sitl_gazebo/20260607_121115/summary.json`. Extending the action window preserves the stricter yaw delta gate instead of lowering the minimum accepted motion.
