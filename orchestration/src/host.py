@@ -27,6 +27,7 @@ SLAM_CONTAINER = "navlab-slam"
 OFFICIAL_BASELINE_CONTAINER = "navlab-official-baseline"
 GAZEBO_SENSOR_SERVICE = "gazebo-sensor"
 DEFAULT_COMPANION_RUNTIME_CONFIG = Path("navlab/config.toml")
+OFFICIAL_SITL_WORKDIR = "sitl_work"
 
 
 def _compose_client() -> DockerClient:
@@ -102,6 +103,10 @@ def _workspace_path(path: Path) -> str:
     except ValueError:
         return str(path)
     return str(Path("/workspace") / relative)
+
+
+def _official_sitl_workdir(config: RunConfig) -> str:
+    return _workspace_path(config.artifact_dir / OFFICIAL_SITL_WORKDIR)
 
 
 def _companion_runtime_config_path() -> str:
@@ -195,6 +200,8 @@ def _start_official_baseline_container(
 ) -> None:
     _remove_official_baseline_container()
     baseline = config.orchestration.official_baseline
+    (config.artifact_dir / OFFICIAL_SITL_WORKDIR).mkdir(parents=True, exist_ok=True)
+    sitl_workdir = _official_sitl_workdir(config)
     launch_command = (
         f"{baseline.gazebo_launch} "
         "use_gz_sim_gui:=false "
@@ -223,7 +230,7 @@ def _start_official_baseline_container(
         name=OFFICIAL_BASELINE_CONTAINER,
         networks=["host"],
         volumes=[(Path.cwd(), "/workspace"), *(volume_overrides or [])],
-        workdir="/workspace",
+        workdir=sitl_workdir,
         envs={
             "SESSION_ID": config.session_id,
             "ROS_DOMAIN_ID": baseline.dds_domain_id,

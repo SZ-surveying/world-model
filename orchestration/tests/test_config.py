@@ -25,6 +25,7 @@ from src.tasks import hover as hover_task_module
 from src.tasks import hover_diagnostic as hover_diagnostic_task_module
 from src.tasks import hover_slam_diagnostic as hover_slam_diagnostic_task_module
 from src.tasks import official_baseline as official_baseline_task_module
+from src.tasks import rangefinder_imu as rangefinder_imu_task_module
 from src.tasks import slam_hover as slam_hover_task_module
 from src.tasks import slam_backend as slam_backend_task_module
 from src.tasks.acceptance import AcceptanceTask
@@ -191,6 +192,8 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.rangefinder_imu.world_source == "official_iris_maze"
     assert config.rangefinder_imu.vehicle_model_source == "official_iris_with_lidar"
     assert config.rangefinder_imu.model_overlay_source == "official_iris_with_lidar_plus_down_rangefinder"
+    assert config.rangefinder_imu.gazebo_lidar_topic == "/lidar"
+    assert config.rangefinder_imu.x2_scan_input_topic == "/lidar"
     assert config.rangefinder_imu.x2_scan_topic == "/scan"
     assert config.rangefinder_imu.x2_status_topic == "/sim/x2/status"
     assert config.rangefinder_imu.rangefinder_scan_ideal_topic == "/rangefinder/down/scan_ideal"
@@ -364,12 +367,18 @@ def test_p2_rangefinder_imu_rosbag_profile_contains_required_topics() -> None:
         for line in lines
         if line.strip().startswith("required ") and len(line.split(maxsplit=1)) == 2
     }
+    optional = {
+        line.split(maxsplit=1)[1]
+        for line in lines
+        if line.strip().startswith("optional ") and len(line.split(maxsplit=1)) == 2
+    }
 
     assert {
         "/clock",
         "/tf",
         "/tf_static",
         "/ap/v1/time",
+        "/lidar",
         "/scan",
         "/sim/x2/status",
         "/rangefinder/down/scan_ideal",
@@ -377,6 +386,25 @@ def test_p2_rangefinder_imu_rosbag_profile_contains_required_topics() -> None:
         "/rangefinder/down/status",
         "/imu",
     }.issubset(required)
+    assert "/navlab/x2/scan_ideal" not in required
+    assert required.isdisjoint(optional)
+
+
+def test_p2_model_overlay_keeps_official_lidar_and_adds_down_rangefinder(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(run_id="test", artifact_dir=tmp_path)
+    source = """<sdf version="1.9"><model name="iris_with_lidar"><link name="base_link"/></model></sdf>"""
+    monkeypatch.setattr(rangefinder_imu_task_module, "_docker_cat", lambda *_args, **_kwargs: source)
+
+    summary = rangefinder_imu_task_module._write_p2_model_overlay(config, tmp_path / "model.sdf")
+    rendered = (tmp_path / "model.sdf").read_text(encoding="utf-8")
+
+    assert "navlab_x2_lidar_frame" not in rendered
+    assert "navlab_x2_ideal_sensor" not in rendered
+    assert '<sensor name="down_rangefinder_sensor" type="gpu_lidar">' in rendered
+    assert "<always_on>true</always_on>" in rendered
+    assert "<topic>rangefinder/down/scan_ideal</topic>" in rendered
+    assert summary["x2_sensor_source"] == "official_iris_with_lidar"
+    assert summary["sensor_type"] == "gpu_lidar"
 
 
 def test_p3_slam_backend_rosbag_profile_contains_required_topics() -> None:
@@ -1099,6 +1127,35 @@ def test_navlab_orchestration_starts_slam_container(monkeypatch) -> None:
     assert "--backend cartographer" in command
     assert "/gazebo/truth/odom" not in command
     assert run["envs"]["NAVLAB_SLAM_RUNTIME_CONFIG"] == "/workspace/navlab/config.toml"
+
+
+def test_navlab_official_baseline_uses_artifact_sitl_workdir(monkeypatch, tmp_path) -> None:
+    config = RunConfig.from_config(
+        config_path="orchestration/config.toml",
+        duration_sec=45.0,
+        run_id="20260603_000000",
+        artifact_dir=tmp_path,
+    )
+    runs: list[dict[str, object]] = []
+
+    class FakeDockerClient:
+        def run(self, image, command, **kwargs):  # noqa: ANN001
+            runs.append({"image": image, "command": command, **kwargs})
+
+        def remove(self, *_args, **_kwargs):  # noqa: ANN001
+            return None
+
+    monkeypatch.setattr(host, "DockerClient", FakeDockerClient)
+    monkeypatch.setattr(host, "_workspace_path", lambda path: f"/workspace/{Path(path).name}")
+
+    host._start_official_baseline_container(config)
+
+    assert (tmp_path / "sitl_work").is_dir()
+    assert len(runs) == 1
+    run = runs[0]
+    assert run["image"] == "world-model/navlab-official-baseline:latest"
+    assert run["name"] == "navlab-official-baseline"
+    assert run["workdir"] == "/workspace/sitl_work"
 
 
 def test_navlab_orchestration_starts_companion_with_runtime_config(monkeypatch) -> None:

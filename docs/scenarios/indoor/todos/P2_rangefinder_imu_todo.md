@@ -239,9 +239,9 @@ P2 全部完成必须满足：
 
 ```text
 - 命令：`just navlab-rangefinder-imu-acceptance 60`
-- 时间：`2026-06-06`
-- artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260606_105439/summary.json`
+- 时间：`2026-06-07`
+- artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260607_001025/summary.json`
 - 结果：`ok=true`
 - blocker：`none`
-- 备注：`/navlab/x2/scan_ideal`、`/rangefinder/down/range`、`/imu`、`DISTANCE_SENSOR` 均通过；`hover` 和 `altitude_control` 仍然明确标记为 `not_evaluated`。
+- 备注：P2 config bug 已修复；`/lidar -> X2 -> /scan`、`/rangefinder/down/range`、`/imu`、`DISTANCE_SENSOR` 均通过；`hover` 和 `altitude_control` 仍然明确标记为 `not_evaluated`。
 ```

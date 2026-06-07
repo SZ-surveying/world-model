@@ -80,69 +80,9 @@ def _write_p2_model_overlay(config: RunConfig, path: Path) -> dict[str, Any]:
     overlay = textwrap.dedent(
         f"""\
 
-            <!-- NavLab P2 overlay: horizontal 2D lidar used as the X2 vendor-driver input. -->
-            <link name="navlab_x2_lidar_frame">
-              <pose relative_to="base_link">0.08 0 0.02 0 0 0</pose>
-              <inertial>
-                <mass>0.05</mass>
-                <inertia>
-                  <ixx>0.00002</ixx>
-                  <iyy>0.00002</iyy>
-                  <izz>0.00002</izz>
-                </inertia>
-              </inertial>
-              <collision name="collision">
-                <geometry>
-                  <cylinder>
-                    <radius>0.03</radius>
-                    <length>0.02</length>
-                  </cylinder>
-                </geometry>
-              </collision>
-              <visual name="visual">
-                <geometry>
-                  <cylinder>
-                    <radius>0.03</radius>
-                    <length>0.02</length>
-                  </cylinder>
-                </geometry>
-              </visual>
-              <sensor name="navlab_x2_ideal_sensor" type="gpu_lidar">
-                <gz_frame_id>base_scan</gz_frame_id>
-                <pose>0 0 0 0 0 0</pose>
-                <topic>{p2.x2_scan_input_topic}</topic>
-                <update_rate>7</update_rate>
-                <lidar>
-                  <scan>
-                    <horizontal>
-                      <samples>430</samples>
-                      <resolution>1</resolution>
-                      <min_angle>-3.141592653589793</min_angle>
-                      <max_angle>3.141592653589793</max_angle>
-                    </horizontal>
-                    <vertical>
-                      <samples>1</samples>
-                      <resolution>1</resolution>
-                      <min_angle>0.0</min_angle>
-                      <max_angle>0.0</max_angle>
-                    </vertical>
-                  </scan>
-                  <range>
-                    <min>0.1</min>
-                    <max>8.0</max>
-                    <resolution>0.01</resolution>
-                  </range>
-                </lidar>
-                <visualize>false</visualize>
-              </sensor>
-            </link>
-
-            <joint name="navlab_x2_lidar_joint" type="fixed">
-              <parent>base_link</parent>
-              <child>navlab_x2_lidar_frame</child>
-            </joint>
-
-            <!-- NavLab P2 overlay: down-facing rangefinder ray sensor. -->
+            <!-- NavLab P2 overlay: down-facing rangefinder ray sensor.
+                 The X2 vendor-driver input uses the official iris_with_lidar
+                 /lidar sensor; do not add a second /lidar sensor here. -->
             <link name="{p2.rangefinder_frame_id}">
               <pose relative_to="base_link">{p2.rangefinder_model_pose}</pose>
               <inertial>
@@ -170,15 +110,16 @@ def _write_p2_model_overlay(config: RunConfig, path: Path) -> dict[str, Any]:
               <sensor name="down_rangefinder_sensor" type="gpu_lidar">
                 <gz_frame_id>{p2.rangefinder_frame_id}</gz_frame_id>
                 <pose>0 0 0 0 0 0</pose>
-                <topic>{p2.rangefinder_scan_ideal_topic}</topic>
+                <topic>{p2.rangefinder_scan_ideal_topic.lstrip("/")}</topic>
+                <always_on>true</always_on>
                 <update_rate>{p2.rangefinder_model_update_rate_hz:g}</update_rate>
                 <lidar>
                   <scan>
                     <horizontal>
                       <samples>{p2.rangefinder_model_ray_count}</samples>
                       <resolution>1</resolution>
-                      <min_angle>0.0</min_angle>
-                      <max_angle>0.0</max_angle>
+                      <min_angle>-0.02</min_angle>
+                      <max_angle>0.02</max_angle>
                     </horizontal>
                     <vertical>
                       <samples>1</samples>
@@ -213,7 +154,9 @@ def _write_p2_model_overlay(config: RunConfig, path: Path) -> dict[str, Any]:
         "model_overlay_source": p2.model_overlay_source,
         "x2_sensor_topic": p2.x2_scan_input_topic,
         "x2_sensor_frame_id": "base_scan",
+        "x2_sensor_source": "official_iris_with_lidar",
         "sensor_topic": p2.rangefinder_scan_ideal_topic,
+        "sensor_type": "gpu_lidar",
         "frame_id": p2.rangefinder_frame_id,
         "pose": p2.rangefinder_model_pose,
         "update_rate_hz": p2.rangefinder_model_update_rate_hz,
