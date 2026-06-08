@@ -8,98 +8,6 @@ orchestration_cmd := "uv run --project orchestration python orchestration/main.p
 default:
     @just --list
 
-# Build the NavLab companion image.
-navlab-companion-image-build *args='':
-    {{orchestration_cmd}} build companion {{args}}
-
-# Build the NavLab Cartographer SLAM image.
-navlab-slam-image-build *args='':
-    {{orchestration_cmd}} build slam {{args}}
-
-# Build the NavLab Gazebo/sensor image with YDLidar vendor driver support.
-navlab-gazebo-sensor-image-build *args='':
-    {{orchestration_cmd}} build gazebo-sensor {{args}}
-
-# Build the NavLab official ArduPilot ROS2/DDS baseline image.
-navlab-official-baseline-image-build *args='':
-    {{orchestration_cmd}} build official-baseline {{args}}
-
-# Run the X2 vendor-driver smoke in the Gazebo/sensor runtime.
-x2-driver-smoke duration_sec='15':
-    X2_MODE=driver-smoke \
-    X2_SMOKE_DURATION_SEC={{duration_sec}} \
-    X2_ARTIFACT_DIR=/artifacts/ros/x2_driver_smoke/manual \
-    docker compose --file compose/docker-compose.yaml --project-directory . --profile x2_sensor \
-      up --abort-on-container-exit --exit-code-from gazebo-sensor gazebo-sensor
-
-# Build all NavLab images.
-navlab-images-build *args='':
-    {{orchestration_cmd}} build all {{args}}
-
-# Check the NavLab companion image contents without running a flight mission.
-navlab-doctor *args='':
-    {{orchestration_cmd}} doctor {{args}}
-
-# Check official ArduPilot ROS2/DDS and Cartographer baseline prerequisites.
-navlab-official-baseline-doctor *args='':
-    {{orchestration_cmd}} official-baseline-doctor {{args}}
-
-# Run the official ArduPilot ROS2/DDS baseline graph acceptance.
-navlab-official-baseline-acceptance duration_sec='30' *args='':
-    {{orchestration_cmd}} official-baseline-acceptance {{duration_sec}} {{args}}
-
-# Run official iris_maze with NavLab X2 virtual serial + vendor /scan acceptance.
-navlab-official-maze-x2-acceptance duration_sec='45' *args='':
-    {{orchestration_cmd}} official-maze-x2-acceptance {{duration_sec}} {{args}}
-
-# Check P2 official maze rangefinder/IMU mechanism prerequisites.
-navlab-rangefinder-imu-doctor *args='':
-    {{orchestration_cmd}} rangefinder-imu-doctor {{args}}
-
-# Run P2 official maze down rangefinder + IMU mechanism acceptance.
-navlab-rangefinder-imu-acceptance duration_sec='60' *args='':
-    {{orchestration_cmd}} rangefinder-imu-acceptance {{duration_sec}} {{args}}
-
-# Check P3 SLAM backend quality prerequisites.
-navlab-slam-backend-doctor *args='':
-    {{orchestration_cmd}} slam-backend-doctor {{args}}
-
-# Run P3 SLAM backend quality acceptance.
-navlab-slam-backend-acceptance duration_sec='90' *args='':
-    {{orchestration_cmd}} slam-backend-acceptance {{duration_sec}} {{args}}
-
-# Check P4 FCU state machine and unique controller prerequisites.
-navlab-fcu-controller-doctor *args='':
-    {{orchestration_cmd}} fcu-controller-doctor {{args}}
-
-# Run P4 FCU state machine and unique controller acceptance.
-navlab-fcu-controller-acceptance duration_sec='90' *args='':
-    {{orchestration_cmd}} fcu-controller-acceptance {{duration_sec}} {{args}}
-
-# Check P5 frame contract prerequisites.
-navlab-frame-contract-doctor *args='':
-    {{orchestration_cmd}} frame-contract-doctor {{args}}
-
-# Run P5 frame contract acceptance.
-navlab-frame-contract-acceptance duration_sec='90' *args='':
-    {{orchestration_cmd}} frame-contract-acceptance {{duration_sec}} {{args}}
-
-# Check P6 real SLAM hover prerequisites.
-navlab-slam-hover-doctor *args='':
-    {{orchestration_cmd}} slam-hover-doctor {{args}}
-
-# Run P6 real SLAM hover acceptance.
-navlab-slam-hover-acceptance duration_sec='90' *args='':
-    {{orchestration_cmd}} slam-hover-acceptance {{duration_sec}} {{args}}
-
-# Check P7 official maze motion gate prerequisites.
-navlab-motion-gate-doctor *args='':
-    {{orchestration_cmd}} motion-gate-doctor {{args}}
-
-# Run P7 official maze motion gate acceptance.
-navlab-motion-gate-acceptance duration_sec='120' *args='':
-    {{orchestration_cmd}} motion-gate-acceptance {{duration_sec}} {{args}}
-
 # Check P8 official maze exploration gate prerequisites.
 navlab-exploration-gate-doctor *args='':
     {{orchestration_cmd}} exploration-gate-doctor {{args}}
@@ -108,22 +16,22 @@ navlab-exploration-gate-doctor *args='':
 navlab-exploration-gate-acceptance duration_sec='150' *args='':
     {{orchestration_cmd}} exploration-gate-acceptance {{duration_sec}} {{args}}
 
-# Upload the latest P8 MCAP + summary artifact to Foxglove, or pass a run id.
-foxglove-upload date='':
-    scripts/upload_foxglove_mcap.py {{date}} --force
+# Run a representative P8 exploration replay for P9 Foxglove overlay.
+navlab-exploration-replay duration_sec='180' profile='conservative' *args='':
+    {{orchestration_cmd}} exploration-replay-acceptance {{duration_sec}} --profile {{profile}} {{args}}
 
-# Run NavLab companion + SITL + Gazebo obstacle acceptance with rosbag/Foxglove artifacts.
-navlab-acceptance duration_sec='90' *args='':
-    {{orchestration_cmd}} acceptance {{duration_sec}} {{args}}
+# Run a longer P9 display replay for screenshots and Foxglove demos.
+navlab-exploration-display-replay duration_sec='240' *args='':
+    {{orchestration_cmd}} exploration-replay-acceptance {{duration_sec}} --profile display {{args}}
 
-# Run NavLab FCU GUIDED/arm/takeoff/hover acceptance with rosbag/Foxglove artifacts.
-navlab-hover-acceptance duration_sec='90' *args='':
-    {{orchestration_cmd}} hover {{duration_sec}} {{args}}
+# Build a Foxglove-lite replay MCAP with the official maze overlay.
+foxglove-replay date='':
+    uv run --project orchestration python scripts/build_foxglove_replay_mcap.py {{date}}
 
-# Run NavLab rangefinder altitude hover diagnostic without SLAM horizontal control.
-navlab-hover-diagnostic duration_sec='90' *args='':
-    {{orchestration_cmd}} hover-diagnostic {{duration_sec}} {{args}}
+# Dry-run the Foxglove-lite replay build for the latest run or a given run id.
+foxglove-replay-dry-run date='':
+    uv run --project orchestration python scripts/build_foxglove_replay_mcap.py {{date}} --dry-run
 
-# Run NavLab SLAM ExternalNav hover diagnostic without horizontal setpoints.
-navlab-hover-slam-diagnostic duration_sec='90' *args='':
-    {{orchestration_cmd}} hover-slam-diagnostic {{duration_sec}} {{args}}
+# Upload the latest raw/full P8 MCAP by default; pass --lite to upload/generate the lite MCAP.
+foxglove-upload date='' *args='':
+    scripts/upload_foxglove_mcap.py {{date}} --force {{args}}

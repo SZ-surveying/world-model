@@ -275,7 +275,7 @@ gate 已通过；不能说明自主探索、Nav2、覆盖率或 NavLab 自定义
 
 - [x] 新增 `navlab-motion-gate-doctor` orchestration task。
 - [x] 新增 `navlab-motion-gate-acceptance` orchestration task。
-- [x] justfile 增加同名入口。
+- [x] orchestration CLI 增加同名 task；历史 justfile 便捷入口已回收。
 - [x] acceptance 先验证 P0 official baseline。
 - [x] acceptance 再验证 P1 X2 scan gate。
 - [x] acceptance 再验证 P2 IMU/rangefinder gate。
@@ -340,15 +340,15 @@ gate 已通过；不能说明自主探索、Nav2、覆盖率或 NavLab 自定义
 建议执行：
 
 ```text
-1. just navlab-official-baseline-acceptance 30
-2. just navlab-official-maze-x2-acceptance 45
-3. just navlab-rangefinder-imu-acceptance 60
-4. just navlab-slam-backend-acceptance 90
-5. just navlab-fcu-controller-acceptance 90
-6. just navlab-frame-contract-acceptance 90
-7. just navlab-slam-hover-acceptance 90
-8. just navlab-motion-gate-doctor
-9. just navlab-motion-gate-acceptance 120
+1. uv run --project orchestration python orchestration/main.py official-baseline-acceptance 30
+2. uv run --project orchestration python orchestration/main.py official-maze-x2-acceptance 45
+3. uv run --project orchestration python orchestration/main.py rangefinder-imu-acceptance 60
+4. uv run --project orchestration python orchestration/main.py slam-backend-acceptance 90
+5. uv run --project orchestration python orchestration/main.py fcu-controller-acceptance 90
+6. uv run --project orchestration python orchestration/main.py frame-contract-acceptance 90
+7. uv run --project orchestration python orchestration/main.py slam-hover-acceptance 90
+8. uv run --project orchestration python orchestration/main.py motion-gate-doctor
+9. uv run --project orchestration python orchestration/main.py motion-gate-acceptance 120
 ```
 
 验收：

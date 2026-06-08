@@ -162,7 +162,7 @@
 
 - [x] 新增 `navlab-rangefinder-imu-doctor` orchestration task。
 - [x] 新增 `navlab-rangefinder-imu-acceptance` orchestration task。
-- [x] justfile 增加同名入口。
+- [x] orchestration CLI 增加同名 task；历史 justfile 便捷入口已回收。
 - [x] acceptance 先跑或复用 P0 official DDS probe。
 - [x] acceptance 再跑或复用 P1 X2 scan gate。
 - [x] acceptance 启动 rangefinder/IMU probe。
@@ -204,10 +204,10 @@
 建议执行：
 
 ```text
-1. just navlab-official-baseline-acceptance 30
-2. just navlab-official-maze-x2-acceptance 45
-3. just navlab-rangefinder-imu-doctor
-4. just navlab-rangefinder-imu-acceptance 60
+1. uv run --project orchestration python orchestration/main.py official-baseline-acceptance 30
+2. uv run --project orchestration python orchestration/main.py official-maze-x2-acceptance 45
+3. uv run --project orchestration python orchestration/main.py rangefinder-imu-doctor
+4. uv run --project orchestration python orchestration/main.py rangefinder-imu-acceptance 60
 ```
 
 验收：
@@ -238,7 +238,7 @@ P2 全部完成必须满足：
 后续每次验证按下面格式记录：
 
 ```text
-- 命令：`just navlab-rangefinder-imu-acceptance 60`
+- 命令：`uv run --project orchestration python orchestration/main.py rangefinder-imu-acceptance 60`
 - 时间：`2026-06-07`
 - artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260607_001025/summary.json`
 - 结果：`ok=true`

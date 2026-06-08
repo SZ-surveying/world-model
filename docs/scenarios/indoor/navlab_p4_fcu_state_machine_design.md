@@ -515,8 +515,8 @@ P4 blocked 条件：
 建议命名：
 
 ```text
-just navlab-fcu-controller-doctor
-just navlab-fcu-controller-acceptance 90
+uv run --project orchestration python orchestration/main.py fcu-controller-doctor
+uv run --project orchestration python orchestration/main.py fcu-controller-acceptance 90
 ```
 
 doctor 只检查：

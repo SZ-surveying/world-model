@@ -249,7 +249,7 @@
 
 - [x] 新增 `navlab-slam-hover-doctor` orchestration task。
 - [x] 新增 `navlab-slam-hover-acceptance` orchestration task。
-- [x] justfile 增加同名入口。
+- [x] orchestration CLI 增加同名 task；历史 justfile 便捷入口已回收。
 - [x] acceptance 先验证 P0 official baseline。
 - [x] acceptance 再验证 P1 X2 scan gate。
 - [x] acceptance 再验证 P2 IMU/rangefinder gate。
@@ -307,14 +307,14 @@
 建议执行：
 
 ```text
-1. just navlab-official-baseline-acceptance 30
-2. just navlab-official-maze-x2-acceptance 45
-3. just navlab-rangefinder-imu-acceptance 60
-4. just navlab-slam-backend-acceptance 90
-5. just navlab-fcu-controller-acceptance 90
-6. just navlab-frame-contract-acceptance 90
-7. just navlab-slam-hover-doctor
-8. just navlab-slam-hover-acceptance 90
+1. uv run --project orchestration python orchestration/main.py official-baseline-acceptance 30
+2. uv run --project orchestration python orchestration/main.py official-maze-x2-acceptance 45
+3. uv run --project orchestration python orchestration/main.py rangefinder-imu-acceptance 60
+4. uv run --project orchestration python orchestration/main.py slam-backend-acceptance 90
+5. uv run --project orchestration python orchestration/main.py fcu-controller-acceptance 90
+6. uv run --project orchestration python orchestration/main.py frame-contract-acceptance 90
+7. uv run --project orchestration python orchestration/main.py slam-hover-doctor
+8. uv run --project orchestration python orchestration/main.py slam-hover-acceptance 90
 ```
 
 验收：
@@ -386,14 +386,14 @@ P6 全部完成必须满足：
 - blocker：无
 - 备注：覆盖 P6 配置、registry、rosbag profile、truth 输入禁用和 hover gate blocker；P4 owner/direct set pose blocker 继续作为 P6 前置 gate 复用。
 
-- 命令：`just navlab-slam-hover-doctor`
+- 命令：`uv run --project orchestration python orchestration/main.py slam-hover-doctor`
 - 时间：2026-06-06
 - artifact：`artifacts/ros/navlab_slam_hover_doctor/20260606_200908/summary.json`
 - 结果：`ok=true`，`blocked=false`，`blockers=[]`
 - blocker：无
 - 备注：doctor 确认 P6 不允许 Gazebo truth 作为控制、规划、SLAM 或 ExternalNav 输入。
 
-- 命令：`just navlab-slam-hover-acceptance 90`
+- 命令：`uv run --project orchestration python orchestration/main.py slam-hover-acceptance 90`
 - 时间：2026-06-06
 - artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260606_201653/summary.json`
 - 结果：`ok=true`，`blocked=false`，`blockers=[]`

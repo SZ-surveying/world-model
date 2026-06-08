@@ -302,5 +302,22 @@ def exploration_gate_acceptance_command(
     raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
 
 
+@app.command("exploration-replay-acceptance")
+def exploration_replay_acceptance_command(
+    duration_sec: Annotated[float, typer.Argument(help="P8 representative exploration replay duration in seconds")]
+    = 180.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+    profile: Annotated[
+        str,
+        typer.Option("--profile", help="Replay profile: conservative or display"),
+    ] = "conservative",
+) -> None:
+    task = cast(ExplorationGateAcceptanceTask, TaskRegistry.create("exploration-gate-acceptance"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console, replay_profile=profile))
+
+
 if __name__ == "__main__":
     app()

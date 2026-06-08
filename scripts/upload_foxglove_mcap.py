@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import http.client
 import json
 import os
 import ssl
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -24,6 +24,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 from rich.table import Table
+import typer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_ROOT = REPO_ROOT / "artifacts/ros/navlab_companion_sitl_gazebo"
@@ -38,10 +39,12 @@ KEY_PREFIX = "navlab"
 MCAP_RELATIVE = Path("rosbag/rosbag_0.mcap")
 FOXGLOVE_MCAP_RELATIVE = Path("rosbag_foxglove/rosbag_foxglove_0.mcap")
 SUMMARY_FILENAME = "summary.json"
+REPLAY_SUMMARY_FILENAME = "foxglove_replay_summary.json"
 ATTACHMENT_PREFIX = "attachments"
 MAX_UPLOAD_ATTEMPTS = 3
 CONSOLE = Console()
 ERROR_CONSOLE = Console(stderr=True)
+app = typer.Typer(add_completion=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,34 +68,54 @@ class ProgressReader:
         return chunk
 
 
-def main() -> int:
-    args = _parse_args()
+@app.command()
+def main(
+    run: Annotated[
+        str | None,
+        typer.Argument(help="Run id like 20260607_144800, or the run artifact directory path. Defaults to latest run."),
+    ] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print resolved upload files without uploading.")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Upload even when foxglove_upload.enabled=false.")] = False,
+    lite: Annotated[
+        bool,
+        typer.Option("--lite", help="Upload Foxglove-lite MCAP; generate it first when missing."),
+    ] = False,
+) -> None:
     try:
-        run_dir = _resolve_run_dir(args.run)
+        run_dir = _resolve_run_dir(run)
     except FileNotFoundError as exc:
         ERROR_CONSOLE.print(f"[red]error:[/red] {exc}")
-        return 2
-    targets = _build_targets(run_dir)
+        raise typer.Exit(2) from exc
+
+    if lite:
+        lite_path = run_dir / FOXGLOVE_MCAP_RELATIVE
+        if not lite_path.is_file():
+            CONSOLE.print(f"[yellow]warn:[/yellow] lite MCAP missing, generating first: {lite_path.relative_to(run_dir)}")
+            if not _generate_lite_mcap(run_dir):
+                ERROR_CONSOLE.print("[red]error:[/red] failed to generate lite MCAP")
+                raise typer.Exit(2)
+
+    targets = _build_targets(run_dir, lite=lite)
 
     missing = [target.path for target in targets if not target.path.is_file()]
     if missing:
         for path in missing:
             ERROR_CONSOLE.print(f"[red]error:[/red] required upload file missing: {path}")
-        return 2
+        raise typer.Exit(2)
 
-    if not UPLOAD_ENABLED and not args.force:
+    if not UPLOAD_ENABLED and not force:
         ERROR_CONSOLE.print("[red]error:[/red] upload disabled; pass --force to upload anyway")
-        return 2
+        raise typer.Exit(2)
 
-    if args.dry_run:
+    if dry_run:
         _print_targets("Dry Run", run_dir, targets)
-        return 0
+        raise typer.Exit(0)
 
     _load_dotenv(ENV_PATH)
     token = os.environ.get(TOKEN_ENV, "")
     if not token:
         ERROR_CONSOLE.print(f"[red]error:[/red] missing token env {TOKEN_ENV}")
-        return 2
+        raise typer.Exit(2)
 
     uploaded: list[dict[str, Any]] = []
     try:
@@ -111,7 +134,7 @@ def main() -> int:
                 )
     except (HTTPError, URLError, OSError, ValueError) as exc:
         ERROR_CONSOLE.print(f"[red]error:[/red] upload failed: {exc}")
-        return 1
+        raise typer.Exit(1)
 
     result = _summary(True, "uploaded", run_dir, targets, "uploaded to Foxglove cloud")
     result["uploaded"] = uploaded
@@ -121,19 +144,7 @@ def main() -> int:
     )
     CONSOLE.print("[bold green]uploaded to Foxglove[/bold green]")
     CONSOLE.print_json(json.dumps(result, sort_keys=True))
-    return 0
-
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Upload a NavLab P8 run MCAP plus summary attachment to Foxglove.")
-    parser.add_argument(
-        "run",
-        nargs="?",
-        help="Run id like 20260607_144800, or the run artifact directory path. Defaults to latest run.",
-    )
-    parser.add_argument("--dry-run", action="store_true", help="Print resolved upload files without uploading.")
-    parser.add_argument("--force", action="store_true", help="Upload even when foxglove_upload.enabled=false.")
-    return parser.parse_args()
+    raise typer.Exit(0)
 
 
 def _resolve_run_dir(value: str | None) -> Path:
@@ -171,14 +182,27 @@ def _load_dotenv(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def _build_targets(run_dir: Path) -> list[UploadTarget]:
+def _generate_lite_mcap(run_dir: Path) -> bool:
+    cmd = [
+        "uv",
+        "run",
+        "--project",
+        "orchestration",
+        "python",
+        "scripts/build_foxglove_replay_mcap.py",
+        str(run_dir),
+    ]
+    result = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
+    return result.returncode == 0 and (run_dir / FOXGLOVE_MCAP_RELATIVE).is_file()
+
+
+def _build_targets(run_dir: Path, *, lite: bool = False) -> list[UploadTarget]:
     run_id = run_dir.name
     base_key = f"{KEY_PREFIX}/{SESSION_ID}/{run_id}"
-    mcap_path = run_dir / FOXGLOVE_MCAP_RELATIVE
-    if not mcap_path.is_file():
-        mcap_path = run_dir / MCAP_RELATIVE
-    return [
-        UploadTarget("mcap", mcap_path, f"navlab_p8_{run_id}.mcap", f"{base_key}/rosbag_0.mcap"),
+    mcap_path = run_dir / (FOXGLOVE_MCAP_RELATIVE if lite else MCAP_RELATIVE)
+    mcap_source_name = "rosbag_foxglove_0.mcap" if lite else "rosbag_0.mcap"
+    targets = [
+        UploadTarget("mcap", mcap_path, f"navlab_p8_{run_id}.mcap", f"{base_key}/{mcap_source_name}"),
         UploadTarget(
             "summary",
             run_dir / SUMMARY_FILENAME,
@@ -186,6 +210,17 @@ def _build_targets(run_dir: Path) -> list[UploadTarget]:
             f"{base_key}/{ATTACHMENT_PREFIX}/{SUMMARY_FILENAME}",
         ),
     ]
+    replay_summary = run_dir / REPLAY_SUMMARY_FILENAME
+    if replay_summary.is_file():
+        targets.append(
+            UploadTarget(
+                "replay_summary",
+                replay_summary,
+                f"navlab_p8_{run_id}_foxglove_replay_summary.json",
+                f"{base_key}/{ATTACHMENT_PREFIX}/{REPLAY_SUMMARY_FILENAME}",
+            )
+        )
+    return targets
 
 
 def _upload_with_retries(token: str, target: UploadTarget, progress: Progress) -> dict[str, Any]:
@@ -280,10 +315,8 @@ def _field(data: dict[str, Any], *keys: str) -> str:
 
 
 def _content_type(path: Path) -> str:
-    if path.suffix == ".json":
-        return "application/json"
-    if path.suffix == ".toml":
-        return "application/toml"
+    # Foxglove signed upload URLs include content-type in the signature.
+    # Keep every PUT on the same binary content type to match the signed URL.
     return "application/octet-stream"
 
 
@@ -340,4 +373,4 @@ def _summary(ok: bool, state: str, run_dir: Path, targets: list[UploadTarget], r
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    app()

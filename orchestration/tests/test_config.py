@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,6 +40,7 @@ from src.tasks.hover import HoverAcceptanceTask
 from src.tasks.hover_diagnostic import HoverDiagnosticTask
 from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
 from src.tasks import motion_gate as motion_gate_task_module
+from src.tasks import official_maze_x2 as official_maze_x2_task_module
 from src.tasks.motion_gate import MotionGateAcceptanceTask, MotionGateDoctorTask
 from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
 from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
@@ -417,7 +419,10 @@ def test_p2_rangefinder_imu_rosbag_profile_contains_required_topics() -> None:
 
 def test_p2_model_overlay_keeps_official_lidar_and_adds_down_rangefinder(monkeypatch, tmp_path) -> None:  # noqa: ANN001
     config = RunConfig.from_config(run_id="test", artifact_dir=tmp_path)
-    source = """<sdf version="1.9"><model name="iris_with_lidar"><link name="base_link"/></model></sdf>"""
+    source = (
+        """<sdf version="1.9"><model name="iris_with_lidar">"""
+        """<include><uri>model://lidar_3d</uri></include><link name="base_link"/></model></sdf>"""
+    )
     monkeypatch.setattr(rangefinder_imu_task_module, "_docker_cat", lambda *_args, **_kwargs: source)
 
     summary = rangefinder_imu_task_module._write_p2_model_overlay(config, tmp_path / "model.sdf")
@@ -425,10 +430,12 @@ def test_p2_model_overlay_keeps_official_lidar_and_adds_down_rangefinder(monkeyp
 
     assert "navlab_x2_lidar_frame" not in rendered
     assert "navlab_x2_ideal_sensor" not in rendered
+    assert "model://lidar_3d" not in rendered
+    assert "model://lidar_2d" in rendered
     assert '<sensor name="down_rangefinder_sensor" type="gpu_lidar">' in rendered
     assert "<always_on>true</always_on>" in rendered
     assert "<topic>rangefinder/down/scan_ideal</topic>" in rendered
-    assert summary["x2_sensor_source"] == "official_iris_with_lidar"
+    assert summary["x2_sensor_source"] == "official_iris_with_lidar_2d_laserscan_overlay"
     assert summary["sensor_type"] == "gpu_lidar"
 
 
@@ -445,7 +452,9 @@ def test_p3_slam_backend_rosbag_profile_contains_required_topics() -> None:
         "/clock",
         "/tf",
         "/tf_static",
+        "/lidar",
         "/scan",
+        "/sim/x2/status",
         "/imu",
         "/odometry",
         "/slam/odom",
@@ -632,6 +641,53 @@ def test_p4_doctor_allows_mavlink_bootstrap_route(monkeypatch, tmp_path) -> None
     assert summary["p4_fcu_controller_doctor"]["mavlink_bootstrap_claim"] is True
 
 
+def test_ros_shell_capture_filters_cyclonedds_type_hash_noise() -> None:
+    command = host._with_ros_shell_stderr_filter("ros2 topic list")
+
+    assert "ros2 topic list" in command
+    assert "grep -v -E" in command
+    assert "Failed to parse type hash" in command
+
+
+def test_ros_shell_stderr_filter_preserves_heredoc_terminator() -> None:
+    command = host._with_ros_shell_stderr_filter("python3 - <<'PY'\nprint('ok')\nPY")
+
+    result = subprocess.run(["bash", "-lc", command], check=False, text=True, capture_output=True)
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "ok"
+    assert result.stderr.strip() == ""
+
+
+def test_collect_topic_info_skips_transient_topics(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(
+        config_path="orchestration/config.toml",
+        artifact_dir=tmp_path,
+        run_id="20260603_000000",
+    )
+    calls: list[str] = []
+
+    def fake_run_ros_shell_capture(**kwargs):  # noqa: ANN001
+        calls.append(kwargs["shell_command"])
+        return 0, "Publisher count: 0\nSubscription count: 0\n"
+
+    monkeypatch.setattr(host, "_docker_run_ros_shell_capture", fake_run_ros_shell_capture)
+
+    result = official_maze_x2_task_module._collect_topic_info(
+        config,
+        image="test-image",
+        topics=("/navlab/exploration/coverage", "/scan"),
+        transient_topics=("/navlab/exploration/coverage",),
+    )
+
+    assert calls == ["timeout --signal=INT 8s ros2 topic info -v /scan"]
+    assert result["/navlab/exploration/coverage"]["skipped"] is True
+    assert result["/navlab/exploration/coverage"]["reason"] == "transient_topic_gone_after_run"
+    assert (tmp_path / "topic_info_navlab_exploration_coverage.txt").read_text(encoding="utf-8").startswith(
+        "skipped transient topic info after run"
+    )
+
+
 def test_p4_owner_blockers_detect_competing_publishers() -> None:
     config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
     blockers: list[str] = []
@@ -801,7 +857,9 @@ def test_p6_slam_hover_rosbag_profile_contains_required_topics() -> None:
         "/clock",
         "/tf",
         "/tf_static",
+        "/lidar",
         "/scan",
+        "/sim/x2/status",
         "/imu",
         "/rangefinder/down/range",
         "/rangefinder/down/status",
@@ -1135,6 +1193,79 @@ def test_p8_exploration_gate_config_loads() -> None:
     assert config.orchestration.exploration_gate.exploration_claim == "evaluated"
 
 
+def test_p8_replay_profile_extends_motion_without_relaxing_safety_contract() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+
+    replay_config = exploration_gate_task_module._apply_replay_profile(config, "conservative")
+    base = config.orchestration.exploration_gate
+    replay_p8 = replay_config.orchestration.exploration_gate
+
+    assert replay_p8.strategy == "frontier_lite_replay_conservative"
+    assert replay_p8.exploration_window_sec == 50.0
+    assert replay_p8.forward_probe_window_sec == 4.0
+    assert replay_p8.stop_hold_window_sec == 2.5
+    assert replay_p8.motion_speed_mps == 0.18
+    assert replay_p8.min_accepted_goals == 5
+    assert replay_p8.min_path_length_m == 2.5
+    assert replay_p8.min_clearance_m == base.min_clearance_m
+    assert replay_p8.max_stop_drift_m == base.max_stop_drift_m
+    assert replay_p8.owner_status_topic == base.owner_status_topic
+    assert replay_p8.setpoint_intent_topic == base.setpoint_intent_topic
+    assert replay_p8.setpoint_output_topic == base.setpoint_output_topic
+    assert replay_p8.uses_gazebo_truth_as_input is False
+    assert replay_p8.hover_claim == "evaluated"
+    assert replay_p8.motion_claim == "evaluated"
+    assert replay_p8.exploration_claim == "evaluated"
+
+
+def test_p9_display_replay_profile_goes_farther_without_relaxing_safety_contract() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+
+    replay_config = exploration_gate_task_module._apply_replay_profile(config, "display")
+    base = config.orchestration.exploration_gate
+    replay_p8 = replay_config.orchestration.exploration_gate
+
+    assert replay_p8.strategy == "frontier_lite_replay_display"
+    assert replay_p8.exploration_window_sec == 90.0
+    assert replay_p8.forward_probe_window_sec == 5.0
+    assert replay_p8.stop_hold_window_sec == 2.0
+    assert replay_p8.final_hold_window_sec == 12.0
+    assert replay_p8.motion_speed_mps == 0.25
+    assert replay_p8.min_accepted_goals == 7
+    assert replay_p8.min_path_length_m == 5.0
+    assert replay_p8.min_clearance_m == base.min_clearance_m
+    assert replay_p8.max_stop_drift_m == base.max_stop_drift_m
+    assert replay_p8.owner_status_topic == base.owner_status_topic
+    assert replay_p8.setpoint_intent_topic == base.setpoint_intent_topic
+    assert replay_p8.setpoint_output_topic == base.setpoint_output_topic
+    assert replay_p8.uses_gazebo_truth_as_input is False
+    assert replay_p8.hover_claim == "evaluated"
+    assert replay_p8.motion_claim == "evaluated"
+    assert replay_p8.exploration_claim == "evaluated"
+
+
+def test_p8_replay_slam_health_check_ignores_stationary_probe_metrics() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    p3 = config.orchestration.slam_backend
+    blockers: list[str] = []
+
+    exploration_gate_task_module._append_replay_slam_health_blockers(
+        blockers=blockers,
+        p3=p3,
+        slam_odom_result={
+            "received": True,
+            "frame_id": p3.odom_frame_id,
+            "child_frame_id": p3.base_frame_id,
+            "rate_hz": p3.min_slam_odom_rate_hz,
+            "latest_age_sec": 0.0,
+            "max_jump_m": p3.max_jump_m + 10.0,
+            "stationary_drift_m": p3.max_stationary_drift_m + 10.0,
+        },
+    )
+
+    assert blockers == []
+
+
 def test_p8_exploration_gate_rosbag_profile_contains_required_topics() -> None:
     config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
     profile = Path(config.exploration_gate_rosbag_profile)
@@ -1144,7 +1275,9 @@ def test_p8_exploration_gate_rosbag_profile_contains_required_topics() -> None:
         "/clock",
         "/tf",
         "/tf_static",
+        "/lidar",
         "/scan",
+        "/sim/x2/status",
         "/imu",
         "/rangefinder/down/range",
         "/rangefinder/down/status",

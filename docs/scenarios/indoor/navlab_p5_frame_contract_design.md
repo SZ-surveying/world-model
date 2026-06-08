@@ -439,8 +439,8 @@ P5 blocked 条件：
 建议命名：
 
 ```text
-just navlab-frame-contract-doctor
-just navlab-frame-contract-acceptance 90
+uv run --project orchestration python orchestration/main.py frame-contract-doctor
+uv run --project orchestration python orchestration/main.py frame-contract-acceptance 90
 ```
 
 doctor 只检查：

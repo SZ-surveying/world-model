@@ -167,7 +167,7 @@ ros2 topic list | grep '^/ap/'
 - [x] 在 orchestration task registry 中新增 P0 official baseline doctor。
 - [x] 在 orchestration task registry 中新增 P0 official baseline acceptance。
 - [x] CLI 命名避免使用旧 stage 口径。
-- [x] justfile 增加 P0 doctor/acceptance 入口，命名和 CLI 一致。
+- [x] orchestration CLI 增加 P0 doctor/acceptance task；历史 justfile 便捷入口已回收。
 - [x] P0 task 不复用 hover acceptance 的完成判断。
 
 建议命名：
@@ -179,7 +179,7 @@ navlab-official-baseline-acceptance
 
 验收：
 
-- [x] `just --list` 能看到 P0 official baseline 命令。
+- [x] `uv run --project orchestration python orchestration/main.py --help` 能看到 P0 official baseline task。
 - [x] CLI help 能看到 P0 official baseline task。
 - [x] P0 task 输出 artifact dir。
 - [x] P0 task 失败时能给出 blocker，而不是沉默失败。
@@ -205,10 +205,10 @@ navlab-official-baseline-acceptance
 
 - [x] 新增 `world-model/navlab-official-baseline:latest` 镜像配置。
 - [x] 新增 `docker/Dockerfile.official-baseline`。
-- [x] 新增 `just navlab-official-baseline-image-build`。
+- [x] 新增 `uv run --project orchestration python orchestration/main.py build official-baseline`。
 - [x] P0 doctor 默认检查 dedicated official baseline runtime image，而不是 companion image。
 - [x] 构建 `world-model/navlab-official-baseline:latest`。
-- [x] 构建后重跑 `just navlab-official-baseline-doctor`。
+- [x] 构建后重跑 `uv run --project orchestration python orchestration/main.py official-baseline-doctor`。
 - [x] doctor summary 中 `official_runtime_image_available=true`。
 - [x] doctor summary 中官方 ROS packages 全部 present。
 - [x] doctor summary 中 `micro_ros_agent_available=true`。
@@ -242,14 +242,14 @@ P0 全部完成必须满足：
 
 当前 P0 official baseline doctor 和 acceptance 已通过。P0 acceptance 使用 dedicated official baseline runtime image 启动官方 Gazebo/SITL/DDS bringup，通过 Cyclone DDS 在 domain 0 收到 `/ap/v1/time` sample，发现 `/ap/v1/prearm_check` service，并录制 P0 required topics 到 MCAP。
 
-- 命令：`just navlab-official-baseline-doctor`
+- 命令：`uv run --project orchestration python orchestration/main.py official-baseline-doctor`
 - 时间：2026-06-06 02:58:55
 - artifact：`artifacts/ros/navlab_official_baseline_doctor/20260606_025855`
 - 结果：通过
 - blocker：无
 - 备注：`official_runtime_image_available=true`；`cartographer_ros`、`cartographer_node`、`cartographer_occupancy_grid_node`、`ardupilot_sitl`、`ardupilot_gz_bringup`、`ardupilot_cartographer`、`micro_ros_agent` 均存在；RMW 为 `rmw_cyclonedds_cpp`，DDS domain 为 `0`。
 
-- 命令：`just navlab-official-baseline-acceptance 30`
+- 命令：`uv run --project orchestration python orchestration/main.py official-baseline-acceptance 30`
 - 时间：2026-06-06 03:01:57
 - artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260606_030157`
 - 结果：通过
@@ -258,40 +258,40 @@ P0 全部完成必须满足：
 
 历史失败记录保留如下，用于说明 P0 gate 如何从 custom fallback 收敛到 official DDS baseline。
 
-- 命令：`just navlab-official-baseline-doctor`
+- 命令：`uv run --project orchestration python orchestration/main.py official-baseline-doctor`
 - 时间：2026-06-05 23:45:42
 - artifact：`artifacts/ros/navlab_official_baseline_doctor/20260605_234542`
 - 结果：通过
 - blocker：无
 - 备注：`cartographer_ros`、`cartographer_node`、`cartographer_occupancy_grid_node` 均存在；Lua config hash 已记录。
 
-- 命令：`just navlab-official-baseline-acceptance 5`
+- 命令：`uv run --project orchestration python orchestration/main.py official-baseline-acceptance 5`
 - 时间：2026-06-05 23:45:59
 - artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260605_234559`
 - 结果：未通过，符合当前 P0 预期
 - blocker：缺 `/ap` 节点、缺 `/ap/tf`、`external_nav_route=mavlink_fallback`、`gazebo_bringup_mode=navlab_custom_bringup`
 - 备注：P0 gate 已能阻止把自定义 MAVLink fallback 误判为官方 baseline 完成。
 
-- 命令：`just navlab-official-baseline-doctor`
+- 命令：`uv run --project orchestration python orchestration/main.py official-baseline-doctor`
 - 时间：2026-06-06 00:04:14
 - artifact：`artifacts/ros/navlab_official_baseline_doctor/20260606_000414`
 - 结果：未通过，符合当前 P0 预期
 - blocker：缺 `ardupilot_sitl`、`ardupilot_msgs`、`ardupilot_dds_tests`、`micro_ros_agent`、`ardupilot_gz_bringup`、`ardupilot_gz_application`、`ardupilot_gazebo`、`ardupilot_gz_gazebo`、`ardupilot_sitl_models`、`ardupilot_cartographer`，且缺 Micro-XRCE-DDS / micro-ROS-Agent 可执行文件
 - 备注：doctor 已记录官方来源、启动入口、Cartographer 配置和当前 runtime image。
 
-- 命令：`just navlab-official-baseline-acceptance 5`
+- 命令：`uv run --project orchestration python orchestration/main.py official-baseline-acceptance 5`
 - 时间：2026-06-06 00:05:19
 - artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260606_000519`
 - 结果：未通过，符合当前 P0 预期
 - blocker：缺官方 ROS2/DDS package、缺 Micro-XRCE-DDS / micro-ROS-Agent、缺 `/ap` 节点、缺 `/ap/tf`、`external_nav_route=mavlink_fallback`、`gazebo_bringup_mode=navlab_custom_bringup`
 - 备注：summary 已记录 Gazebo/SITL/router/gazebo-sensor compose 服务状态。
 
-- 命令：`just navlab-official-baseline-doctor`
+- 命令：`uv run --project orchestration python orchestration/main.py official-baseline-doctor`
 - 时间：2026-06-06 00:20:10
 - artifact：`artifacts/ros/navlab_official_baseline_doctor/20260606_002010`
 - 结果：未通过，符合当前 P0 预期
 - blocker：`world-model/navlab-official-baseline:latest` 尚未构建或不可运行，官方 ROS2/DDS package 和 Micro-XRCE-DDS / micro-ROS-Agent 仍缺失
-- 备注：P0 doctor 已改为检查 dedicated official baseline runtime image；下一步是执行 `just navlab-official-baseline-image-build`。
+- 备注：P0 doctor 已改为检查 dedicated official baseline runtime image；下一步是执行 `uv run --project orchestration python orchestration/main.py build official-baseline`。
 
 后续每次验证按下面格式记录：
 

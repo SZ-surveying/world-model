@@ -256,7 +256,6 @@ def _collect_ros_graph(config: RunConfig, artifact_dir: Path, *, image: str, net
     commands = {
         "ros2_node_list": "ros2 node list",
         "ros2_topic_list": "ros2 topic list --include-hidden-topics",
-        "ap_node_info": f"ros2 node info {config.orchestration.official_baseline.expected_ap_node}",
     }
     collected: dict[str, Any] = {}
     for key, command in commands.items():
@@ -279,6 +278,31 @@ def _collect_ros_graph(config: RunConfig, artifact_dir: Path, *, image: str, net
             "output": output,
             "lines": [line.strip() for line in output.splitlines() if line.strip()],
         }
+    expected_ap_node = config.orchestration.official_baseline.expected_ap_node
+    node_lines = collected.get("ros2_node_list", {}).get("lines", [])
+    if expected_ap_node in node_lines:
+        rc, output = host._docker_run_ros_shell_capture(
+            config=config,
+            image=image,
+            shell_command=f"ros2 node info {expected_ap_node}",
+            name=None,
+            network=network,
+            envs={
+                "DDS_ENABLE": config.orchestration.official_baseline.dds_enable,
+                "DDS_DOMAIN_ID": config.orchestration.official_baseline.dds_domain_id,
+                "ROS_DOMAIN_ID": config.orchestration.official_baseline.dds_domain_id,
+                "RMW_IMPLEMENTATION": baseline.rmw_implementation,
+            },
+        )
+    else:
+        rc = 0
+        output = f"skipped node info; {expected_ap_node} is not present in ros2 node list\n"
+    _write_text(artifact_dir / "ap_node_info.txt", output)
+    collected["ap_node_info"] = {
+        "rc": rc,
+        "output": output,
+        "lines": [line.strip() for line in output.splitlines() if line.strip()],
+    }
     return collected
 
 

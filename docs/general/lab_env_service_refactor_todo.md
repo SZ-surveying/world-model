@@ -125,7 +125,7 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 - [x] 移动旧 X2 config 到 `navlab/gazebo_sensor/config.py`。
 - [x] 移动旧 X2 CLI 到 `navlab/gazebo_sensor/cli.py`。
 - [x] 更新 Docker entrypoint 调用 `python -m navlab.gazebo_sensor.cli`。
-- [x] 更新 justfile `x2-driver-smoke` 入口。
+- [x] 记录 X2 driver smoke 原始 docker compose 命令；历史 justfile 便捷入口已回收。
 - [x] 更新所有 import。
 - [x] 删除空的旧 sim sensor 包。
 
@@ -202,7 +202,7 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 - [x] 每个服务的测试都先进入对应分组。
 - [x] 中间状态 `pytest` 通过。
 
-## P6：更新 CLI、justfile 和镜像入口
+## P6：更新 CLI 和镜像入口
 
 目标：外部命令仍简单，但内部路径符合新服务结构。
 
@@ -211,16 +211,16 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 - [x] `orchestration/main.py` 只引用 `orchestration/src/cli.py` 的 Typer app。
 - [x] companion 容器 entrypoint 调用 `navlab.companion.cli`。
 - [x] gazebo-sensor 容器 entrypoint 调用 `gazebo_sensor.cli`。
-- [x] justfile image build 命令保持不变。
-- [x] justfile smoke/acceptance 命令更新到新模块路径。
+- [x] orchestration 原始 image build 命令保持可用。
+- [x] smoke/acceptance 原始命令更新到新模块路径。
 - [x] Dockerfile 中 Python dependency group 仍按镜像边界安装。
 
 ### 验收
 
 - [x] `just --list` 不出现旧 Stage 0/Stage 1 启动命令。
-- [ ] `just navlab-gazebo-sensor-image-build` 可构建目标镜像。
-- [ ] `just x2-driver-smoke 8` 通过。
-- [ ] `just navlab-doctor` 通过。
+- [ ] `uv run --project orchestration python orchestration/main.py build gazebo-sensor` 可构建目标镜像。
+- [ ] `X2_MODE=driver-smoke X2_SMOKE_DURATION_SEC=8 X2_ARTIFACT_DIR=/artifacts/ros/x2_driver_smoke/manual docker compose --file compose/docker-compose.yaml --project-directory . --profile x2_sensor up --abort-on-container-exit --exit-code-from gazebo-sensor gazebo-sensor` 通过。
+- [ ] `uv run --project orchestration python orchestration/main.py doctor` 通过。
 
 ## P7：完整 acceptance 和 rosbag 回放
 
@@ -229,7 +229,7 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 ### 任务
 
 - [ ] 构建 companion、SLAM、gazebo-sensor 镜像。
-- [ ] 跑 `just navlab-acceptance 90`。
+- [ ] 跑 `uv run --project orchestration python orchestration/main.py acceptance 90`。
 - [ ] 检查 summary 中 `scan_source = "x2_virtual_serial_vendor_driver"`。
 - [ ] 检查 rosbag 包含 `/scan`、`/scan_ideal`、`/sim/x2/status`、`/scan_features`。
 - [ ] 检查 `/scan_features` message count 非零。
@@ -273,7 +273,7 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 - [x] 创建根目录 `orchestration/`，迁移 host 侧 `cli.py`、`host.py`、`config.py`、`artifacts.py`、`foxglove_upload.py`。
 - [x] 创建根目录 `navlab/`，迁移 `companion/`、`gazebo_sensor/`、`common/`、`sim/`。
 - [x] 删除旧 Python 包外壳。
-- [x] 更新 justfile，直接调用 `python orchestration/main.py ...`。
+- [x] 历史 justfile 便捷入口已回收，文档改为记录 `python orchestration/main.py ...` 原始命令。
 - [x] 更新 Docker entrypoint，直接调用 `navlab.companion...` / `navlab.gazebo_sensor...`。
 - [x] 更新 Dockerfile/uv project 路径，避免再依赖旧包外壳下的 pyproject。
 - [x] 更新测试 import 和测试目录路径。
@@ -286,7 +286,7 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 - [x] `python -m navlab.companion.cli --help` 可运行。
 - [x] `python -m navlab.gazebo_sensor.cli --help` 可运行。
 - [x] `ruff` 和 `pytest` 通过。
-- [x] `just --list` 保持干净，NavLab build/doctor/acceptance 命令仍存在。
+- [x] `just --list` 保持干净；历史 build/doctor/acceptance 改回 orchestration 原始命令记录。
 
 ## P10：测试也跟随 project 边界拆分
 

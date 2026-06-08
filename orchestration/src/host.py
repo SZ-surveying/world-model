@@ -28,6 +28,7 @@ OFFICIAL_BASELINE_CONTAINER = "navlab-official-baseline"
 GAZEBO_SENSOR_SERVICE = "gazebo-sensor"
 DEFAULT_COMPANION_RUNTIME_CONFIG = Path("navlab/config.toml")
 OFFICIAL_SITL_WORKDIR = "sitl_work"
+ROS_SHELL_STDERR_FILTER_PATTERN = r"Failed to parse type hash|share an exact name"
 
 
 def _compose_client() -> DockerClient:
@@ -379,6 +380,7 @@ def _docker_run_ros_shell_capture(
     network: str | None = None,
     envs: dict[str, str] | None = None,
 ) -> tuple[int, str]:
+    filtered_shell_command = _with_ros_shell_stderr_filter(shell_command)
     command = [
         "bash",
         "-lc",
@@ -388,7 +390,7 @@ def _docker_run_ros_shell_capture(
             "source /opt/navlab_ws/install/setup.bash; fi && "
             "if [ -f /opt/navlab_official_ws/install/setup.bash ]; then "
             "source /opt/navlab_official_ws/install/setup.bash; fi && "
-            f"{shell_command}"
+            f"{filtered_shell_command}"
         ),
     ]
     try:
@@ -410,6 +412,14 @@ def _docker_run_ros_shell_capture(
     except DockerException as exc:
         return exc.return_code or 1, str(exc)
     return 0, str(output)
+
+
+def _with_ros_shell_stderr_filter(shell_command: str) -> str:
+    pattern = shlex.quote(ROS_SHELL_STDERR_FILTER_PATTERN)
+    # Use a brace group instead of parentheses so heredoc terminators stay on
+    # their own line. `(python - <<'PY' ... PY)` turns the terminator into
+    # `PY)`, which breaks bash parsing.
+    return f"{{\n{shell_command}\n}} 2> >(grep -v -E {pattern} >&2)"
 
 
 def _docker_exec_runtime_command(*, args: list[str], module: str = "navlab.companion.cli") -> int:

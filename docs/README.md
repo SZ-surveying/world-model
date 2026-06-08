@@ -29,6 +29,10 @@
 - `docs/scenarios/indoor/todos/P6_slam_hover_gate_todo.md`: P6 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_p7_official_maze_motion_gate_design.md`: P7 官方 maze 小范围运动 gate 设计
 - `docs/scenarios/indoor/todos/P7_official_maze_motion_gate_todo.md`: P7 TODO 和验收标准
+- `docs/scenarios/indoor/navlab_p8_official_maze_exploration_design.md`: P8 官方 maze 探索任务设计
+- `docs/scenarios/indoor/todos/P8_official_maze_exploration_todo.md`: P8 TODO 和验收标准
+- `docs/scenarios/indoor/navlab_p9_official_maze_overlay_replay_design.md`: P9 官方 maze 底图叠加与 Foxglove-lite 回放设计
+- `docs/scenarios/indoor/todos/P9_official_maze_overlay_replay_todo.md`: P9 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`: 当前系统与官方路线的对齐审计
 - `docs/scenarios/indoor/navlab_reference_projects_analysis.md`: 四个参考仓库的综合分析和改进建议
 - `docs/scenarios/indoor/navlab_cartographer_real_machine_tuning.md`: Cartographer 真机调参记录口径
@@ -64,11 +68,15 @@
 15. `docs/scenarios/indoor/todos/P6_slam_hover_gate_todo.md`
 16. `docs/scenarios/indoor/navlab_p7_official_maze_motion_gate_design.md`
 17. `docs/scenarios/indoor/todos/P7_official_maze_motion_gate_todo.md`
-18. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
-19. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
-20. `docs/sim/x2_lidar_simulation_design.md`
-21. `docs/sim/x2_lidar_protocol_todo.md`
-22. `docs/general/lab_env_service_refactor_todo.md`
+18. `docs/scenarios/indoor/navlab_p8_official_maze_exploration_design.md`
+19. `docs/scenarios/indoor/todos/P8_official_maze_exploration_todo.md`
+20. `docs/scenarios/indoor/navlab_p9_official_maze_overlay_replay_design.md`
+21. `docs/scenarios/indoor/todos/P9_official_maze_overlay_replay_todo.md`
+22. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
+23. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
+24. `docs/sim/x2_lidar_simulation_design.md`
+25. `docs/sim/x2_lidar_protocol_todo.md`
+26. `docs/general/lab_env_service_refactor_todo.md`
 
 ## 当前目录结构
 
@@ -89,6 +97,8 @@ docs/
       navlab_p5_frame_contract_design.md
       navlab_p6_slam_hover_gate_design.md
       navlab_p7_official_maze_motion_gate_design.md
+      navlab_p8_official_maze_exploration_design.md
+      navlab_p9_official_maze_overlay_replay_design.md
       navlab_ardupilot_ros2_official_alignment.md
       navlab_reference_projects_analysis.md
       navlab_cartographer_real_machine_tuning.md
@@ -101,6 +111,8 @@ docs/
         P5_frame_contract_todo.md
         P6_slam_hover_gate_todo.md
         P7_official_maze_motion_gate_todo.md
+        P8_official_maze_exploration_todo.md
+        P9_official_maze_overlay_replay_todo.md
   sim/
     README.md
     todo.md

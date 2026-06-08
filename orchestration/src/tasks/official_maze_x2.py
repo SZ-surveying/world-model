@@ -334,10 +334,30 @@ def _record_rosbag(config: RunConfig, *, image: str, duration_sec: float) -> dic
     return summary
 
 
-def _collect_topic_info(config: RunConfig, *, image: str, topics: tuple[str, ...]) -> dict[str, Any]:
+def _collect_topic_info(
+    config: RunConfig,
+    *,
+    image: str,
+    topics: tuple[str, ...],
+    transient_topics: tuple[str, ...] = (),
+) -> dict[str, Any]:
     baseline = config.orchestration.official_baseline
     result: dict[str, Any] = {}
+    transient = set(transient_topics)
     for topic in topics:
+        artifact = config.artifact_dir / f"topic_info_{topic.strip('/').replace('/', '_') or 'root'}.txt"
+        if topic in transient:
+            output = f"skipped transient topic info after run: {topic}\n"
+            _write_text(artifact, output)
+            result[topic] = {
+                "rc": 0,
+                "output": output,
+                "publisher_nodes": [],
+                "subscription_nodes": [],
+                "skipped": True,
+                "reason": "transient_topic_gone_after_run",
+            }
+            continue
         rc, output = host._docker_run_ros_shell_capture(
             config=config,
             image=image,
@@ -351,7 +371,7 @@ def _collect_topic_info(config: RunConfig, *, image: str, topics: tuple[str, ...
                 "RMW_IMPLEMENTATION": baseline.rmw_implementation,
             },
         )
-        _write_text(config.artifact_dir / f"topic_info_{topic.strip('/').replace('/', '_') or 'root'}.txt", output)
+        _write_text(artifact, output)
         result[topic] = {
             "rc": rc,
             "output": output,

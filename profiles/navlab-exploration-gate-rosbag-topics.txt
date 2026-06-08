@@ -4,7 +4,9 @@ required /clock
 required /tf
 required /tf_static
 
+required /lidar
 required /scan
+required /sim/x2/status
 required /imu
 required /rangefinder/down/range
 required /rangefinder/down/status
@@ -37,8 +39,6 @@ required /navlab/exploration/coverage
 optional /odometry
 optional /navlab/frame_contract/status
 optional /navlab/x2/vendor_scan
-optional /navlab/x2/scan_ideal
-optional /sim/x2/status
 optional /rangefinder/down/scan_ideal
 optional /navlab/vehicle/markers
 optional /navlab/exploration/frontiers

@@ -55,10 +55,10 @@ navlab/
 主线入口放在 `navlab`：
 
 ```bash
-just navlab-images-build
-just navlab-doctor
-just x2-driver-smoke 8
-just navlab-acceptance 90
+uv run --project orchestration python orchestration/main.py build all
+uv run --project orchestration python orchestration/main.py doctor
+X2_MODE=driver-smoke X2_SMOKE_DURATION_SEC=8 X2_ARTIFACT_DIR=/artifacts/ros/x2_driver_smoke/manual docker compose --file compose/docker-compose.yaml --project-directory . --profile x2_sensor up --abort-on-container-exit --exit-code-from gazebo-sensor gazebo-sensor
+uv run --project orchestration python orchestration/main.py acceptance 90
 ```
 
 NavLab acceptance 会启动 Gazebo、SITL、MAVLink router、gazebo sensor、companion、SLAM 和 Foxglove，

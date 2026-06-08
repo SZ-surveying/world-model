@@ -5,7 +5,7 @@ import math
 import os
 import shlex
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -41,6 +41,7 @@ from src.tasks.official_maze_x2 import (
     OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
     _capture_container_log,
     _collect_topic_info,
+    _collect_x2_status,
     _file_sha256,
     _profile_topics,
     _remove_container,
@@ -70,11 +71,60 @@ from src.tasks.slam_hover import _baseline_env, _build_p6_doctor_summary, _load_
 P8_ROSBAG_CONTAINER = "navlab-p8-rosbag"
 
 
+def _apply_replay_profile(config: RunConfig, replay_profile: str | None) -> RunConfig:
+    if not replay_profile:
+        return config
+    if replay_profile not in {"conservative", "display"}:
+        raise ValueError(f"unknown P8 replay profile: {replay_profile}")
+    p8 = config.orchestration.exploration_gate
+    if replay_profile == "display":
+        replay_p8 = replace(
+            p8,
+            strategy="frontier_lite_replay_display",
+            exploration_window_sec=90.0,
+            forward_probe_window_sec=5.0,
+            stop_hold_window_sec=2.0,
+            final_hold_window_sec=12.0,
+            motion_speed_mps=0.25,
+            min_accepted_goals=7,
+            min_path_length_m=5.0,
+        )
+        orchestration = replace(config.orchestration, exploration_gate=replay_p8)
+        return replace(config, orchestration=orchestration)
+    replay_p8 = replace(
+        p8,
+        strategy="frontier_lite_replay_conservative",
+        exploration_window_sec=50.0,
+        forward_probe_window_sec=4.0,
+        stop_hold_window_sec=2.5,
+        final_hold_window_sec=6.0,
+        motion_speed_mps=0.18,
+        min_accepted_goals=5,
+        min_path_length_m=2.5,
+    )
+    orchestration = replace(config.orchestration, exploration_gate=replay_p8)
+    return replace(config, orchestration=orchestration)
+
+
 def _message_counts(config: RunConfig) -> dict[str, int]:
     metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
     if not metadata.is_file():
         return {}
     return _load_rosbag_metadata_counts(metadata)
+
+
+def _append_replay_slam_health_blockers(*, blockers: list[str], p3: Any, slam_odom_result: dict[str, Any]) -> None:
+    if not slam_odom_result.get("received"):
+        blockers.append(f"P3 did not receive {p3.slam_odom_topic}")
+    if slam_odom_result.get("frame_id") != p3.odom_frame_id:
+        blockers.append(f"{p3.slam_odom_topic} frame_id is not {p3.odom_frame_id!r}")
+    if slam_odom_result.get("child_frame_id") != p3.base_frame_id:
+        blockers.append(f"{p3.slam_odom_topic} child_frame_id is not {p3.base_frame_id!r}")
+    if float(slam_odom_result.get("rate_hz", 0.0) or 0.0) < p3.min_slam_odom_rate_hz:
+        blockers.append("SLAM odom rate below threshold")
+    latest_age = slam_odom_result.get("latest_age_sec")
+    if latest_age is None or float(latest_age) > p3.max_latest_age_sec:
+        blockers.append("SLAM odom latest sample is stale")
 
 
 def _write_p8_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
@@ -953,9 +1003,11 @@ class ExplorationGateAcceptanceTask(OrchestrationTask):
         config_path: str | Path | None = None,
         duration_sec: float = 150.0,
         console: Console | None = None,
+        replay_profile: str | None = None,
     ) -> int:
         console = console or Console()
         config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
+        config = _apply_replay_profile(config, replay_profile)
         config.artifact_dir.mkdir(parents=True, exist_ok=True)
         host._render_run_config(console, config)
         baseline = config.orchestration.official_baseline
@@ -999,19 +1051,20 @@ class ExplorationGateAcceptanceTask(OrchestrationTask):
             frame_probe_script_summary = _write_frame_probe_script(config, frame_probe_script)
             exploration_probe_script_summary = _write_exploration_probe_script(config, exploration_probe_script)
 
-            console.print("[bold cyan]Starting official maze + P8 exploration gate[/bold cyan]")
+            if replay_profile:
+                console.print(f"[bold cyan]Starting official maze + P8 exploration replay profile={replay_profile}[/bold cyan]")
+            else:
+                console.print("[bold cyan]Starting official maze + P8 exploration gate[/bold cyan]")
             try:
                 host._compose_stop(config)
             except DockerException:
                 pass
-            host._start_official_baseline_container(
-                config,
-                volume_overrides=[
-                    (bridge_override.resolve(), OFFICIAL_IRIS_3D_BRIDGE_CONFIG),
-                    (model_overlay.resolve(), OFFICIAL_IRIS_WITH_LIDAR_MODEL),
-                    (param_overlay.resolve(), OFFICIAL_GAZEBO_IRIS_PARAMS),
-                ],
-            )
+            official_volume_overrides = [
+                (bridge_override.resolve(), OFFICIAL_IRIS_3D_BRIDGE_CONFIG),
+                (model_overlay.resolve(), OFFICIAL_IRIS_WITH_LIDAR_MODEL),
+                (param_overlay.resolve(), OFFICIAL_GAZEBO_IRIS_PARAMS),
+            ]
+            host._start_official_baseline_container(config, volume_overrides=official_volume_overrides)
             time.sleep(min(max(duration_sec, 1.0), 10.0))
             _start_gazebo_sensor_container(config, sensor_config=sensor_config)
             time.sleep(8.0)
@@ -1030,6 +1083,25 @@ class ExplorationGateAcceptanceTask(OrchestrationTask):
                     image=baseline.runtime_image,
                     artifact_name="p8_rangefinder_preflight_retry_probe.txt",
                 )
+            if not rangefinder_preflight.get("result", {}).get("range_received"):
+                console.print("[yellow]P8 rangefinder preflight still missed data; restarting official baseline once[/yellow]")
+                _capture_container_log(
+                    config,
+                    container=GAZEBO_SENSOR_CONTAINER,
+                    output_name="gazebo_sensor_preflight_retry_tail.log",
+                )
+                _remove_container(GAZEBO_SENSOR_CONTAINER)
+                host._remove_official_baseline_container()
+                time.sleep(2.0)
+                host._start_official_baseline_container(config, volume_overrides=official_volume_overrides)
+                time.sleep(12.0)
+                _start_gazebo_sensor_container(config, sensor_config=sensor_config)
+                time.sleep(10.0)
+                rangefinder_preflight = _collect_rangefinder_probe(
+                    config,
+                    image=baseline.runtime_image,
+                    artifact_name="p8_rangefinder_preflight_baseline_retry_probe.txt",
+                )
             _start_p3_slam_container(config, runtime_config=slam_runtime_config)
             time.sleep(4.0)
             _start_p8_rosbag_recording(config, duration_sec=max(120.0, min(duration_sec, 180.0)))
@@ -1043,6 +1115,7 @@ class ExplorationGateAcceptanceTask(OrchestrationTask):
 
             graph = _collect_ros_graph(config, config.artifact_dir, image=baseline.runtime_image, network="host")
             probe = _collect_official_dds_probe(config, config.artifact_dir, image=baseline.runtime_image, network="host")
+            x2_status = _collect_x2_status(config, image=baseline.runtime_image)
             rangefinder_probe = _collect_rangefinder_probe(config, image=baseline.runtime_image)
             imu_probe = _collect_imu_probe(config, image=baseline.runtime_image)
             slam_odom_probe = _collect_odometry_probe(
@@ -1063,10 +1136,26 @@ class ExplorationGateAcceptanceTask(OrchestrationTask):
                     p8.fcu_twist_topic,
                     p8.cmd_vel_topic,
                     p8.scan_topic,
+                    p2.x2_scan_input_topic,
+                    p2.x2_status_topic,
                     p2.rangefinder_scan_ideal_topic,
                     p8.rangefinder_range_topic,
                     p8.rangefinder_status_topic,
                     p8.imu_topic,
+                    p8.controller_status_topic,
+                    p8.setpoint_intent_topic,
+                    p8.setpoint_output_topic,
+                    p8.owner_status_topic,
+                    p8.hover_status_topic,
+                    p8.motion_status_topic,
+                    p8.exploration_status_topic,
+                    p8.exploration_goal_topic,
+                    p8.exploration_coverage_topic,
+                ),
+                transient_topics=(
+                    p8.fcu_pose_topic,
+                    p8.fcu_twist_topic,
+                    p8.cmd_vel_topic,
                     p8.controller_status_topic,
                     p8.setpoint_intent_topic,
                     p8.setpoint_output_topic,
@@ -1084,17 +1173,34 @@ class ExplorationGateAcceptanceTask(OrchestrationTask):
                 blockers.extend(str(item) for item in doctor.get("blockers", []))
             if not probe.get("result", {}).get("time_received"):
                 blockers.append("official DDS probe did not receive /ap/v1/time")
+            x2_sample = x2_status.get("result", {}).get("sample") or {}
+            if not x2_status.get("result", {}).get("received"):
+                blockers.append("X2 status probe did not receive /sim/x2/status")
+            if x2_sample.get("scan_source") != "gazebo_ideal":
+                blockers.append("X2 emulator is not consuming Gazebo lidar input")
+            latest_ideal_age = x2_sample.get("latest_scan_ideal_age_sec")
+            if latest_ideal_age is None or float(latest_ideal_age) > 2.0:
+                blockers.append("X2 Gazebo lidar input is stale")
+            if counts.get(p2.x2_scan_input_topic, 0) <= 0:
+                blockers.append(f"{p2.x2_scan_input_topic} was not recorded")
             if not rangefinder_preflight.get("result", {}).get("range_received"):
                 blockers.append("P8 rangefinder preflight did not receive range data")
             if not rangefinder_probe.get("result", {}).get("range_received"):
                 blockers.append("P8 did not receive rangefinder")
             if not imu_probe.get("result", {}).get("received"):
                 blockers.append("P8 did not receive IMU")
-            _append_slam_odom_quality_blockers(
-                blockers=blockers,
-                p3=p3,
-                slam_odom_result=slam_odom_probe.get("result", {}),
-            )
+            if replay_profile:
+                _append_replay_slam_health_blockers(
+                    blockers=blockers,
+                    p3=p3,
+                    slam_odom_result=slam_odom_probe.get("result", {}),
+                )
+            else:
+                _append_slam_odom_quality_blockers(
+                    blockers=blockers,
+                    p3=p3,
+                    slam_odom_result=slam_odom_probe.get("result", {}),
+                )
             _append_controller_blockers(blockers=blockers, controller=controller_summary)
             owner_summary = exploration_summary.get("owner", {}) if exploration_summary else {}
             if not owner_summary and controller_summary:
@@ -1126,6 +1232,8 @@ class ExplorationGateAcceptanceTask(OrchestrationTask):
                 p8.map_topic,
                 p8.fcu_pose_topic,
                 p8.scan_topic,
+                p2.x2_scan_input_topic,
+                p2.x2_status_topic,
                 p8.rangefinder_range_topic,
                 p8.imu_topic,
                 p8.exploration_status_topic,
@@ -1157,6 +1265,7 @@ class ExplorationGateAcceptanceTask(OrchestrationTask):
                     "hover_claim": p8.hover_claim,
                     "motion_claim": p8.motion_claim,
                     "exploration_claim": p8.exploration_claim,
+                    "replay_profile": replay_profile or "",
                     "rosbag_path": str(config.artifact_dir / "rosbag"),
                     "mcap_path": str(config.artifact_dir / "rosbag" / "rosbag_0.mcap"),
                 },
@@ -1175,6 +1284,7 @@ class ExplorationGateAcceptanceTask(OrchestrationTask):
                 "owner": exploration_summary.get("owner", {}),
                 "frame_contract": frame_summary,
                 "official_dds_probe": probe,
+                "x2_status": x2_status.get("result", {}),
                 "rangefinder_probe": rangefinder_probe.get("result", {}),
                 "rangefinder_preflight": rangefinder_preflight.get("result", {}),
                 "imu_probe": imu_probe.get("result", {}),
@@ -1186,6 +1296,7 @@ class ExplorationGateAcceptanceTask(OrchestrationTask):
                 "motion_claim": p8.motion_claim,
                 "exploration_claim": p8.exploration_claim,
                 "uses_gazebo_truth_as_input": p8.uses_gazebo_truth_as_input,
+                "replay_profile": replay_profile or "",
             }
             _write_json(config.artifact_dir / "summary.json", summary)
             _write_foxglove_notes(config)

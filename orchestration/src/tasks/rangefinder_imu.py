@@ -77,6 +77,10 @@ def _write_p2_model_overlay(config: RunConfig, path: Path) -> dict[str, Any]:
     )
     if "</model>" not in source:
         raise RuntimeError("official iris_with_lidar model does not contain a closing </model> tag")
+    x2_lidar_model_source = "official_iris_with_lidar"
+    if "model://lidar_3d" in source:
+        source = source.replace("model://lidar_3d", "model://lidar_2d", 1)
+        x2_lidar_model_source = "official_iris_with_lidar_2d_laserscan_overlay"
     overlay = textwrap.dedent(
         f"""\
 
@@ -154,7 +158,7 @@ def _write_p2_model_overlay(config: RunConfig, path: Path) -> dict[str, Any]:
         "model_overlay_source": p2.model_overlay_source,
         "x2_sensor_topic": p2.x2_scan_input_topic,
         "x2_sensor_frame_id": "base_scan",
-        "x2_sensor_source": "official_iris_with_lidar",
+        "x2_sensor_source": x2_lidar_model_source,
         "sensor_topic": p2.rangefinder_scan_ideal_topic,
         "sensor_type": "gpu_lidar",
         "frame_id": p2.rangefinder_frame_id,

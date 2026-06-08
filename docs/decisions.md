@@ -200,7 +200,7 @@ Reason: Ubuntu noble's `default-jdk` can resolve to Java 21, while the `Micro-XR
 
 Decision: set the P0 official baseline runtime to `rmw_cyclonedds_cpp` and keep the official baseline ROS/DDS domain at `0`.
 
-Basis: P0 manual probes and `just navlab-official-baseline-acceptance 30`.
+Basis: P0 manual probes and `uv run --project orchestration python orchestration/main.py official-baseline-acceptance 30`.
 
 Reason: in the current ROS Jazzy environment, Fast DDS can discover ArduPilot bare DDS endpoints, but `/ap/v1/time` does not deliver samples to `ros2 topic echo` during the P0 probe. Cyclone DDS receives `/ap/v1/time` samples and records them into MCAP, although it may print type-hash warnings for bare DDS endpoints. ArduPilot's DDS launch defaults to domain `0`, so P0 aligns `ROS_DOMAIN_ID=0` with `DDS_DOMAIN_ID=0` for the official baseline while NavLab's normal custom runtime can keep its separate domain.
 
@@ -259,3 +259,19 @@ Decision: publish `base_link -> base_scan` from the SLAM bringup static TF path 
 Basis: Foxglove inspection of `artifacts/ros/navlab_companion_sitl_gazebo/20260607_153832/rosbag/rosbag_0.mcap` and comparison with `/home/nn/workspace/3588/ardupilot_gz/ardupilot_gz_description/models/iris_with_lidar/model.sdf`.
 
 Reason: the original bag used `/scan.header.frame_id=base_scan`, but `/tf_static` contained `base_link -> laser_frame` while `base_link -> base_scan` appeared only on dynamic `/tf`. Foxglove can then report `Missing transform from frame <base_scan> to frame <map>` when visualizing scans/maps. The official model fixes the lidar at `base_link -> base_scan` with `z=0.075077`, so future P3-P8 runs should record that relationship on `/tf_static` directly instead of relying on a post-process MCAP patch.
+
+## 2026-06-07: P9 uses representative replay runs
+
+Decision: keep P8 acceptance conservative, but define a separate P9 representative replay profile that moves farther and moderately faster before building the official-maze Foxglove overlay.
+
+Basis: P8 artifacts and P9 overlay design review.
+
+Reason: the minimum P8 gate proves the exploration control loop, but its default speed and action windows can produce less than a meter of travel, which is not enough to make the official maze overlay useful. P9 should prefer a longer replay run, for example 0.18 m/s with at least 2.5 m path length and five accepted goals, while keeping the same no-truth-input, unique-owner, clearance, stop-drift, SLAM, ExternalNav, and FCU health gates. This preserves P8 as a safety gate and makes P9 a publishable replay artifact instead of an over-aggressive flight gate.
+
+## 2026-06-07: P9 suppresses post-run ROS graph noise for transient topics
+
+Decision: filter CycloneDDS type-hash discovery warnings from ROS shell capture and skip post-run `ros2 topic info` for transient P8 exploration status topics.
+
+Basis: P9 display replay `artifacts/ros/navlab_companion_sitl_gazebo/20260607_223132/summary.json` passed with recorded `/navlab/exploration/*` messages, but terminal output still printed CycloneDDS type-hash warnings and `Unknown topic` lines after the exploration coordinator exited.
+
+Reason: `Failed to parse type hash ... USER_DATA '(null)'` comes from DDS discovery metadata for ArduPilot/micro-ROS participants and does not imply message loss. `/navlab/exploration/status`, `/navlab/exploration/goal`, `/navlab/exploration/coverage`, and `/navlab/motion/status` are transient runtime publishers; after the run exits, `ros2 topic info` can report them as unknown even though rosbag and summary counts prove data was recorded. The acceptance evidence should come from rosbag/profile counts and runtime summaries, not from a late ROS graph query for transient publishers.

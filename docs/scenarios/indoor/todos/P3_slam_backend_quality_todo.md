@@ -192,7 +192,7 @@ P3 完成后，只能说明 SLAM backend 质量具备进入 ExternalNav hover ga
 
 - [x] 新增 `navlab-slam-backend-doctor` orchestration task。
 - [x] 新增 `navlab-slam-backend-acceptance` orchestration task。
-- [x] justfile 增加同名入口。
+- [x] orchestration CLI 增加同名 task；历史 justfile 便捷入口已回收。
 - [x] acceptance 先验证 P0 official DDS baseline。
 - [x] acceptance 再验证 P1 X2 scan gate。
 - [x] acceptance 再验证 P2 IMU/rangefinder gate。
@@ -240,11 +240,11 @@ P3 完成后，只能说明 SLAM backend 质量具备进入 ExternalNav hover ga
 建议执行：
 
 ```text
-1. just navlab-official-baseline-acceptance 30
-2. just navlab-official-maze-x2-acceptance 45
-3. just navlab-rangefinder-imu-acceptance 60
-4. just navlab-slam-backend-doctor
-5. just navlab-slam-backend-acceptance 90
+1. uv run --project orchestration python orchestration/main.py official-baseline-acceptance 30
+2. uv run --project orchestration python orchestration/main.py official-maze-x2-acceptance 45
+3. uv run --project orchestration python orchestration/main.py rangefinder-imu-acceptance 60
+4. uv run --project orchestration python orchestration/main.py slam-backend-doctor
+5. uv run --project orchestration python orchestration/main.py slam-backend-acceptance 90
 ```
 
 验收：
@@ -289,7 +289,7 @@ P3 全部完成必须满足：
 ```
 
 ```text
-- 命令：just navlab-slam-backend-doctor
+- 命令：uv run --project orchestration python orchestration/main.py slam-backend-doctor
 - 时间：2026-06-06 12:02:42
 - artifact：artifacts/ros/navlab_slam_backend_doctor/20260606_120242/summary.json
 - 结果：通过
@@ -298,7 +298,7 @@ P3 全部完成必须满足：
 ```
 
 ```text
-- 命令：just navlab-slam-image-build
+- 命令：uv run --project orchestration python orchestration/main.py build slam
 - 时间：2026-06-06
 - artifact：world-model/navlab-slam-cartographer:latest
 - 结果：通过
@@ -307,7 +307,7 @@ P3 全部完成必须满足：
 ```
 
 ```text
-- 命令：just navlab-slam-backend-acceptance 90
+- 命令：uv run --project orchestration python orchestration/main.py slam-backend-acceptance 90
 - 时间：2026-06-06 12:54:06
 - artifact：artifacts/ros/navlab_companion_sitl_gazebo/20260606_125406/summary.json
 - 结果：通过，summary.ok=true，rosbag_profile.ok=true。

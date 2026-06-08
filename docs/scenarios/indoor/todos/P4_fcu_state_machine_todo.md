@@ -206,7 +206,7 @@
 
 - [x] 新增 `navlab-fcu-controller-doctor` orchestration task。
 - [x] 新增 `navlab-fcu-controller-acceptance` orchestration task。
-- [x] justfile 增加同名入口。
+- [x] orchestration CLI 增加同名 task；历史 justfile 便捷入口已回收。
 - [x] acceptance 先验证 P0 official DDS baseline。
 - [x] acceptance 再验证 P1 X2 scan gate。
 - [x] acceptance 再验证 P2 IMU/rangefinder gate。
@@ -256,12 +256,12 @@
 建议执行：
 
 ```text
-1. just navlab-official-baseline-acceptance 30
-2. just navlab-official-maze-x2-acceptance 45
-3. just navlab-rangefinder-imu-acceptance 60
-4. just navlab-slam-backend-acceptance 90
-5. just navlab-fcu-controller-doctor
-6. just navlab-fcu-controller-acceptance 90
+1. uv run --project orchestration python orchestration/main.py official-baseline-acceptance 30
+2. uv run --project orchestration python orchestration/main.py official-maze-x2-acceptance 45
+3. uv run --project orchestration python orchestration/main.py rangefinder-imu-acceptance 60
+4. uv run --project orchestration python orchestration/main.py slam-backend-acceptance 90
+5. uv run --project orchestration python orchestration/main.py fcu-controller-doctor
+6. uv run --project orchestration python orchestration/main.py fcu-controller-acceptance 90
 ```
 
 验收：
@@ -314,21 +314,21 @@ P4 全部完成必须满足：
 - blocker：无
 - 备注：覆盖 P4 config、task registry、runtime config、owner blocker、route blocker、MAVLink bootstrap 配置和 rosbag profile。
 
-- 命令：`just navlab-fcu-controller-doctor`
+- 命令：`uv run --project orchestration python orchestration/main.py fcu-controller-doctor`
 - 时间：2026-06-06 16:32:43
 - artifact：`artifacts/ros/navlab_fcu_controller_doctor/20260606_163243/summary.json`
 - 结果：通过
 - blocker：无
 - 备注：doctor 验证 P4 runtime 配置、MAVLink bootstrap route、ROS interface、`pymavlink` 和 rosbag profile 前置条件。
 
-- 命令：`just navlab-rangefinder-imu-acceptance 45`
+- 命令：`uv run --project orchestration python orchestration/main.py rangefinder-imu-acceptance 45`
 - 时间：2026-06-06 16:40:26
 - artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260606_164026/summary.json`
 - 结果：通过，`ok=true`
 - blocker：无
 - 备注：独立确认 P2 rangefinder/IMU 链路健康，rangefinder input_count 1191，range rosbag count 126。
 
-- 命令：`just navlab-fcu-controller-acceptance 90`
+- 命令：`uv run --project orchestration python orchestration/main.py fcu-controller-acceptance 90`
 - 时间：2026-06-06 17:00:39
 - artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260606_170039/summary.json`
 - 结果：通过，`ok=true`

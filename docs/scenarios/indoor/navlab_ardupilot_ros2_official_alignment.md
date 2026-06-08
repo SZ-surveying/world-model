@@ -197,7 +197,7 @@ Cartographer /odom
 P0 当前实测结果：
 
 - `world-model/navlab-official-baseline:latest` 已构建并通过 doctor。
-- `just navlab-official-baseline-acceptance 30` 已通过。
+- `uv run --project orchestration python orchestration/main.py official-baseline-acceptance 30` 已通过。
 - MCAP 已记录 `/clock`、`/tf`、`/tf_static`、`/ap/v1/time`。
 
 ### 2. P1 不先替换 world/model，只替换雷达链路

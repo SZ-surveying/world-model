@@ -128,7 +128,7 @@
 任务：
 
 - [x] 新增 `navlab-official-maze-x2-acceptance` orchestration task。
-- [x] justfile 增加同名入口。
+- [x] orchestration CLI 增加同名 task；历史 justfile 便捷入口已回收。
 - [x] acceptance 先跑 P0 official DDS probe，再跑 X2 scan gate。
 - [x] summary 合并 P0 official section、X2 section、Cartographer section、rosbag section。
 - [x] summary 包含 `p1_maze_x2` section。
@@ -148,7 +148,7 @@
 建议执行：
 
 ```text
-1. just navlab-official-baseline-doctor
+1. uv run --project orchestration python orchestration/main.py official-baseline-doctor
 2. 启动 official iris_maze bringup。
 3. 发现官方 lidar/Gazebo scan source。
 4. 启动 X2 emulator。
@@ -183,7 +183,7 @@ P1 全部完成必须满足：
 后续每次验证按下面格式记录：
 
 ```text
-- 命令：just navlab-official-maze-x2-acceptance 45
+- 命令：uv run --project orchestration python orchestration/main.py official-maze-x2-acceptance 45
 - 时间：2026-06-06 09:56:22 Asia/Hong_Kong
 - artifact：artifacts/ros/navlab_companion_sitl_gazebo/20260606_095622
 - 结果：通过，summary.ok=true，blockers=[]

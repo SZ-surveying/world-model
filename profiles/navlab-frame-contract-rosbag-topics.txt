@@ -7,7 +7,9 @@ required /ap/v1/pose/filtered
 required /ap/v1/twist/filtered
 required /ap/v1/status
 required /ap/v1/cmd_vel
+required /lidar
 required /scan
+required /sim/x2/status
 required /imu
 required /rangefinder/down/range
 required /rangefinder/down/status
@@ -24,6 +26,4 @@ optional /trajectory_node_list
 optional /odometry
 optional /external_nav/status
 optional /navlab/x2/vendor_scan
-optional /navlab/x2/scan_ideal
-optional /sim/x2/status
 optional /rangefinder/down/scan_ideal
