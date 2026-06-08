@@ -18,8 +18,8 @@ def _load_script(name: str, path: str):
     return module
 
 
-replay = _load_script("build_foxglove_replay_mcap", "scripts/build_foxglove_replay_mcap.py")
-upload = _load_script("upload_foxglove_mcap", "scripts/upload_foxglove_mcap.py")
+replay = _load_script("foxglove_replay", "scripts/command/src/foxglove/replay.py")
+upload = _load_script("foxglove_upload", "scripts/command/src/foxglove/upload.py")
 
 
 def test_p9_parse_walls_handles_degree_yaw(tmp_path: Path) -> None:
@@ -176,7 +176,7 @@ def test_upload_generate_lite_invokes_replay_builder(monkeypatch, tmp_path: Path
 
     assert upload._generate_lite_mcap(run_dir) is True
     assert calls
-    assert calls[0][0][-2:] == ["scripts/build_foxglove_replay_mcap.py", str(run_dir)]
+    assert calls[0][0][-4:] == ["scripts/command/main.py", "foxglove", "build-replay", str(run_dir)]
 
 
 

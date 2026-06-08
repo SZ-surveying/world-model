@@ -1,13 +1,11 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_ARDUPILOT_GZ = REPO_ROOT.parent / "ardupilot_gz"
 DEFAULT_MAZE = DEFAULT_ARDUPILOT_GZ / "ardupilot_gz_gazebo/worlds/maze.sdf"
 DEFAULT_OUTPUT = REPO_ROOT / "docs/images/official_maze_topdown.svg"
@@ -22,22 +20,6 @@ class Wall:
     length: float
     thickness: float
     height: float
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Render the official ArduPilot Gazebo maze.sdf as a top-down SVG.")
-    parser.add_argument("--maze", default=str(DEFAULT_MAZE), help="Path to ardupilot_gz_gazebo/worlds/maze.sdf")
-    parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Output SVG path")
-    args = parser.parse_args()
-
-    maze_path = Path(args.maze).expanduser()
-    output_path = Path(args.output).expanduser()
-    walls = parse_walls(maze_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(render_svg(walls, maze_path=maze_path), encoding="utf-8")
-    print(output_path)
-    return 0
-
 
 def parse_walls(path: Path) -> list[Wall]:
     root = ET.parse(path).getroot()
@@ -136,5 +118,10 @@ def render_svg(walls: list[Wall], *, maze_path: Path) -> str:
 '''
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+def render_topdown_svg(maze_path: Path, output_path: Path) -> Path:
+    resolved_maze = maze_path.expanduser()
+    resolved_output = output_path.expanduser()
+    walls = parse_walls(resolved_maze)
+    resolved_output.parent.mkdir(parents=True, exist_ok=True)
+    resolved_output.write_text(render_svg(walls, maze_path=resolved_maze), encoding="utf-8")
+    return resolved_output

@@ -1,17 +1,14 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import math
-import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 ARTIFACT_ROOT = REPO_ROOT / "artifacts/ros/navlab_companion_sitl_gazebo"
 DEFAULT_ARDUPILOT_GZ = REPO_ROOT.parent / "ardupilot_gz"
 DEFAULT_MAZE = DEFAULT_ARDUPILOT_GZ / "ardupilot_gz_gazebo/worlds/maze.sdf"
@@ -70,41 +67,6 @@ class TopicProfile:
     @property
     def output_required_topics(self) -> set[str]:
         return set(self.required_topics) | {self.overlay_topic}
-
-
-def main() -> int:
-    args = _parse_args()
-    try:
-        run_dir = resolve_run_dir(args.run)
-        summary = build_replay(
-            run_dir=run_dir,
-            maze_path=Path(args.maze).expanduser(),
-            topic_profile_path=Path(args.profile).expanduser(),
-            resolution_m=args.resolution,
-            margin_m=args.margin,
-            bbox_override=parse_bbox(args.bbox) if args.bbox else None,
-            full=args.full,
-            dry_run=args.dry_run,
-        )
-    except Exception as exc:  # noqa: BLE001 - CLI should emit concise blockers.
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    print(json.dumps(summary, indent=2, sort_keys=True))
-    return 0 if summary.get("ok") else 1
-
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build a Foxglove-lite replay MCAP with the official maze overlay.")
-    parser.add_argument("run", nargs="?", help="Run id like 20260607_185314, or a run artifact directory. Defaults to latest run.")
-    parser.add_argument("--maze", default=str(DEFAULT_MAZE), help="Path to official ardupilot_gz maze.sdf")
-    parser.add_argument("--profile", default=str(FOXGLOVE_LITE_PROFILE), help="Foxglove-lite topic profile")
-    parser.add_argument("--resolution", type=float, default=DEFAULT_RESOLUTION_M, help="Official maze overlay resolution in meters")
-    parser.add_argument("--margin", type=float, default=DEFAULT_MARGIN_M, help="Auto crop margin in meters")
-    parser.add_argument("--bbox", help="Explicit crop bbox as xmin,ymin,xmax,ymax in map frame")
-    parser.add_argument("--full", action="store_true", help="Use the full official maze extent instead of auto crop")
-    parser.add_argument("--dry-run", action="store_true", help="Write only the replay summary, not the output MCAP")
-    return parser.parse_args()
-
 
 def resolve_run_dir(value: str | None) -> Path:
     if value:
@@ -278,7 +240,7 @@ def _load_mcap_modules() -> dict[str, Any]:
         from mcap_ros2.decoder import DecoderFactory
     except ImportError as exc:
         raise RuntimeError(
-            "missing MCAP dependencies; run with `uv run --project orchestration python scripts/build_foxglove_replay_mcap.py`"
+            "missing MCAP dependencies; run with `uv run --project scripts/command python scripts/command/main.py foxglove build-replay`"
         ) from exc
     return {"make_reader": make_reader, "Writer": Writer, "serialize_dynamic": serialize_dynamic, "DecoderFactory": DecoderFactory}
 
@@ -700,7 +662,3 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

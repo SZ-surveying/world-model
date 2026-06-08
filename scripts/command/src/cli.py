@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+import json
+import shlex
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Annotated
+
+import typer
+from rich.console import Console
+
+from src import mavlink_serial, maze
+from src.command_logging import configure_command_logging
+from src.foxglove import replay, upload
+
+app = typer.Typer(add_completion=False, help="Unified command entrypoint for foxglove, serial, and maze tools.")
+foxglove_app = typer.Typer(add_completion=False, help="Foxglove replay build and upload commands.")
+serial_app = typer.Typer(add_completion=False, help="Serial bridge commands.")
+maze_app = typer.Typer(add_completion=False, help="Official maze utility commands.")
+console = Console()
+error_console = Console(stderr=True)
+REPO_ROOT = Path(__file__).resolve().parents[3]
+COMMAND_ROOT = REPO_ROOT / "scripts/command"
+DEFAULT_SERIAL_LOG_DIR = COMMAND_ROOT / "logs/serial"
+SERIAL_TMUX_SESSION_NAME = "command-serial-bridge"
+
+
+def _timestamped_log_path(log_file: Path | None) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if log_file is None:
+        DEFAULT_SERIAL_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        return DEFAULT_SERIAL_LOG_DIR / f"{timestamp}.log"
+
+    resolved = log_file.expanduser()
+    if resolved.exists() and resolved.is_dir():
+        resolved.mkdir(parents=True, exist_ok=True)
+        return resolved / f"{timestamp}.log"
+
+    if resolved.suffix.lower() != ".log":
+        resolved.mkdir(parents=True, exist_ok=True)
+        return resolved / f"{timestamp}.log"
+
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
+def _detach_serial_bridge(config: mavlink_serial.BridgeConfig) -> None:
+    existing = subprocess.run(
+        ["tmux", "has-session", "-t", SERIAL_TMUX_SESSION_NAME],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if existing.returncode == 0:
+        raise RuntimeError(
+            f"tmux session {SERIAL_TMUX_SESSION_NAME!r} already exists; attach with "
+            f"`tmux attach -t {SERIAL_TMUX_SESSION_NAME}` or close it first"
+        )
+
+    command = [
+        sys.executable,
+        "scripts/command/main.py",
+        "serial",
+        "bridge",
+        "--port-a",
+        config.port_a,
+        "--baud-a",
+        str(config.baud_a),
+        "--port-b",
+        config.port_b,
+        "--baud-b",
+        str(config.baud_b),
+        "--read-size",
+        str(config.read_size),
+        "--log-file",
+        config.log_file,
+        "--log-level",
+        config.log_level,
+        "--stats-interval",
+        str(config.stats_interval),
+        "--reconnect-delay",
+        str(config.reconnect_delay),
+    ]
+    tmux_command = [
+        "tmux",
+        "new-session",
+        "-d",
+        "-s",
+        SERIAL_TMUX_SESSION_NAME,
+        f"cd {shlex.quote(str(REPO_ROOT))} && {shlex.join(command)}",
+    ]
+    subprocess.run(tmux_command, check=True)
+    console.print(f"[green]started[/green] tmux session [bold]{SERIAL_TMUX_SESSION_NAME}[/bold]")
+    console.print(f"log file: [cyan]{config.log_file}[/cyan]")
+    console.print(f"attach: [bold]tmux attach -t {SERIAL_TMUX_SESSION_NAME}[/bold]")
+    console.print(f"stop: [bold]tmux kill-session -t {SERIAL_TMUX_SESSION_NAME}[/bold]")
+
+
+@foxglove_app.command("build-replay")
+def build_replay_command(
+    run: Annotated[
+        str | None,
+        typer.Argument(help="Run id like 20260607_185314, or a run artifact directory. Defaults to latest run."),
+    ] = None,
+    maze_path: Annotated[Path, typer.Option("--maze", help="Path to official ardupilot_gz maze.sdf")] = replay.DEFAULT_MAZE,
+    profile: Annotated[Path, typer.Option("--profile", help="Foxglove-lite topic profile")] = replay.FOXGLOVE_LITE_PROFILE,
+    resolution: Annotated[float, typer.Option("--resolution", help="Official maze overlay resolution in meters")] = replay.DEFAULT_RESOLUTION_M,
+    margin: Annotated[float, typer.Option("--margin", help="Auto crop margin in meters")] = replay.DEFAULT_MARGIN_M,
+    bbox: Annotated[str | None, typer.Option("--bbox", help="Explicit crop bbox as xmin,ymin,xmax,ymax in map frame")] = None,
+    full: Annotated[bool, typer.Option("--full", help="Use the full official maze extent instead of auto crop")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Write only the replay summary, not the output MCAP")] = False,
+) -> None:
+    try:
+        run_dir = replay.resolve_run_dir(run)
+        summary = replay.build_replay(
+            run_dir=run_dir,
+            maze_path=maze_path.expanduser(),
+            topic_profile_path=profile.expanduser(),
+            resolution_m=resolution,
+            margin_m=margin,
+            bbox_override=replay.parse_bbox(bbox) if bbox else None,
+            full=full,
+            dry_run=dry_run,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should emit concise blockers.
+        error_console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(2) from exc
+
+    console.print_json(json.dumps(summary, indent=2, sort_keys=True))
+    if not summary.get("ok"):
+        raise typer.Exit(1)
+
+
+@foxglove_app.command("upload")
+def upload_command(
+    run: Annotated[
+        str | None,
+        typer.Argument(help="Run id like 20260607_144800, or the run artifact directory path. Defaults to latest run."),
+    ] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print resolved upload files without uploading.")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Upload even when foxglove_upload.enabled=false.")] = False,
+    lite: Annotated[bool, typer.Option("--lite", help="Upload Foxglove-lite MCAP; generate it first when missing.")] = False,
+) -> None:
+    try:
+        result = upload.upload_run(run=run, dry_run=dry_run, force=force, lite=lite)
+    except Exception as exc:  # noqa: BLE001 - CLI should emit concise blockers.
+        error_console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(2) from exc
+    if dry_run:
+        console.print_json(json.dumps(result, indent=2, sort_keys=True))
+
+
+@serial_app.command("bridge")
+def serial_bridge_command(
+    port_a: Annotated[str, typer.Option("--port-a", help="First serial port")] = "/dev/ttyUSB1",
+    baud_a: Annotated[int, typer.Option("--baud-a", help="Baud rate for port A")] = 115200,
+    port_b: Annotated[str, typer.Option("--port-b", help="Second serial port")] = "/dev/ttyUSB0",
+    baud_b: Annotated[int, typer.Option("--baud-b", help="Baud rate for port B")] = 115200,
+    read_size: Annotated[int, typer.Option("--read-size", help="Bytes to read from the serial port at a time")] = 1024,
+    log_file: Annotated[
+        Path | None,
+        typer.Option("--log-file", help="Optional log file path; defaults to scripts/command/logs/serial/<timestamp>.log"),
+    ] = None,
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging verbosity", case_sensitive=False),
+    ] = "INFO",
+    stats_interval: Annotated[float, typer.Option("--stats-interval", help="Seconds between traffic stats logs")] = 5.0,
+    reconnect_delay: Annotated[float, typer.Option("--reconnect-delay", help="Seconds to wait before reconnect")] = 2.0,
+    detach: Annotated[bool, typer.Option("--detach", help="Run in a fixed tmux session named command-serial-bridge")] = False,
+) -> None:
+    config = mavlink_serial.BridgeConfig(
+        port_a=port_a,
+        baud_a=baud_a,
+        port_b=port_b,
+        baud_b=baud_b,
+        read_size=read_size,
+        log_file=str(_timestamped_log_path(log_file)),
+        log_level=log_level.upper(),
+        stats_interval=stats_interval,
+        reconnect_delay=reconnect_delay,
+    )
+    if detach:
+        try:
+            _detach_serial_bridge(config)
+        except Exception as exc:  # noqa: BLE001 - CLI should emit concise blockers.
+            error_console.print(f"[red]error:[/red] {exc}")
+            raise typer.Exit(2) from exc
+        return
+
+    configure_command_logging(log_file=config.log_file or None, console_level=config.log_level)
+    mavlink_serial.run_bridge(config)
+
+
+@maze_app.command("plot-topdown")
+def plot_topdown_command(
+    maze_path: Annotated[Path, typer.Option("--maze", help="Path to ardupilot_gz_gazebo/worlds/maze.sdf")] = maze.DEFAULT_MAZE,
+    output: Annotated[Path, typer.Option("--output", help="Output SVG path")] = maze.DEFAULT_OUTPUT,
+) -> None:
+    try:
+        output_file = maze.render_topdown_svg(maze_path, output)
+    except Exception as exc:  # noqa: BLE001 - CLI should emit concise blockers.
+        error_console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(2) from exc
+    console.print(str(output_file))
+
+
+app.add_typer(foxglove_app, name="foxglove")
+app.add_typer(serial_app, name="serial")
+app.add_typer(maze_app, name="maze")

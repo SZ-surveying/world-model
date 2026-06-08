@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import http.client
@@ -8,7 +7,7 @@ import ssl
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -24,9 +23,8 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 from rich.table import Table
-import typer
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 ARTIFACT_ROOT = REPO_ROOT / "artifacts/ros/navlab_companion_sitl_gazebo"
 ENV_PATH = REPO_ROOT / ".env"
 SESSION_ID = "navlab_companion_sitl_gazebo"
@@ -44,7 +42,6 @@ ATTACHMENT_PREFIX = "attachments"
 MAX_UPLOAD_ATTEMPTS = 3
 CONSOLE = Console()
 ERROR_CONSOLE = Console(stderr=True)
-app = typer.Typer(add_completion=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,54 +65,33 @@ class ProgressReader:
         return chunk
 
 
-@app.command()
-def main(
-    run: Annotated[
-        str | None,
-        typer.Argument(help="Run id like 20260607_144800, or the run artifact directory path. Defaults to latest run."),
-    ] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print resolved upload files without uploading.")] = False,
-    force: Annotated[bool, typer.Option("--force", help="Upload even when foxglove_upload.enabled=false.")] = False,
-    lite: Annotated[
-        bool,
-        typer.Option("--lite", help="Upload Foxglove-lite MCAP; generate it first when missing."),
-    ] = False,
-) -> None:
-    try:
-        run_dir = _resolve_run_dir(run)
-    except FileNotFoundError as exc:
-        ERROR_CONSOLE.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(2) from exc
+def upload_run(run: str | None = None, *, dry_run: bool = False, force: bool = False, lite: bool = False) -> dict[str, Any]:
+    run_dir = resolve_run_dir(run)
 
     if lite:
         lite_path = run_dir / FOXGLOVE_MCAP_RELATIVE
         if not lite_path.is_file():
             CONSOLE.print(f"[yellow]warn:[/yellow] lite MCAP missing, generating first: {lite_path.relative_to(run_dir)}")
             if not _generate_lite_mcap(run_dir):
-                ERROR_CONSOLE.print("[red]error:[/red] failed to generate lite MCAP")
-                raise typer.Exit(2)
+                raise FileNotFoundError("failed to generate lite MCAP")
 
     targets = _build_targets(run_dir, lite=lite)
 
     missing = [target.path for target in targets if not target.path.is_file()]
     if missing:
-        for path in missing:
-            ERROR_CONSOLE.print(f"[red]error:[/red] required upload file missing: {path}")
-        raise typer.Exit(2)
+        raise FileNotFoundError(f"required upload file missing: {missing[0]}")
 
     if not UPLOAD_ENABLED and not force:
-        ERROR_CONSOLE.print("[red]error:[/red] upload disabled; pass --force to upload anyway")
-        raise typer.Exit(2)
+        raise PermissionError("upload disabled; pass --force to upload anyway")
 
     if dry_run:
         _print_targets("Dry Run", run_dir, targets)
-        raise typer.Exit(0)
+        return _summary(True, "dry_run", run_dir, targets, "resolved upload targets only")
 
     _load_dotenv(ENV_PATH)
     token = os.environ.get(TOKEN_ENV, "")
     if not token:
-        ERROR_CONSOLE.print(f"[red]error:[/red] missing token env {TOKEN_ENV}")
-        raise typer.Exit(2)
+        raise EnvironmentError(f"missing token env {TOKEN_ENV}")
 
     uploaded: list[dict[str, Any]] = []
     try:
@@ -133,8 +109,7 @@ def main(
                     }
                 )
     except (HTTPError, URLError, OSError, ValueError) as exc:
-        ERROR_CONSOLE.print(f"[red]error:[/red] upload failed: {exc}")
-        raise typer.Exit(1)
+        raise OSError(f"upload failed: {exc}") from exc
 
     result = _summary(True, "uploaded", run_dir, targets, "uploaded to Foxglove cloud")
     result["uploaded"] = uploaded
@@ -144,10 +119,10 @@ def main(
     )
     CONSOLE.print("[bold green]uploaded to Foxglove[/bold green]")
     CONSOLE.print_json(json.dumps(result, sort_keys=True))
-    raise typer.Exit(0)
+    return result
 
 
-def _resolve_run_dir(value: str | None) -> Path:
+def resolve_run_dir(value: str | None) -> Path:
     if value:
         path = Path(value).expanduser()
         if path.is_dir():
@@ -160,6 +135,10 @@ def _resolve_run_dir(value: str | None) -> Path:
             return run_dir
         raise FileNotFoundError(f"run directory not found: {run_dir}")
     return _latest_run_dir()
+
+
+def _resolve_run_dir(value: str | None) -> Path:
+    return resolve_run_dir(value)
 
 
 def _latest_run_dir() -> Path:
@@ -187,9 +166,11 @@ def _generate_lite_mcap(run_dir: Path) -> bool:
         "uv",
         "run",
         "--project",
-        "orchestration",
+        "scripts/command",
         "python",
-        "scripts/build_foxglove_replay_mcap.py",
+        "scripts/command/main.py",
+        "foxglove",
+        "build-replay",
         str(run_dir),
     ]
     result = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
@@ -370,7 +351,3 @@ def _summary(ok: bool, state: str, run_dir: Path, targets: list[UploadTarget], r
             for target in targets
         ],
     }
-
-
-if __name__ == "__main__":
-    app()

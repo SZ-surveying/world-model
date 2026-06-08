@@ -4,6 +4,7 @@ set dotenv-filename := ".env"
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 orchestration_cmd := "uv run --project orchestration python orchestration/main.py"
+command_cmd := "uv run --project scripts/command python scripts/command/main.py"
 
 default:
     @just --list
@@ -26,15 +27,19 @@ navlab-exploration-display-replay duration_sec='240' *args='':
 
 # Build a Foxglove-lite replay MCAP with the official maze overlay.
 foxglove-replay date='':
-    uv run --project orchestration python scripts/build_foxglove_replay_mcap.py {{date}}
+    {{command_cmd}} foxglove build-replay {{date}}
 
 # Dry-run the Foxglove-lite replay build for the latest run or a given run id.
 foxglove-replay-dry-run date='':
-    uv run --project orchestration python scripts/build_foxglove_replay_mcap.py {{date}} --dry-run
+    {{command_cmd}} foxglove build-replay {{date}} --dry-run
 
 # Upload the latest raw/full P8 MCAP by default; pass --lite to upload/generate the lite MCAP.
 foxglove-upload date='' *args='':
-    scripts/upload_foxglove_mcap.py {{date}} --force {{args}}
+    {{command_cmd}} foxglove upload {{date}} --force {{args}}
+
+# Run the serial bridge from the scripts/command Python 3.11 project.
+serial-bridge *args='':
+    {{command_cmd}} serial bridge {{args}}
 
 # Check P10 body-fixed lidar scan integrity gate prerequisites.
 navlab-scan-integrity-gate-doctor *args='':

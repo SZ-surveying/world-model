@@ -13,20 +13,6 @@ wheels/
 
 .codex
 .sim_ros2_overlay/
+.vscode/
 
-x3/bags/
-x3/build/
-x3/install/
-x3/log/
-
-artifacts/
-build/
-install/
-log/
-
-core
-eeprom.bin
-mav.parm
-mav.tlog
-mav.tlog.raw
-terrain/
+scripts/command/logs
