@@ -4,7 +4,7 @@ from math import isclose
 
 from navlab.common.perception.contract import DEFAULT_SCAN_CONTRACT
 from navlab.companion.nodes.world_markers import _apply_uav_pose, _build_local_marker_offsets
-from navlab.sim.world.world_markers import (
+from navlab.companion.world_markers import (
     MarkerPose,
     compute_forward_clearance,
     load_world_marker_specs,

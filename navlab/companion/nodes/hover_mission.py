@@ -24,7 +24,7 @@ from navlab.companion.nodes.obstacle_mission import (
     _set_home_position,
     _set_mode,
 )
-from navlab.sim.status import DEFAULT_SIM_LOG_TOPIC, encode_sim_log
+from navlab.companion.status import DEFAULT_SIM_LOG_TOPIC, encode_sim_log
 
 os.environ.setdefault("MAVLINK20", "1")
 HOVER_DURATION_TOLERANCE_SEC = 0.25

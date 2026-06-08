@@ -25,7 +25,12 @@ from src.tasks.fcu_controller import (
     _write_controller_runtime_script,
     _write_p4_runtime_config,
 )
-from src.tasks.frame_contract import _append_p5_blockers, _run_frame_probe, _write_frame_probe_script, _write_p5_runtime_config
+from src.tasks.frame_contract import (
+    _append_p5_blockers,
+    _run_frame_probe,
+    _write_frame_probe_script,
+    _write_p5_runtime_config,
+)
 from src.tasks.motion_gate import _build_p7_doctor_summary, _run_motion_probe, _write_motion_probe_script
 from src.tasks.official_baseline import (
     _collect_official_dds_probe,
@@ -164,7 +169,7 @@ def _write_p10_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
 
 def _fault_probe_script(spec: dict[str, Any]) -> str:
     spec_json = json.dumps(spec, sort_keys=True)
-    return f'''
+    return f"""
 from __future__ import annotations
 
 import json
@@ -250,7 +255,7 @@ class FaultProbe:
         return summary
 
 raise SystemExit(0 if FaultProbe().run()["ok"] else 31)
-'''
+"""
 
 
 def _write_fault_probe_script(config: RunConfig, path: Path) -> dict[str, Any]:
@@ -269,7 +274,13 @@ def _write_fault_probe_script(config: RunConfig, path: Path) -> dict[str, Any]:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_text(path, _fault_probe_script(spec))
-    return {"path": str(path), "workspace_path": host._workspace_path(path), "sha256": _file_sha256(path), "summary_file": str(summary_file), "spec": spec}
+    return {
+        "path": str(path),
+        "workspace_path": host._workspace_path(path),
+        "sha256": _file_sha256(path),
+        "summary_file": str(summary_file),
+        "spec": spec,
+    }
 
 
 def _run_fault_probe(config: RunConfig, *, script_path: Path) -> dict[str, Any]:
@@ -313,7 +324,17 @@ def _start_p10_rosbag_recording(config: RunConfig, *, duration_sec: float) -> No
     _remove_container(P10_ROSBAG_CONTAINER)
     profile_path, required, optional, command = _p10_rosbag_shell_command(config, duration_sec=duration_sec)
     if not command:
-        _write_json(config.artifact_dir / "rosbag_profile_summary.json", {"ok": False, "recorded": False, "profile": str(profile_path), "required_topics": required, "optional_topics": optional, "reason": "rosbag profile missing or empty"})
+        _write_json(
+            config.artifact_dir / "rosbag_profile_summary.json",
+            {
+                "ok": False,
+                "recorded": False,
+                "profile": str(profile_path),
+                "required_topics": required,
+                "optional_topics": optional,
+                "reason": "rosbag profile missing or empty",
+            },
+        )
         return
     DockerClient().run(
         config.orchestration.official_baseline.runtime_image,
@@ -345,22 +366,42 @@ def _finish_p10_rosbag_recording(config: RunConfig) -> dict[str, Any]:
             break
         time.sleep(0.25)
     if rc != 0 or not metadata.is_file():
-        summary = {"ok": False, "recorded": False, "profile": str(profile_path), "required_topics": required, "optional_topics": optional, "reason": f"rosbag record failed rc={rc}", "record_output": str(output)}
+        summary = {
+            "ok": False,
+            "recorded": False,
+            "profile": str(profile_path),
+            "required_topics": required,
+            "optional_topics": optional,
+            "reason": f"rosbag record failed rc={rc}",
+            "record_output": str(output),
+        }
         _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
         return summary
-    summary = _validate_official_rosbag_profile(profile=profile_path, metadata=metadata, required=required, optional=optional)
+    summary = _validate_official_rosbag_profile(
+        profile=profile_path, metadata=metadata, required=required, optional=optional
+    )
     summary["rosbag_path"] = str(config.artifact_dir / "rosbag")
     summary["mcap_path"] = str(config.artifact_dir / "rosbag" / "rosbag_0.mcap")
     _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
     return summary
 
 
-def _build_p10_doctor_summary(config: RunConfig, *, runtime_config: Path, include_dependencies: bool = True) -> dict[str, Any]:
+def _build_p10_doctor_summary(
+    config: RunConfig, *, runtime_config: Path, include_dependencies: bool = True
+) -> dict[str, Any]:
     p10 = config.orchestration.scan_integrity_gate
     p6_runtime = config.artifact_dir / "p10_doctor_p6_slam_hover_runtime.toml"
     p7_runtime = config.artifact_dir / "p10_doctor_p7_motion_gate_runtime.toml"
-    p6_doctor = _build_p6_doctor_summary(config, runtime_config=p6_runtime) if include_dependencies else {"ok": True, "blockers": [], "skipped": "acceptance already launched P6 prerequisites"}
-    p7_doctor = _build_p7_doctor_summary(config, runtime_config=p7_runtime, include_dependencies=False) if include_dependencies else {"ok": True, "blockers": [], "skipped": "acceptance already launched P7 prerequisites"}
+    p6_doctor = (
+        _build_p6_doctor_summary(config, runtime_config=p6_runtime)
+        if include_dependencies
+        else {"ok": True, "blockers": [], "skipped": "acceptance already launched P6 prerequisites"}
+    )
+    p7_doctor = (
+        _build_p7_doctor_summary(config, runtime_config=p7_runtime, include_dependencies=False)
+        if include_dependencies
+        else {"ok": True, "blockers": [], "skipped": "acceptance already launched P7 prerequisites"}
+    )
     profile_path = Path(p10.rosbag_profile)
     required, optional, topics = _profile_topics(profile_path)
     blockers = [str(item) for item in p6_doctor.get("blockers", [])]
@@ -375,7 +416,10 @@ def _build_p10_doctor_summary(config: RunConfig, *, runtime_config: Path, includ
         blockers.append("P10 raw/normalized scan topics must not publish directly to /scan")
     if p10.max_attitude_source_age_ms <= 0.0:
         blockers.append("scan_integrity_config_invalid: max_attitude_source_age_ms must be positive")
-    if p10.attitude_source_topic in {"/odometry", config.orchestration.slam_backend.truth_diagnostic_topic} or p10.attitude_source_topic.startswith("/gazebo"):
+    if p10.attitude_source_topic in {
+        "/odometry",
+        config.orchestration.slam_backend.truth_diagnostic_topic,
+    } or p10.attitude_source_topic.startswith("/gazebo"):
         blockers.append("P10 attitude source must not be Gazebo truth")
     if p10.scan_integrity_claim != "evaluated":
         blockers.append("P10 scan_integrity_claim must be evaluated")
@@ -429,8 +473,7 @@ def _motor_output_summary(*, ros_graph: dict[str, Any]) -> dict[str, Any]:
         topic
         for topic in topics
         if topic not in excluded
-        if any(keyword in topic.lower() for keyword in motor_keywords)
-        and "support_motor" not in topic.lower()
+        if any(keyword in topic.lower() for keyword in motor_keywords) and "support_motor" not in topic.lower()
     )
     if not candidates:
         return {
@@ -472,7 +515,16 @@ def _p10_normal_profile_ok(motion_summary: dict[str, Any]) -> bool:
     )
 
 
-def _append_p10_blockers(*, blockers: list[str], motion_summary: dict[str, Any], fault_summary: dict[str, Any], rosbag_profile: dict[str, Any], counts: dict[str, int], topic_info: dict[str, Any], p10: Any) -> None:
+def _append_p10_blockers(
+    *,
+    blockers: list[str],
+    motion_summary: dict[str, Any],
+    fault_summary: dict[str, Any],
+    rosbag_profile: dict[str, Any],
+    counts: dict[str, int],
+    topic_info: dict[str, Any],
+    p10: Any,
+) -> None:
     if not motion_summary:
         blockers.append("P10 normal motion/scan summary is missing")
     else:
@@ -490,7 +542,15 @@ def _append_p10_blockers(*, blockers: list[str], motion_summary: dict[str, Any],
         blockers.extend(str(item) for item in fault_summary.get("blockers", []))
     if not rosbag_profile.get("ok"):
         blockers.append("P10 rosbag profile did not pass")
-    for topic in (p10.raw_scan_topic, p10.normalized_scan_topic, p10.validated_scan_topic, p10.status_topic, p10.events_topic, p10.attitude_source_topic, p10.rangefinder_range_topic):
+    for topic in (
+        p10.raw_scan_topic,
+        p10.normalized_scan_topic,
+        p10.validated_scan_topic,
+        p10.status_topic,
+        p10.events_topic,
+        p10.attitude_source_topic,
+        p10.rangefinder_range_topic,
+    ):
         if counts.get(topic, 0) <= 0:
             blockers.append(f"{topic} was not recorded")
     scan_publishers = topic_info.get(p10.validated_scan_topic, {}).get("publisher_nodes", [])
@@ -540,7 +600,9 @@ class ScanIntegrityGateDoctorTask(OrchestrationTask):
     def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
         console = console or Console()
         config = RunConfig.from_config(config_path=config_path)
-        artifact_dir = Path(os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_scan_integrity_gate_doctor/{config.run_id}"))
+        artifact_dir = Path(
+            os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_scan_integrity_gate_doctor/{config.run_id}")
+        )
         artifact_dir.mkdir(parents=True, exist_ok=True)
         config = RunConfig.from_config(config_path=config_path, artifact_dir=artifact_dir, run_id=config.run_id)
         runtime_config = artifact_dir / "p10_scan_integrity_gate_runtime.toml"
@@ -560,7 +622,9 @@ class ScanIntegrityGateAcceptanceTask(OrchestrationTask):
     TASK_NAME: ClassVar[str] = "scan-integrity-gate-acceptance"
     TASK_DESCRIPTION: ClassVar[str] = "Run P10 body-fixed lidar scan integrity gate acceptance."
 
-    def run(self, *, config_path: str | Path | None = None, duration_sec: float = 140.0, console: Console | None = None) -> int:
+    def run(
+        self, *, config_path: str | Path | None = None, duration_sec: float = 140.0, console: Console | None = None
+    ) -> int:
         console = console or Console()
         config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
         config.artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -596,7 +660,14 @@ class ScanIntegrityGateAcceptanceTask(OrchestrationTask):
             p4_runtime_summary = _write_p4_runtime_config(config, p4_runtime_config)
             p5_runtime_summary = _write_p5_runtime_config(config, p5_runtime_config)
             p10_runtime_summary = _write_p10_runtime_config(config, p10_runtime_config)
-            controller_script_summary = _write_controller_runtime_script(config, controller_script, duration_sec=max(150.0, duration_sec + 60.0), hold_after_ready_sec=max(120.0, duration_sec), enable_motion_intent_control=True, hover_status_topic=config.orchestration.motion_gate.hover_status_topic)
+            controller_script_summary = _write_controller_runtime_script(
+                config,
+                controller_script,
+                duration_sec=max(150.0, duration_sec + 60.0),
+                hold_after_ready_sec=max(120.0, duration_sec),
+                enable_motion_intent_control=True,
+                hover_status_topic=config.orchestration.motion_gate.hover_status_topic,
+            )
             frame_probe_script_summary = _write_frame_probe_script(config, frame_probe_script)
             motion_probe_script_summary = _write_motion_probe_script(config, motion_probe_script)
             fault_probe_script_summary = _write_fault_probe_script(config, fault_probe_script)
@@ -615,13 +686,19 @@ class ScanIntegrityGateAcceptanceTask(OrchestrationTask):
             time.sleep(min(max(duration_sec, 1.0), 10.0))
             _start_gazebo_sensor_container(config, sensor_config=sensor_config)
             time.sleep(10.0)
-            rangefinder_preflight = _collect_rangefinder_probe(config, image=baseline.runtime_image, artifact_name="p10_rangefinder_preflight_probe.txt")
+            rangefinder_preflight = _collect_rangefinder_probe(
+                config, image=baseline.runtime_image, artifact_name="p10_rangefinder_preflight_probe.txt"
+            )
             if not rangefinder_preflight.get("result", {}).get("range_received"):
                 console.print("[yellow]P10 rangefinder preflight missed data; restarting gazebo sensor once[/yellow]")
-                _capture_container_log(config, container=GAZEBO_SENSOR_CONTAINER, output_name="gazebo_sensor_preflight_tail.log")
+                _capture_container_log(
+                    config, container=GAZEBO_SENSOR_CONTAINER, output_name="gazebo_sensor_preflight_tail.log"
+                )
                 _start_gazebo_sensor_container(config, sensor_config=sensor_config)
                 time.sleep(10.0)
-                rangefinder_preflight = _collect_rangefinder_probe(config, image=baseline.runtime_image, artifact_name="p10_rangefinder_preflight_retry_probe.txt")
+                rangefinder_preflight = _collect_rangefinder_probe(
+                    config, image=baseline.runtime_image, artifact_name="p10_rangefinder_preflight_retry_probe.txt"
+                )
             _start_p3_slam_container(config, runtime_config=slam_runtime_config)
             time.sleep(4.0)
             _start_p10_rosbag_recording(config, duration_sec=max(120.0, min(duration_sec, 180.0)))
@@ -635,11 +712,15 @@ class ScanIntegrityGateAcceptanceTask(OrchestrationTask):
             counts = _message_counts(config)
 
             graph = _collect_ros_graph(config, config.artifact_dir, image=baseline.runtime_image, network="host")
-            probe = _collect_official_dds_probe(config, config.artifact_dir, image=baseline.runtime_image, network="host")
+            probe = _collect_official_dds_probe(
+                config, config.artifact_dir, image=baseline.runtime_image, network="host"
+            )
             x2_status = _collect_x2_status(config, image=baseline.runtime_image)
             rangefinder_probe = _collect_rangefinder_probe(config, image=baseline.runtime_image)
             imu_probe = _collect_imu_probe(config, image=baseline.runtime_image)
-            slam_odom_probe = _collect_odometry_probe(config, image=baseline.runtime_image, topic=p3.slam_odom_topic, artifact_name="p10_slam_odom_probe.txt")
+            slam_odom_probe = _collect_odometry_probe(
+                config, image=baseline.runtime_image, topic=p3.slam_odom_topic, artifact_name="p10_slam_odom_probe.txt"
+            )
             topic_info = _collect_topic_info(
                 config,
                 image=baseline.runtime_image,
@@ -678,15 +759,33 @@ class ScanIntegrityGateAcceptanceTask(OrchestrationTask):
                 blockers.append("P10 did not receive rangefinder")
             if not imu_probe.get("result", {}).get("received"):
                 blockers.append("P10 did not receive IMU")
-            _append_slam_odom_quality_blockers(blockers=blockers, p3=p3, slam_odom_result=slam_odom_probe.get("result", {}))
+            _append_slam_odom_quality_blockers(
+                blockers=blockers, p3=p3, slam_odom_result=slam_odom_probe.get("result", {})
+            )
             _append_controller_blockers(blockers=blockers, controller=controller_summary)
             owner_summary = motion_summary.get("owner", {}) if motion_summary else {}
             if not owner_summary and controller_summary:
                 owner_summary = controller_summary.get("owner", {})
             cmd_vel_publishers = topic_info.get(p4.cmd_vel_topic, {}).get("publisher_nodes", [])
-            _append_owner_blockers(blockers=blockers, owner_summary=owner_summary, cmd_vel_publishers=cmd_vel_publishers, p4=p4)
-            _append_p5_blockers(blockers=blockers, frame_summary=frame_summary, rosbag_profile={"ok": True}, counts={p5.status_topic: max(1, counts.get(p5.status_topic, 0))}, p5=p5)
-            _append_p10_blockers(blockers=blockers, motion_summary=motion_summary, fault_summary=fault_summary, rosbag_profile=rosbag_profile, counts=counts, topic_info=topic_info, p10=p10)
+            _append_owner_blockers(
+                blockers=blockers, owner_summary=owner_summary, cmd_vel_publishers=cmd_vel_publishers, p4=p4
+            )
+            _append_p5_blockers(
+                blockers=blockers,
+                frame_summary=frame_summary,
+                rosbag_profile={"ok": True},
+                counts={p5.status_topic: max(1, counts.get(p5.status_topic, 0))},
+                p5=p5,
+            )
+            _append_p10_blockers(
+                blockers=blockers,
+                motion_summary=motion_summary,
+                fault_summary=fault_summary,
+                rosbag_profile=rosbag_profile,
+                counts=counts,
+                topic_info=topic_info,
+                p10=p10,
+            )
             latest_integrity = _latest_status_from_fault(fault_summary)
             normal_profile_ok = _p10_normal_profile_ok(motion_summary)
             flight_attitude_metrics = latest_integrity.get("flight_attitude_metrics", {})
@@ -747,7 +846,10 @@ class ScanIntegrityGateAcceptanceTask(OrchestrationTask):
                 "scan_attitude_quality": scan_attitude_quality,
                 "motor_output": motor_output,
                 "motor_output_claim": motor_output["motor_output_claim"],
-                "truth_control": {"set_pose_count": int(owner.get("set_pose_count", -1)), "gazebo_truth_as_input": False},
+                "truth_control": {
+                    "set_pose_count": int(owner.get("set_pose_count", -1)),
+                    "gazebo_truth_as_input": False,
+                },
                 "owner": owner,
                 "frame_contract": frame_summary,
                 "official_dds_probe": probe,
@@ -787,9 +889,15 @@ class ScanIntegrityGateAcceptanceTask(OrchestrationTask):
             except DockerException:
                 pass
         if summary is None:
-            summary = {"ok": False, "blocked": True, "blockers": ["P10 scan integrity gate acceptance did not produce a summary"]}
+            summary = {
+                "ok": False,
+                "blocked": True,
+                "blockers": ["P10 scan integrity gate acceptance did not produce a summary"],
+            }
             _write_json(config.artifact_dir / "summary.json", summary)
         color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]P10 scan integrity gate acceptance completed rc={0 if summary['ok'] else 30}[/{color}]")
+        console.print(
+            f"[{color}]P10 scan integrity gate acceptance completed rc={0 if summary['ok'] else 30}[/{color}]"
+        )
         console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")
         return 0 if summary["ok"] else 30

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from navlab.sim.status import DEFAULT_SIM_LOG_TOPIC, encode_sim_log
+from navlab.companion.status import DEFAULT_SIM_LOG_TOPIC, encode_sim_log
 
 os.environ.setdefault("MAVLINK20", "1")
 

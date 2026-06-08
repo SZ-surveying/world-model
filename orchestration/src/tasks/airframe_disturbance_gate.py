@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import sys
-import tomllib
-import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
 import tomli_w
+import tomllib
 from rich.console import Console
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
@@ -151,8 +151,7 @@ def _explicit_p12_config_blockers(config: RunConfig) -> list[str]:
         missing = [key for key in keys if key not in section]
         if missing:
             blockers.append(
-                "airframe_disturbance_config_invalid: "
-                f"[{section_name}] missing explicit keys {','.join(missing)}"
+                f"airframe_disturbance_config_invalid: [{section_name}] missing explicit keys {','.join(missing)}"
             )
     return blockers
 
@@ -301,6 +300,7 @@ def _p12_rosbag_shell_command(config: RunConfig, *, duration_sec: float) -> tupl
 def _finish_p12_rosbag_recording(config: RunConfig) -> dict[str, Any]:
     from python_on_whales import DockerClient
     from python_on_whales.exceptions import DockerException
+
     from src.tasks.official_baseline import _validate_official_rosbag_profile
     from src.tasks.scan_stabilization_gate import P11_ROSBAG_CONTAINER
 
@@ -334,7 +334,9 @@ def _finish_p12_rosbag_recording(config: RunConfig) -> dict[str, Any]:
         }
         _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
         return summary
-    summary = _validate_official_rosbag_profile(profile=profile_path, metadata=metadata, required=required, optional=optional)
+    summary = _validate_official_rosbag_profile(
+        profile=profile_path, metadata=metadata, required=required, optional=optional
+    )
     summary["rosbag_path"] = str(config.artifact_dir / "rosbag")
     summary["mcap_path"] = str(config.artifact_dir / "rosbag" / "rosbag_0.mcap")
     _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
@@ -568,7 +570,9 @@ def _build_p12_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dic
     }
 
 
-def _write_p12_disturbed_model_overlay(config: RunConfig, path: Path, *, profile: AirframeDisturbanceProfile) -> dict[str, Any]:
+def _write_p12_disturbed_model_overlay(
+    config: RunConfig, path: Path, *, profile: AirframeDisturbanceProfile
+) -> dict[str, Any]:
     # Reuse the P2 overlay first so the lidar/rangefinder contract stays identical to P11.
     base_summary = _write_p2_model_overlay(config, path)
     source = path.read_text(encoding="utf-8")
@@ -620,7 +624,11 @@ def _build_p12_profile_sweep_summary(config: RunConfig) -> dict[str, Any]:
         esc_lag_ms=(0.0, 0.0, 0.0, 0.0),
     )
     invalid_blockers = validate_profile(invalid, thresholds)
-    fault_profiles["invalid_config"] = {"ok": bool(invalid_blockers), "expected_failure": True, "blockers": invalid_blockers}
+    fault_profiles["invalid_config"] = {
+        "ok": bool(invalid_blockers),
+        "expected_failure": True,
+        "blockers": invalid_blockers,
+    }
     if not invalid_blockers:
         blockers.append("invalid_config_not_blocked")
     return {
@@ -638,7 +646,11 @@ def _build_p12_profile_sweep_summary(config: RunConfig) -> dict[str, Any]:
         "fault_profiles": fault_profiles,
         "comparison": {
             "disturbed_vs_clean_slam_health_regressed": False,
-            "scan_availability_ok": all(item.get("scan_stabilization", {}).get("stabilized_scan_rate_hz", 0.0) >= gate.min_stabilized_scan_rate_hz for item in profiles.values()),
+            "scan_availability_ok": all(
+                item.get("scan_stabilization", {}).get("stabilized_scan_rate_hz", 0.0)
+                >= gate.min_stabilized_scan_rate_hz
+                for item in profiles.values()
+            ),
             "horizontal_recovery_claim": gate.horizontal_recovery_claim,
         },
         "live_replay_claim": "not_run_by_profile_sweep",
@@ -654,7 +666,9 @@ class AirframeDisturbanceGateDoctorTask(OrchestrationTask):
     def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
         console = console or Console()
         config = RunConfig.from_config(config_path=config_path)
-        artifact_dir = Path(os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_airframe_disturbance_gate_doctor/{config.run_id}"))
+        artifact_dir = Path(
+            os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_airframe_disturbance_gate_doctor/{config.run_id}")
+        )
         artifact_dir.mkdir(parents=True, exist_ok=True)
         config = RunConfig.from_config(config_path=config_path, artifact_dir=artifact_dir, run_id=config.run_id)
         runtime_config = artifact_dir / "p12_airframe_disturbance_gate_runtime.toml"
@@ -723,10 +737,11 @@ class AirframeDisturbanceGateAcceptanceTask(OrchestrationTask):
         )
         _write_json(config.artifact_dir / "summary.json", summary)
         color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]P12 airframe disturbance gate acceptance completed rc={0 if summary['ok'] else 30}[/{color}]")
+        console.print(
+            f"[{color}]P12 airframe disturbance gate acceptance completed rc={0 if summary['ok'] else 30}[/{color}]"
+        )
         console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")
         return 0 if summary["ok"] else 30
-
 
 
 def _config_for_profile(config: RunConfig, profile: AirframeDisturbanceProfile) -> RunConfig:
@@ -822,8 +837,7 @@ def _run_p12_live_disturbed_replay(
         )
 
     console.print(
-        "[bold cyan]Starting P12 live disturbed replay via P11 stabilization gate "
-        f"profile={profile.name}[/bold cyan]"
+        f"[bold cyan]Starting P12 live disturbed replay via P11 stabilization gate profile={profile.name}[/bold cyan]"
     )
     p11_gate._write_p2_model_overlay = disturbed_overlay
     p11_gate._write_p1_bridge_override = disturbed_bridge

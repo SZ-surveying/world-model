@@ -13,8 +13,7 @@ def test_x2_sensor_code_lives_under_sensor_package() -> None:
     assert Path("navlab/gazebo_sensor/cli.py").is_file()
     assert Path("navlab/gazebo_sensor/runtime.py").is_file()
     assert Path("navlab/gazebo_sensor/x2/scan_source.py").is_file()
-    assert not Path("navlab/sim/sensors").exists()
-    assert not Path("navlab/sim/perception/x2_protocol.py").exists()
+    assert not Path("navlab/sim").exists()
 
 
 def test_gazebo_sensor_docker_target_owns_vendor_driver_dependency() -> None:

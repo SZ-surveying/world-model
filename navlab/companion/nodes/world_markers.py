@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from math import atan2, cos, sin
 from pathlib import Path
 
-from navlab.sim.world.world_markers import MarkerPose, MarkerSpec, load_world_marker_specs, load_world_model_pose
+from navlab.companion.world_markers import MarkerPose, MarkerSpec, load_world_marker_specs, load_world_model_pose
 
 DEFAULT_WORLD_FILE = Path("/workspace/docker/worlds/navlab_iq_quad_figure8.sdf")
 DEFAULT_TOPIC = "/sim/markers"
