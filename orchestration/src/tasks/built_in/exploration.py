@@ -17,7 +17,7 @@ class BuiltInExplorationDoctorTask(OrchestrationTask):
     TASK_DESCRIPTION: ClassVar[str] = "Check built-in P8 movement/exploration prerequisites."
 
     def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
-        from src.tasks.legacy.exploration_gate import run_exploration_gate_doctor
+        from src.tasks.workflows.exploration import run_exploration_gate_doctor
 
         return run_exploration_gate_doctor(config_path=config_path, console=console)
 
@@ -35,7 +35,7 @@ class BuiltInExplorationTask(OrchestrationTask):
         duration_sec: float = 150.0,
         console: Console | None = None,
     ) -> int:
-        from src.tasks.legacy.exploration_gate import run_exploration_gate_acceptance
+        from src.tasks.workflows.exploration import run_exploration_gate_acceptance
 
         return run_exploration_gate_acceptance(
             config_path=config_path,

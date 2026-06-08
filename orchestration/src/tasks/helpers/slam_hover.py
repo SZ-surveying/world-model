@@ -16,7 +16,7 @@ from rich.console import Console
 
 from src import host
 from src.config import RunConfig
-from src.tasks.legacy.fcu_controller import (
+from src.tasks.helpers.fcu import (
     P4_CONTROLLER_CONTAINER,
     _append_controller_blockers,
     _append_owner_blockers,
@@ -27,14 +27,14 @@ from src.tasks.legacy.fcu_controller import (
     _write_controller_runtime_script,
     _write_p4_runtime_config,
 )
-from src.tasks.legacy.frame_contract import (
+from src.tasks.helpers.frame_contract import (
     _append_p5_blockers,
     _build_p5_doctor_summary,
     _run_frame_probe,
     _write_frame_probe_script,
     _write_p5_runtime_config,
 )
-from src.tasks.legacy.official_baseline import (
+from src.tasks.helpers.official_stack import (
     _build_doctor_summary,
     _collect_official_dds_probe,
     _collect_ros_graph,
@@ -43,7 +43,7 @@ from src.tasks.legacy.official_baseline import (
     _write_json,
     _write_text,
 )
-from src.tasks.legacy.official_maze_x2 import (
+from src.tasks.helpers.navlab_models import (
     GAZEBO_SENSOR_CONTAINER,
     OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
     _capture_container_log,
@@ -55,7 +55,7 @@ from src.tasks.legacy.official_maze_x2 import (
     _write_p1_bridge_override,
     _write_p1_vendor_profile,
 )
-from src.tasks.legacy.rangefinder_imu import (
+from src.tasks.helpers.sensors import (
     OFFICIAL_GAZEBO_IRIS_PARAMS,
     OFFICIAL_IRIS_WITH_LIDAR_MODEL,
     _collect_imu_probe,
@@ -64,7 +64,7 @@ from src.tasks.legacy.rangefinder_imu import (
     _write_p2_param_overlay,
     _write_p2_sensor_config,
 )
-from src.tasks.legacy.slam_backend import (
+from src.tasks.helpers.slam import (
     SLAM_BACKEND_CONTAINER,
     _append_slam_odom_quality_blockers,
     _build_p3_doctor_summary,

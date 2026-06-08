@@ -58,6 +58,7 @@
 - `docs/general/orchestration_runtime_backend_guide.md`: DockerBackend / ProcessBackend 使用说明和排障口径
 - `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`: simulation/real runtime mode 分流设计
 - `docs/general/orchestration_runtime_backend_inventory.md`: runtime backend 迁移清单和当前样板
+- `docs/general/orchestration_legacy_helper_deep_split_todo.md`: legacy helper 深拆和最终删除 TODO
 
 ## 推荐阅读顺序
 
@@ -96,6 +97,7 @@
 33. `docs/general/orchestration_runtime_backend_refactor_todo.md`
 34. `docs/general/orchestration_runtime_backend_guide.md`
 35. `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`
+36. `docs/general/orchestration_legacy_helper_deep_split_todo.md`
 
 ## 当前目录结构
 
@@ -109,6 +111,7 @@ docs/
     orchestration_runtime_backend_guide.md
     orchestration_runtime_backend_inventory.md
     orchestration_runtime_mode_real_vs_sim_design.md
+    orchestration_legacy_helper_deep_split_todo.md
   scenarios/
     indoor/
       navlab_master_roadmap.md

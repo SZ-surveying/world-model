@@ -15,7 +15,7 @@ from rich.console import Console
 from src import host
 from src.config import RunConfig
 from src.runtime import SERVICE_ROLE_OFFICIAL_BASELINE, SERVICE_ROLE_SDF_OVERLAY
-from src.tasks.legacy.official_baseline import (
+from src.tasks.helpers.official_stack import (
     _build_doctor_summary,
     _cartographer_dependency_summary,
     _collect_official_dds_probe,
@@ -27,7 +27,7 @@ from src.tasks.legacy.official_baseline import (
     _write_json,
     _write_text,
 )
-from src.tasks.legacy.official_maze_x2 import (
+from src.tasks.helpers.navlab_models import (
     CARTOGRAPHER_CONTAINER,
     GAZEBO_SENSOR_CONTAINER,
     OFFICIAL_IRIS_3D_BRIDGE_CONFIG,

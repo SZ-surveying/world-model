@@ -19,7 +19,7 @@ from src.runtime import (
     WorkspacePathMapper,
 )
 from src.runtime.errors import BackendConfigError, PathMappingError, RuntimeModeViolationError, ServiceStartError
-from src.tasks.legacy import scan_integrity_gate
+from src.tasks.helpers import scan_integrity as scan_integrity_gate
 
 
 class FakeDockerClient:
@@ -447,7 +447,7 @@ def test_real_mode_blocks_simulation_overlay_and_official_baseline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from src import host
-    from src.tasks.legacy.rangefinder_imu import _write_p2_model_overlay
+    from src.tasks.helpers.sensors import _write_p2_model_overlay
 
     config_file = tmp_path / "real.toml"
     config_file.write_text(
@@ -658,7 +658,7 @@ def test_host_ros_shell_capture_uses_probe_spec(monkeypatch: pytest.MonkeyPatch,
 
 
 def test_p11_rosbag_start_uses_runtime_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.tasks.legacy import scan_stabilization_gate
+    from src.tasks.helpers import scan_stabilization as scan_stabilization_gate
 
     config = RunConfig.from_config(
         config_path="orchestration/config.toml",
@@ -687,9 +687,9 @@ def test_p11_rosbag_start_uses_runtime_backend(tmp_path: Path, monkeypatch: pyte
 
 
 def test_p10_p11_p12_doctor_summaries_include_runtime_backend(tmp_path: Path) -> None:
-    from src.tasks.legacy.airframe_disturbance_gate import _build_p12_doctor_summary
-    from src.tasks.legacy.scan_integrity_gate import _build_p10_doctor_summary
-    from src.tasks.legacy.scan_stabilization_gate import _build_p11_doctor_summary
+    from src.tasks.workflows.scan_robustness import _build_p12_doctor_summary
+    from src.tasks.helpers.scan_integrity import _build_p10_doctor_summary
+    from src.tasks.helpers.scan_stabilization import _build_p11_doctor_summary
 
     config = RunConfig.from_config(
         config_path="orchestration/config.toml",

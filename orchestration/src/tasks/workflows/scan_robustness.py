@@ -27,9 +27,9 @@ from navlab.gazebo_sensor.airframe_disturbance import (
 from src import host
 from src.config import RunConfig
 from src.runtime import DockerBackend, RuntimeHandle, ServiceWaitError
-from src.tasks.legacy.official_baseline import _write_json, _write_text
-from src.tasks.legacy.official_maze_x2 import _file_sha256, _profile_topics
-from src.tasks.legacy.rangefinder_imu import _write_p2_model_overlay
+from src.tasks.helpers.official_stack import _write_json, _write_text
+from src.tasks.helpers.navlab_models import _file_sha256, _profile_topics
+from src.tasks.helpers.sensors import _write_p2_model_overlay
 
 P12_REQUIRED_AIRFRAME_KEYS = (
     "enabled",
@@ -247,7 +247,7 @@ def _p12_runtime_airframe_config(config: RunConfig, *, profile: AirframeDisturba
 
 
 def _write_p12_bridge_override(path: Path, *, imu_raw_topic: str) -> None:
-    from src.tasks.legacy.official_maze_x2 import _write_p1_bridge_override
+    from src.tasks.helpers.navlab_models import _write_p1_bridge_override
 
     _write_p1_bridge_override(path)
     rendered = path.read_text(encoding="utf-8")
@@ -263,7 +263,7 @@ def _write_p12_sensor_config(
     profile: AirframeDisturbanceProfile,
     base_writer: Any | None = None,
 ) -> dict[str, Any]:
-    from src.tasks.legacy import scan_stabilization_gate as p11_gate
+    from src.tasks.helpers import scan_stabilization as p11_gate
 
     writer = base_writer or p11_gate._write_p11_sensor_config
     summary = writer(config, path, vendor_profile=vendor_profile)
@@ -299,8 +299,8 @@ def _p12_rosbag_shell_command(config: RunConfig, *, duration_sec: float) -> tupl
 
 
 def _finish_p12_rosbag_recording(config: RunConfig) -> dict[str, Any]:
-    from src.tasks.legacy.official_baseline import _validate_official_rosbag_profile
-    from src.tasks.legacy.scan_stabilization_gate import P11_ROSBAG_CONTAINER
+    from src.tasks.helpers.official_stack import _validate_official_rosbag_profile
+    from src.tasks.helpers.scan_stabilization import P11_ROSBAG_CONTAINER
 
     profile_path = Path(config.airframe_disturbance_gate_rosbag_profile)
     required, optional, _topics = _profile_topics(profile_path)
@@ -815,8 +815,8 @@ def _run_p12_live_disturbed_replay(
     profile: AirframeDisturbanceProfile,
     console: Console,
 ) -> dict[str, Any]:
-    from src.tasks.legacy import scan_stabilization_gate as p11_gate
-    from src.tasks.legacy.scan_stabilization_gate import run_scan_stabilization_gate_acceptance
+    from src.tasks.helpers import scan_stabilization as p11_gate
+    from src.tasks.helpers.scan_stabilization import run_scan_stabilization_gate_acceptance
 
     live_artifact_dir = config.artifact_dir / f"p12_live_{profile.name}_replay"
     live_artifact_dir.mkdir(parents=True, exist_ok=True)

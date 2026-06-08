@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-06-09: Orchestration legacy helpers move to helpers/workflows
+
+Decision: delete `orchestration/src/tasks/legacy` by moving reusable gate code into `src.tasks.helpers` and built-in task workflows into `src.tasks.workflows`.
+
+Basis: codebase research and current task-surface cleanup.
+
+Reason: the runnable task surface is already reduced to built-in tasks, but P8/P12 still depended on legacy module names. A package-level split removes the legacy import boundary now while preserving gate function bodies and test behavior. Smaller function-level cleanup can continue inside the helper package without keeping a legacy compatibility layer alive.
+
 ## 2026-06-03: NavLab Gazebo uses IQ-style quad with ArduPilot Gazebo plugin
 
 Decision: use `iq_sim` as the Iris quad + lidar model reference, but build the runtime plugin from official `ardupilot_gazebo`.

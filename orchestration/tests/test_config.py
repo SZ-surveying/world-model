@@ -20,22 +20,22 @@ from src.config import (
 from src.project_config import load_navlab_images_config, load_runtime_config, resolve_navlab_image_tag
 from src.runtime import ServiceSpec
 from src.tasks import build as build_task_module
-from src.tasks.legacy import exploration_gate as exploration_gate_task_module
-from src.tasks.legacy import fcu_controller as fcu_controller_task_module
-from src.tasks.legacy import frame_contract as frame_contract_task_module
+from src.tasks.workflows import exploration as exploration_gate_task_module
+from src.tasks.helpers import fcu as fcu_controller_task_module
+from src.tasks.helpers import frame_contract as frame_contract_task_module
 from src.tasks import hover as hover_task_module
-from src.tasks.legacy import motion_gate as motion_gate_task_module
-from src.tasks.legacy import official_baseline as official_baseline_task_module
-from src.tasks.legacy import official_maze_x2 as official_maze_x2_task_module
-from src.tasks.legacy import rangefinder_imu as rangefinder_imu_task_module
-from src.tasks.legacy import scan_integrity_gate as scan_integrity_gate_task_module
-from src.tasks.legacy import scan_stabilization_gate as scan_stabilization_gate_task_module
-from src.tasks.legacy import slam_backend as slam_backend_task_module
-from src.tasks.legacy import slam_hover as slam_hover_task_module
+from src.tasks.helpers import motion as motion_gate_task_module
+from src.tasks.helpers import official_stack as official_baseline_task_module
+from src.tasks.helpers import navlab_models as official_maze_x2_task_module
+from src.tasks.helpers import sensors as rangefinder_imu_task_module
+from src.tasks.helpers import scan_integrity as scan_integrity_gate_task_module
+from src.tasks.helpers import scan_stabilization as scan_stabilization_gate_task_module
+from src.tasks.helpers import slam as slam_backend_task_module
+from src.tasks.helpers import slam_hover as slam_hover_task_module
 from src.tasks.base import OrchestrationTask
 from src.tasks.build import BuildTask
 from src.tasks.hover import HoverAcceptanceTask
-from src.tasks.legacy.official_baseline import run_official_baseline_acceptance, run_official_baseline_doctor
+from src.tasks.helpers.official_stack import run_official_baseline_acceptance, run_official_baseline_doctor
 from src.tasks.registry import TaskRegistry
 
 from navlab.companion.config import (
@@ -1596,17 +1596,27 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         TaskRegistry.create("scan-stabilization-gate-acceptance")
 
 
-def test_legacy_task_helpers_do_not_define_runnable_tasks() -> None:
+def test_orchestration_sources_do_not_import_legacy_tasks() -> None:
+    source_roots = (Path("orchestration/src"), Path("orchestration/tests"))
+    legacy_import_markers = ("src.tasks." + "legacy", "from ." + "legacy")
+    offenders: list[Path] = []
+    for root in source_roots:
+        for path in root.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            source = path.read_text(encoding="utf-8")
+            if any(marker in source for marker in legacy_import_markers):
+                offenders.append(path)
+
+    assert offenders == []
+
+
+def test_legacy_task_helper_package_has_no_business_modules() -> None:
     legacy_dir = Path("orchestration/src/tasks/legacy")
-    assert legacy_dir.is_dir()
-    for path in legacy_dir.glob("*.py"):
-        if path.name == "__init__.py":
-            continue
-        source = path.read_text(encoding="utf-8")
-        assert "@TaskRegistry.register" not in source
-        assert "TASK_NAME" not in source
-        assert "OrchestrationTask" not in source
-        assert "class " not in source or "Task(" not in source
+    if not legacy_dir.exists():
+        return
+    business_files = [path for path in legacy_dir.glob("*.py") if path.name != "__init__.py"]
+    assert business_files == []
 
 
 def test_orchestration_task_registry_requires_task_name() -> None:

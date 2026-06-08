@@ -17,7 +17,8 @@ from rich.console import Console
 from src import host
 from src.config import RunConfig
 from src.runtime import SERVICE_ROLE_GAZEBO_SENSOR, SERVICE_ROLE_OFFICIAL_BASELINE
-from src.tasks.legacy.official_baseline import (
+from src.tasks.helpers.artifacts import _file_sha256
+from src.tasks.helpers.official_stack import (
     _build_doctor_summary,
     _cartographer_dependency_summary,
     _collect_official_dds_probe,
@@ -29,6 +30,7 @@ from src.tasks.legacy.official_baseline import (
     _write_json,
     _write_text,
 )
+from src.tasks.helpers.rosbag_profiles import _profile_topics
 
 GAZEBO_SENSOR_CONTAINER = "navlab-official-maze-x2-sensor"
 CARTOGRAPHER_CONTAINER = "navlab-official-maze-x2-cartographer"
@@ -136,10 +138,6 @@ def _write_p1_vendor_profile(path: Path, *, virtual_serial_link: str) -> None:
         ),
         encoding="utf-8",
     )
-
-
-def _file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _write_p1_sensor_config(config: RunConfig, path: Path, *, vendor_profile: Path) -> None:
@@ -255,25 +253,6 @@ def _capture_container_log(config: RunConfig, *, container: str, output_name: st
     except DockerException as exc:
         output = str(exc)
     _write_text(config.artifact_dir / output_name, str(output))
-
-
-def _profile_topics(profile_path: Path) -> tuple[list[str], list[str], list[str]]:
-    required: list[str] = []
-    optional: list[str] = []
-    if profile_path.is_file():
-        for raw_line in profile_path.read_text(encoding="utf-8").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split(maxsplit=1)
-            if len(parts) != 2:
-                continue
-            kind, topic = parts
-            if kind == "required":
-                required.append(topic)
-            elif kind == "optional":
-                optional.append(topic)
-    return required, optional, [*required, *optional]
 
 
 def _record_rosbag(config: RunConfig, *, image: str, duration_sec: float) -> dict[str, Any]:
@@ -633,5 +612,3 @@ def _message_counts(config: RunConfig) -> dict[str, int]:
     if not metadata.is_file():
         return {}
     return _load_rosbag_metadata_counts(metadata)
-
-

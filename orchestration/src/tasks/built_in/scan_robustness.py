@@ -17,7 +17,7 @@ class BuiltInScanRobustnessDoctorTask(OrchestrationTask):
     TASK_DESCRIPTION: ClassVar[str] = "Check built-in tilted-scan robustness prerequisites."
 
     def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
-        from src.tasks.legacy.airframe_disturbance_gate import run_airframe_disturbance_gate_doctor
+        from src.tasks.workflows.scan_robustness import run_airframe_disturbance_gate_doctor
 
         return run_airframe_disturbance_gate_doctor(config_path=config_path, console=console)
 
@@ -37,7 +37,7 @@ class BuiltInScanRobustnessTask(OrchestrationTask):
         live_profiles: tuple[str, ...] = (),
         console: Console | None = None,
     ) -> int:
-        from src.tasks.legacy.airframe_disturbance_gate import run_airframe_disturbance_gate_acceptance
+        from src.tasks.workflows.scan_robustness import run_airframe_disturbance_gate_acceptance
 
         return run_airframe_disturbance_gate_acceptance(
             config_path=config_path,
