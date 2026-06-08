@@ -322,6 +322,44 @@ hover_claim = "evaluated"
 motion_claim = "evaluated"
 exploration_claim = "not_evaluated"
 
+[scan_integrity_gate]
+rosbag_profile = "profiles/navlab-scan-integrity-gate-rosbag-topics.txt"
+raw_scan_topic = "/navlab/x2/scan_raw"
+normalized_scan_topic = "/navlab/x2/scan_normalized"
+validated_scan_topic = "/scan"
+status_topic = "/navlab/scan_integrity/status"
+events_topic = "/navlab/scan_integrity/events"
+fault_injection_topic = "/navlab/scan_integrity/fault_injection"
+attitude_source_topic = "/imu"
+attitude_source_type = "imu"
+rangefinder_range_topic = "/rangefinder/down/range"
+imu_topic = "/imu"
+fcu_pose_topic = "/ap/v1/pose/filtered"
+scan_source_topic = "/lidar"
+x2_status_topic = "/sim/x2/status"
+base_frame_id = "base_link"
+scan_frame_id = "base_scan"
+soft_tilt_deg = 3.0
+hard_tilt_deg = 6.0
+max_dropped_scan_ratio = 0.05
+max_clipped_beam_ratio = 0.20
+max_scan_attitude_time_offset_ms = 50.0
+min_attitude_rate_hz = 20.0
+floor_hit_guard_range_m = 8.0
+min_lidar_height_m = 0.25
+min_downward_ray_z = 0.05
+mild_fault_roll_bias_deg = 2.0
+mild_fault_pitch_bias_deg = 0.0
+hard_fault_roll_bias_deg = 8.0
+hard_fault_pitch_bias_deg = 0.0
+normal_window_sec = 4.0
+fault_window_sec = 4.0
+uses_gazebo_truth_as_input = false
+hover_claim = "evaluated"
+motion_claim = "evaluated"
+exploration_claim = "not_evaluated"
+scan_integrity_claim = "evaluated"
+
 [foxglove_upload]
 enabled = true
 api_url = "https://api.foxglove.dev/v1"

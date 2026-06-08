@@ -19,6 +19,7 @@ from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, Official
 from src.tasks.official_maze_x2 import OfficialMazeX2AcceptanceTask
 from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
 from src.tasks.registry import TaskRegistry
+from src.tasks.scan_integrity_gate import ScanIntegrityGateAcceptanceTask, ScanIntegrityGateDoctorTask
 from src.tasks.slam_hover import SlamHoverAcceptanceTask, SlamHoverDoctorTask
 from src.tasks.slam_backend import SlamBackendAcceptanceTask, SlamBackendDoctorTask
 
@@ -317,6 +318,32 @@ def exploration_replay_acceptance_command(
 ) -> None:
     task = cast(ExplorationGateAcceptanceTask, TaskRegistry.create("exploration-gate-acceptance"))
     raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console, replay_profile=profile))
+
+
+@app.command("scan-integrity-gate-doctor")
+def scan_integrity_gate_doctor_command(
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(ScanIntegrityGateDoctorTask, TaskRegistry.create("scan-integrity-gate-doctor"))
+    raise typer.Exit(task.run(config_path=config, console=console))
+
+
+@app.command("scan-integrity-gate-acceptance")
+def scan_integrity_gate_acceptance_command(
+    duration_sec: Annotated[
+        float,
+        typer.Argument(help="P10 body-fixed lidar scan integrity acceptance duration in seconds"),
+    ] = 140.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(ScanIntegrityGateAcceptanceTask, TaskRegistry.create("scan-integrity-gate-acceptance"))
+    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
 
 
 if __name__ == "__main__":

@@ -275,3 +275,27 @@ Decision: filter CycloneDDS type-hash discovery warnings from ROS shell capture 
 Basis: P9 display replay `artifacts/ros/navlab_companion_sitl_gazebo/20260607_223132/summary.json` passed with recorded `/navlab/exploration/*` messages, but terminal output still printed CycloneDDS type-hash warnings and `Unknown topic` lines after the exploration coordinator exited.
 
 Reason: `Failed to parse type hash ... USER_DATA '(null)'` comes from DDS discovery metadata for ArduPilot/micro-ROS participants and does not imply message loss. `/navlab/exploration/status`, `/navlab/exploration/goal`, `/navlab/exploration/coverage`, and `/navlab/motion/status` are transient runtime publishers; after the run exits, `ros2 topic info` can report them as unknown even though rosbag and summary counts prove data was recorded. The acceptance evidence should come from rosbag/profile counts and runtime summaries, not from a late ROS graph query for transient publishers.
+
+## 2026-06-08: P10 prioritizes body-fixed lidar scan integrity before real flight
+
+Decision: make P10 the body-fixed lidar attitude compensation and scan integrity gate, and move the earlier true-lidar exploration strategy optimization to P11.
+
+Basis: P9 official-maze overlay replay validation and the real-drone risk that motor/ESC/prop mismatch can tilt a non-gimbaled 2D lidar scan plane.
+
+Reason: P8/P9 prove exploration and replay in simulation, but they still assume the 2D lidar scan is close enough to a horizontal slice. On a real drone, small roll/pitch from actuator mismatch can make the scan hit the floor, ceiling, or wrong wall height and silently contaminate SLAM. P10 should therefore make `/scan` an attitude-validated topic, preserve raw scan for diagnostics, reject or clip unsafe tilted scans, and require normal plus fault-injection gates before pushing exploration farther or attempting real-machine flight.
+
+## 2026-06-08: P10 owns `/scan` through a scan integrity filter
+
+Decision: split the X2 chain into `/navlab/x2/scan_raw -> /navlab/x2/scan_normalized -> navlab_scan_integrity_filter -> /scan` for P10.
+
+Basis: P10 implementation and green artifact `artifacts/ros/navlab_companion_sitl_gazebo/20260608_095523/summary.json`.
+
+Reason: keeping the vendor driver directly on `/scan` makes it impossible to prove that SLAM only consumes attitude-validated scans. The raw topic is now diagnostic, the normalizer owns timestamp/frame normalization, and `navlab_scan_integrity_filter` is the unique `/scan` publisher. P10 also exposes a runtime fault-injection topic so mild and hard roll/pitch bias can prove that unsafe tilted scans are warned/dropped instead of silently reaching SLAM.
+
+## 2026-06-08: P10.1 records attitude observability before compensation
+
+Decision: add P10.1 flight attitude metrics, scan attitude quality schema, and best-effort motor-output observability before attempting any richer scan compensation.
+
+Basis: P10 green artifact `artifacts/ros/navlab_companion_sitl_gazebo/20260608_103819/summary.json` and the real-drone concern that non-synchronized motor/ESC outputs can tilt a body-fixed 2D lidar.
+
+Reason: before correcting tilted scans, the gate should first quantify how much the vehicle actually rolled/pitched during flight and whether actuator output is observable at all. The summary now records max/RMS roll and pitch, yaw and attitude-rate metrics, scan tilt/filter/warn counts, and motor-output fields. If no motor/servo/actuator/ESC output topic is exposed in the ROS graph, the summary explicitly reports `motor_output_claim=not_available` with null PWM/RPM/bias fields rather than inventing actuator evidence.

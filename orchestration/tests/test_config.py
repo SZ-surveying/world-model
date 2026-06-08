@@ -28,6 +28,7 @@ from src.tasks import hover_diagnostic as hover_diagnostic_task_module
 from src.tasks import hover_slam_diagnostic as hover_slam_diagnostic_task_module
 from src.tasks import official_baseline as official_baseline_task_module
 from src.tasks import rangefinder_imu as rangefinder_imu_task_module
+from src.tasks import scan_integrity_gate as scan_integrity_gate_task_module
 from src.tasks import slam_hover as slam_hover_task_module
 from src.tasks import slam_backend as slam_backend_task_module
 from src.tasks.acceptance import AcceptanceTask
@@ -45,6 +46,7 @@ from src.tasks.motion_gate import MotionGateAcceptanceTask, MotionGateDoctorTask
 from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
 from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
 from src.tasks.registry import TaskRegistry
+from src.tasks.scan_integrity_gate import ScanIntegrityGateAcceptanceTask, ScanIntegrityGateDoctorTask
 from src.tasks.slam_hover import SlamHoverAcceptanceTask, SlamHoverDoctorTask
 from src.tasks.slam_backend import SlamBackendAcceptanceTask, SlamBackendDoctorTask
 
@@ -313,6 +315,16 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.motion_gate.hover_claim == "evaluated"
     assert config.motion_gate.motion_claim == "evaluated"
     assert config.motion_gate.exploration_claim == "not_evaluated"
+    assert config.scan_integrity_gate.rosbag_profile == "profiles/navlab-scan-integrity-gate-rosbag-topics.txt"
+    assert config.scan_integrity_gate.raw_scan_topic == "/navlab/x2/scan_raw"
+    assert config.scan_integrity_gate.normalized_scan_topic == "/navlab/x2/scan_normalized"
+    assert config.scan_integrity_gate.validated_scan_topic == "/scan"
+    assert config.scan_integrity_gate.status_topic == "/navlab/scan_integrity/status"
+    assert config.scan_integrity_gate.attitude_source_topic == "/imu"
+    assert config.scan_integrity_gate.attitude_source_type == "imu"
+    assert config.scan_integrity_gate.hard_tilt_deg == 6.0
+    assert config.scan_integrity_gate.uses_gazebo_truth_as_input is False
+    assert config.scan_integrity_gate.scan_integrity_claim == "evaluated"
 
 
 def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> None:
@@ -1412,6 +1424,57 @@ def test_p8_blockers_detect_failed_exploration_gate() -> None:
     assert "/navlab/exploration/coverage was not recorded" in blockers
 
 
+def test_p10_scan_attitude_quality_summary_fields() -> None:
+    quality = scan_integrity_gate_task_module._scan_attitude_quality(
+        latest_status={
+            "max_scan_tilt_deg": 8.0,
+            "tilt_filtered_scan_count": 12,
+            "tilt_warning_count": 3,
+            "dropped_scan_count": 10,
+            "clipped_scan_count": 2,
+        },
+        ok=True,
+    )
+
+    assert quality["ok"] is True
+    assert quality["max_scan_tilt_deg"] == 8.0
+    assert quality["tilt_filtered_scan_count"] == 12
+    assert quality["tilt_warning_count"] == 3
+
+
+def test_p10_motor_output_summary_marks_missing_topics_not_available() -> None:
+    summary = scan_integrity_gate_task_module._motor_output_summary(
+        ros_graph={"ros2_topic_list": {"lines": ["/ap/v1/time", "/ap/v1/pose/filtered", "/ap/v1/rc"]}}
+    )
+
+    assert summary["motor_output_claim"] == "not_available"
+    assert summary["available"] is False
+    assert summary["motor_pwm_spread"] is None
+
+
+def test_p10_motor_output_summary_reports_candidate_topics() -> None:
+    summary = scan_integrity_gate_task_module._motor_output_summary(
+        ros_graph={"ros2_topic_list": {"lines": ["/ap/v1/esc_status", "/actuator_outputs"]}}
+    )
+
+    assert summary["motor_output_claim"] == "candidate_topics_present"
+    assert summary["candidate_topics"] == ["/actuator_outputs", "/ap/v1/esc_status"]
+
+
+def test_p10_normal_profile_ok_ignores_displacement_only_failures() -> None:
+    summary = {
+        "ok": False,
+        "blockers": ["P7 forward displacement below threshold"],
+        "p6_hover_prerequisite": {"ok": True},
+        "clearance": {"ok": True},
+        "slam_odom": {"ok": True},
+        "external_nav": {"ok": True},
+        "fcu": {"local_position_ok": True},
+    }
+
+    assert scan_integrity_gate_task_module._p10_normal_profile_ok(summary) is True
+
+
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.names() == (
         "acceptance",
@@ -1433,6 +1496,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         "official-maze-x2-acceptance",
         "rangefinder-imu-acceptance",
         "rangefinder-imu-doctor",
+        "scan-integrity-gate-acceptance",
+        "scan-integrity-gate-doctor",
         "slam-backend-acceptance",
         "slam-backend-doctor",
         "slam-hover-acceptance",
@@ -1454,6 +1519,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.create("motion-gate-acceptance").description
     assert TaskRegistry.create("official-baseline-doctor").description
     assert TaskRegistry.create("official-baseline-acceptance").description
+    assert TaskRegistry.create("scan-integrity-gate-doctor").description
+    assert TaskRegistry.create("scan-integrity-gate-acceptance").description
     assert TaskRegistry.create("slam-backend-doctor").description
     assert TaskRegistry.create("slam-backend-acceptance").description
     assert TaskRegistry.create("slam-hover-doctor").description

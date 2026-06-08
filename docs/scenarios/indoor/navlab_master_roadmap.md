@@ -62,6 +62,7 @@ Gazebo 物理世界
 | P7 | 官方 maze 小范围运动 gate | 在官方 maze 中 forward/back/yaw scan/stop drift 都通过 | VehicleController | `todos/P7_official_maze_motion_gate_todo.md` |
 | P8 | 官方 maze 探索任务 | 在官方 maze 中完成可回放探索，不碰撞 | Nav2 / exploration | `todos/P8_official_maze_exploration_todo.md` |
 | P9 | 官方 maze 底图叠加与 Foxglove-lite 回放 | 官方 maze 1:1 底图、SLAM 叠加、裁剪和轻量 MCAP 上传 | `ardupilot_gz` maze.sdf + Foxglove | `todos/P9_official_maze_overlay_replay_todo.md` |
+| P10 | 机体固连 lidar 姿态补偿与 scan integrity gate | `/scan` 变成 attitude-validated scan，坏姿态 scan 不静默进入 SLAM | IMU/FCU attitude + X2 lidar + P9 overlay | `todos/P10_body_fixed_lidar_scan_integrity_todo.md` |
 
 ## 4. Phase 详细定义
 
@@ -388,6 +389,44 @@ TODO：
 TODO：
 
 - `docs/scenarios/indoor/todos/P9_official_maze_overlay_replay_todo.md`
+
+### P10：机体固连 lidar 姿态补偿与 scan integrity gate
+
+目标：
+
+- 在真机试飞前，专门验证无云台、机体固连 2D lidar 在 roll/pitch 扰动下的 scan 可信度。
+- 把 `/scan` 从 unchecked vendor scan 改成 attitude-validated scan。
+- 保留 `/navlab/x2/scan_raw` 作为诊断对照，SLAM/Cartographer 只消费 validated `/scan`。
+- 使用 IMU/FCU/TF 的正式姿态链路计算 lidar 扫描平面相对重力方向的倾角。
+- 对明显可能扫到地面/天花板或超过姿态阈值的 scan 做 warn/clip/drop。
+- 增加 normal profile 和 tilt fault-injection profile，证明坏 scan 不会静默污染 SLAM。
+
+非目标：
+
+- 不增加机械云台。
+- 不使用 Gazebo truth pose/attitude 作为 scan 修正输入。
+- 不把官方 maze 底图作为 SLAM、planning 或控制输入。
+- 不做把坏 scan 投影成水平障碍的假补偿。
+- 不追求更大探索覆盖；原先的探索策略优化顺延到 P11。
+
+完成标准：
+
+- `/scan` publisher 是 scan integrity filter，且 publisher 唯一。
+- `/navlab/x2/scan_raw` 和 validated `/scan` 都录入 MCAP。
+- `base_link -> base_scan` 静态 TF 存在。
+- attitude source 显式配置、非 truth、rate/freshness/time sync 通过。
+- normal integrity profile 通过，SLAM/ExternalNav/FCU 仍健康。
+- tilt fault-injection profile 通过，hard tilt 不会把 unchecked scan 发布到 `/scan`。
+- summary 明确 `scan_integrity_claim=evaluated`，并记录 tilt、drop ratio、clip ratio、floor-hit risk 和 blocker。
+- `uses_gazebo_truth_as_input=false`、`set_pose_count=0`、`owner.unique=true`。
+
+设计文档：
+
+- `docs/scenarios/indoor/navlab_p10_body_fixed_lidar_scan_integrity_design.md`
+
+TODO：
+
+- `docs/scenarios/indoor/todos/P10_body_fixed_lidar_scan_integrity_todo.md`
 
 ## 5. 全局不可违反规则
 

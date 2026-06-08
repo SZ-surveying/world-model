@@ -385,6 +385,46 @@ class ExplorationGateConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ScanIntegrityGateConfig:
+    rosbag_profile: str
+    raw_scan_topic: str
+    normalized_scan_topic: str
+    validated_scan_topic: str
+    status_topic: str
+    events_topic: str
+    fault_injection_topic: str
+    attitude_source_topic: str
+    attitude_source_type: str
+    rangefinder_range_topic: str
+    imu_topic: str
+    fcu_pose_topic: str
+    scan_source_topic: str
+    x2_status_topic: str
+    base_frame_id: str
+    scan_frame_id: str
+    soft_tilt_deg: float
+    hard_tilt_deg: float
+    max_dropped_scan_ratio: float
+    max_clipped_beam_ratio: float
+    max_scan_attitude_time_offset_ms: float
+    min_attitude_rate_hz: float
+    floor_hit_guard_range_m: float
+    min_lidar_height_m: float
+    min_downward_ray_z: float
+    mild_fault_roll_bias_deg: float
+    mild_fault_pitch_bias_deg: float
+    hard_fault_roll_bias_deg: float
+    hard_fault_pitch_bias_deg: float
+    normal_window_sec: float
+    fault_window_sec: float
+    uses_gazebo_truth_as_input: bool
+    hover_claim: str
+    motion_claim: str
+    exploration_claim: str
+    scan_integrity_claim: str
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -415,6 +455,7 @@ class OrchestrationConfig:
     slam_hover: SlamHoverConfig
     motion_gate: MotionGateConfig
     exploration_gate: ExplorationGateConfig
+    scan_integrity_gate: ScanIntegrityGateConfig
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -436,6 +477,7 @@ class OrchestrationConfig:
         slam_hover = _section(data, "slam_hover")
         motion_gate = _section(data, "motion_gate")
         exploration_gate = _section(data, "exploration_gate")
+        scan_integrity_gate = _section(data, "scan_integrity_gate")
         foxglove_upload = _section(data, "foxglove_upload")
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
@@ -1038,6 +1080,62 @@ class OrchestrationConfig:
                 motion_claim=_as_str(exploration_gate.get("motion_claim"), "evaluated"),
                 exploration_claim=_as_str(exploration_gate.get("exploration_claim"), "evaluated"),
             ),
+            scan_integrity_gate=ScanIntegrityGateConfig(
+                rosbag_profile=_as_str(
+                    scan_integrity_gate.get("rosbag_profile"),
+                    "profiles/navlab-scan-integrity-gate-rosbag-topics.txt",
+                ),
+                raw_scan_topic=_as_str(scan_integrity_gate.get("raw_scan_topic"), "/navlab/x2/scan_raw"),
+                normalized_scan_topic=_as_str(
+                    scan_integrity_gate.get("normalized_scan_topic"),
+                    "/navlab/x2/scan_normalized",
+                ),
+                validated_scan_topic=_as_str(scan_integrity_gate.get("validated_scan_topic"), "/scan"),
+                status_topic=_as_str(scan_integrity_gate.get("status_topic"), "/navlab/scan_integrity/status"),
+                events_topic=_as_str(scan_integrity_gate.get("events_topic"), "/navlab/scan_integrity/events"),
+                fault_injection_topic=_as_str(
+                    scan_integrity_gate.get("fault_injection_topic"),
+                    "/navlab/scan_integrity/fault_injection",
+                ),
+                attitude_source_topic=_as_str(scan_integrity_gate.get("attitude_source_topic"), "/imu"),
+                attitude_source_type=_as_str(scan_integrity_gate.get("attitude_source_type"), "imu"),
+                rangefinder_range_topic=_as_str(
+                    scan_integrity_gate.get("rangefinder_range_topic"),
+                    "/rangefinder/down/range",
+                ),
+                imu_topic=_as_str(scan_integrity_gate.get("imu_topic"), "/imu"),
+                fcu_pose_topic=_as_str(scan_integrity_gate.get("fcu_pose_topic"), "/ap/v1/pose/filtered"),
+                scan_source_topic=_as_str(scan_integrity_gate.get("scan_source_topic"), "/lidar"),
+                x2_status_topic=_as_str(scan_integrity_gate.get("x2_status_topic"), "/sim/x2/status"),
+                base_frame_id=_as_str(scan_integrity_gate.get("base_frame_id"), "base_link"),
+                scan_frame_id=_as_str(scan_integrity_gate.get("scan_frame_id"), "base_scan"),
+                soft_tilt_deg=_as_float(scan_integrity_gate.get("soft_tilt_deg"), 3.0),
+                hard_tilt_deg=_as_float(scan_integrity_gate.get("hard_tilt_deg"), 6.0),
+                max_dropped_scan_ratio=_as_float(scan_integrity_gate.get("max_dropped_scan_ratio"), 0.05),
+                max_clipped_beam_ratio=_as_float(scan_integrity_gate.get("max_clipped_beam_ratio"), 0.20),
+                max_scan_attitude_time_offset_ms=_as_float(
+                    scan_integrity_gate.get("max_scan_attitude_time_offset_ms"),
+                    50.0,
+                ),
+                min_attitude_rate_hz=_as_float(scan_integrity_gate.get("min_attitude_rate_hz"), 20.0),
+                floor_hit_guard_range_m=_as_float(scan_integrity_gate.get("floor_hit_guard_range_m"), 8.0),
+                min_lidar_height_m=_as_float(scan_integrity_gate.get("min_lidar_height_m"), 0.25),
+                min_downward_ray_z=_as_float(scan_integrity_gate.get("min_downward_ray_z"), 0.05),
+                mild_fault_roll_bias_deg=_as_float(scan_integrity_gate.get("mild_fault_roll_bias_deg"), 2.0),
+                mild_fault_pitch_bias_deg=_as_float(scan_integrity_gate.get("mild_fault_pitch_bias_deg"), 0.0),
+                hard_fault_roll_bias_deg=_as_float(scan_integrity_gate.get("hard_fault_roll_bias_deg"), 8.0),
+                hard_fault_pitch_bias_deg=_as_float(scan_integrity_gate.get("hard_fault_pitch_bias_deg"), 0.0),
+                normal_window_sec=_as_float(scan_integrity_gate.get("normal_window_sec"), 4.0),
+                fault_window_sec=_as_float(scan_integrity_gate.get("fault_window_sec"), 4.0),
+                uses_gazebo_truth_as_input=_as_bool(
+                    scan_integrity_gate.get("uses_gazebo_truth_as_input"),
+                    False,
+                ),
+                hover_claim=_as_str(scan_integrity_gate.get("hover_claim"), "evaluated"),
+                motion_claim=_as_str(scan_integrity_gate.get("motion_claim"), "evaluated"),
+                exploration_claim=_as_str(scan_integrity_gate.get("exploration_claim"), "not_evaluated"),
+                scan_integrity_claim=_as_str(scan_integrity_gate.get("scan_integrity_claim"), "evaluated"),
+            ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
                 api_url=_as_str(foxglove_upload.get("api_url"), "https://api.foxglove.dev/v1"),
@@ -1144,6 +1242,10 @@ class RunConfig:
     @property
     def exploration_gate_rosbag_profile(self) -> str:
         return self.orchestration.exploration_gate.rosbag_profile
+
+    @property
+    def scan_integrity_gate_rosbag_profile(self) -> str:
+        return self.orchestration.scan_integrity_gate.rosbag_profile
 
     @classmethod
     def from_config(

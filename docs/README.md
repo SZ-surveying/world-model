@@ -12,7 +12,7 @@
 
 ### 室内无 GPS 主线
 
-- `docs/scenarios/indoor/navlab_master_roadmap.md`: 总 roadmap，定义 P0-P9 顺序和完成标准
+- `docs/scenarios/indoor/navlab_master_roadmap.md`: 总 roadmap，定义 P0-P10 顺序和完成标准
 - `docs/scenarios/indoor/navlab_p0_official_baseline_design.md`: P0 官方基线验收设计
 - `docs/scenarios/indoor/todos/P0_official_baseline_todo.md`: P0 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_p1_official_maze_x2_design.md`: P1 官方 maze + NavLab X2 雷达接入设计
@@ -33,6 +33,8 @@
 - `docs/scenarios/indoor/todos/P8_official_maze_exploration_todo.md`: P8 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_p9_official_maze_overlay_replay_design.md`: P9 官方 maze 底图叠加与 Foxglove-lite 回放设计
 - `docs/scenarios/indoor/todos/P9_official_maze_overlay_replay_todo.md`: P9 TODO 和验收标准
+- `docs/scenarios/indoor/navlab_p10_body_fixed_lidar_scan_integrity_design.md`: P10 机体固连 lidar 姿态补偿与 scan integrity gate 设计
+- `docs/scenarios/indoor/todos/P10_body_fixed_lidar_scan_integrity_todo.md`: P10 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`: 当前系统与官方路线的对齐审计
 - `docs/scenarios/indoor/navlab_reference_projects_analysis.md`: 四个参考仓库的综合分析和改进建议
 - `docs/scenarios/indoor/navlab_cartographer_real_machine_tuning.md`: Cartographer 真机调参记录口径
@@ -72,11 +74,13 @@
 19. `docs/scenarios/indoor/todos/P8_official_maze_exploration_todo.md`
 20. `docs/scenarios/indoor/navlab_p9_official_maze_overlay_replay_design.md`
 21. `docs/scenarios/indoor/todos/P9_official_maze_overlay_replay_todo.md`
-22. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
-23. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
-24. `docs/sim/x2_lidar_simulation_design.md`
-25. `docs/sim/x2_lidar_protocol_todo.md`
-26. `docs/general/lab_env_service_refactor_todo.md`
+22. `docs/scenarios/indoor/navlab_p10_body_fixed_lidar_scan_integrity_design.md`
+23. `docs/scenarios/indoor/todos/P10_body_fixed_lidar_scan_integrity_todo.md`
+24. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
+25. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
+26. `docs/sim/x2_lidar_simulation_design.md`
+27. `docs/sim/x2_lidar_protocol_todo.md`
+28. `docs/general/lab_env_service_refactor_todo.md`
 
 ## 当前目录结构
 
@@ -99,6 +103,7 @@ docs/
       navlab_p7_official_maze_motion_gate_design.md
       navlab_p8_official_maze_exploration_design.md
       navlab_p9_official_maze_overlay_replay_design.md
+      navlab_p10_body_fixed_lidar_scan_integrity_design.md
       navlab_ardupilot_ros2_official_alignment.md
       navlab_reference_projects_analysis.md
       navlab_cartographer_real_machine_tuning.md
@@ -113,6 +118,7 @@ docs/
         P7_official_maze_motion_gate_todo.md
         P8_official_maze_exploration_todo.md
         P9_official_maze_overlay_replay_todo.md
+        P10_body_fixed_lidar_scan_integrity_todo.md
   sim/
     README.md
     todo.md

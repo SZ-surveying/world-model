@@ -62,6 +62,7 @@ class TaskRegistry:
             "src.tasks.slam_hover",
             "src.tasks.motion_gate",
             "src.tasks.exploration_gate",
+            "src.tasks.scan_integrity_gate",
         ):
             import_module(module_name)
 

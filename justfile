@@ -35,3 +35,11 @@ foxglove-replay-dry-run date='':
 # Upload the latest raw/full P8 MCAP by default; pass --lite to upload/generate the lite MCAP.
 foxglove-upload date='' *args='':
     scripts/upload_foxglove_mcap.py {{date}} --force {{args}}
+
+# Check P10 body-fixed lidar scan integrity gate prerequisites.
+navlab-scan-integrity-gate-doctor *args='':
+    {{orchestration_cmd}} scan-integrity-gate-doctor {{args}}
+
+# Run P10 body-fixed lidar scan integrity gate acceptance.
+navlab-scan-integrity-gate-acceptance duration_sec='140' *args='':
+    {{orchestration_cmd}} scan-integrity-gate-acceptance {{duration_sec}} {{args}}
