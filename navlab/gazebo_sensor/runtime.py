@@ -9,7 +9,12 @@ from pathlib import Path
 
 from navlab.common.logging import configure_sim_logging, logger
 from navlab.common.process_manager import ProcessManager
-from navlab.gazebo_sensor.config import DownRangefinderRuntimeConfig, ScanIntegrityRuntimeConfig, X2SensorRuntimeConfig
+from navlab.gazebo_sensor.config import (
+    DownRangefinderRuntimeConfig,
+    ScanIntegrityRuntimeConfig,
+    ScanStabilizationRuntimeConfig,
+    X2SensorRuntimeConfig,
+)
 
 VIRTUAL_SERIAL_STARTUP_TIMEOUT_SEC = 10.0
 
@@ -36,12 +41,14 @@ class X2SensorLaunchConfig:
     down_rangefinder_scan_ideal_topic: str
     down_rangefinder_frame_id: str
     scan_integrity_enabled: bool
+    scan_stabilization_enabled: bool
 
     @classmethod
     def from_config(cls) -> X2SensorLaunchConfig:
         runtime = X2SensorRuntimeConfig.load()
         down_rangefinder = DownRangefinderRuntimeConfig.load()
         scan_integrity = ScanIntegrityRuntimeConfig.load()
+        scan_stabilization = ScanStabilizationRuntimeConfig.load()
         return cls(
             scan_source=runtime.scan_source,
             profile_path=runtime.profile,
@@ -63,6 +70,7 @@ class X2SensorLaunchConfig:
             down_rangefinder_scan_ideal_topic=down_rangefinder.scan_ideal_topic,
             down_rangefinder_frame_id=down_rangefinder.frame_id,
             scan_integrity_enabled=scan_integrity.enabled,
+            scan_stabilization_enabled=scan_stabilization.enabled,
         )
 
 
@@ -141,6 +149,14 @@ def build_scan_integrity_filter_command() -> list[str]:
     ]
 
 
+def build_scan_stabilization_filter_command() -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "navlab.gazebo_sensor.scan_stabilization",
+    ]
+
+
 def wait_for_virtual_serial_link(path: Path, *, timeout_sec: float = VIRTUAL_SERIAL_STARTUP_TIMEOUT_SEC) -> None:
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
@@ -190,7 +206,9 @@ class X2SensorRuntime:
         self._manager.start_subprocess("x2_serial_emulator", build_emulator_command(self._config))
         wait_for_virtual_serial_link(self._config.virtual_serial_link)
         self._manager.start_subprocess("x2_scan_time_normalizer", build_scan_time_normalizer_command())
-        if self._config.scan_integrity_enabled:
+        if self._config.scan_stabilization_enabled:
+            self._manager.start_subprocess("scan_stabilization_filter", build_scan_stabilization_filter_command())
+        elif self._config.scan_integrity_enabled:
             self._manager.start_subprocess("scan_integrity_filter", build_scan_integrity_filter_command())
         self._manager.start_subprocess("ydlidar_ros2_driver", build_vendor_driver_command(self._config))
 

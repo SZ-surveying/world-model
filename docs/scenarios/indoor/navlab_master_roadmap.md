@@ -63,6 +63,7 @@ Gazebo 物理世界
 | P8 | 官方 maze 探索任务 | 在官方 maze 中完成可回放探索，不碰撞 | Nav2 / exploration | `todos/P8_official_maze_exploration_todo.md` |
 | P9 | 官方 maze 底图叠加与 Foxglove-lite 回放 | 官方 maze 1:1 底图、SLAM 叠加、裁剪和轻量 MCAP 上传 | `ardupilot_gz` maze.sdf + Foxglove | `todos/P9_official_maze_overlay_replay_todo.md` |
 | P10 | 机体固连 lidar 姿态补偿与 scan integrity gate | `/scan` 变成 attitude-validated scan，坏姿态 scan 不静默进入 SLAM | IMU/FCU attitude + X2 lidar + P9 overlay | `todos/P10_body_fixed_lidar_scan_integrity_todo.md` |
+| P11 | 有界 2D lidar 姿态稳定化 | 基于 P9 representative replay，对中等倾角 scan 做有界补偿且不引入假墙 | P9 replay + P10 integrity + 2D lidar projection | `todos/P11_bounded_2d_lidar_scan_stabilization_todo.md` |
 
 ## 4. Phase 详细定义
 
@@ -407,7 +408,7 @@ TODO：
 - 不使用 Gazebo truth pose/attitude 作为 scan 修正输入。
 - 不把官方 maze 底图作为 SLAM、planning 或控制输入。
 - 不做把坏 scan 投影成水平障碍的假补偿。
-- 不追求更大探索覆盖；原先的探索策略优化顺延到 P11。
+- 不追求更大探索覆盖；P11 先解决中等倾角下的 2D scan 稳定化，探索策略优化顺延到 P12+。
 
 完成标准：
 
@@ -427,6 +428,46 @@ TODO：
 TODO：
 
 - `docs/scenarios/indoor/todos/P10_body_fixed_lidar_scan_integrity_todo.md`
+
+### P11：有界 2D lidar 姿态稳定化
+
+目标：
+
+- 在 P10 已经保证坏姿态 scan 不静默进入 SLAM 后，处理 P9 representative replay 中更高速度/更长路径带来的中等 roll/pitch。
+- 只考虑 2D lidar，不引入 3D lidar 或 PointCloud pipeline。
+- 基于 IMU/TF、`base_link -> base_scan`、rangefinder height，把 LaserScan endpoint 转到 gravity-aligned frame。
+- 在有界条件内把安全 beam 投影回水平平面，提升有效 `/scan` availability。
+- 保留 P10 hard tilt / floor-hit / no-truth / unique-owner 安全边界。
+- 使用 P9 representative replay profile 做主验收，而不是 P8 slow exploration profile。
+- 对比 P10 drop-only baseline 和 P11 bounded 2D projection candidate。
+
+非目标：
+
+- 不把所有 tilted scan 都投影成水平障碍。
+- 不把地面、天花板或垂直误差过大的 beam 伪造成墙。
+- 不使用 Gazebo truth pose/attitude 做补偿。
+- 不把官方 maze 底图作为补偿、SLAM、planning 或控制输入。
+- 不改探索策略本身；更激进的 exploration strategy 优化顺延到 P12+。
+- 不建模 motor bias / ESC lag；这进入后续鲁棒性 phase。
+
+完成标准：
+
+- P11 主验收明确 `motion_profile=p9_representative_replay`。
+- baseline 是 P10 drop-only scan integrity，candidate 是 bounded 2D projection stabilization。
+- 所有 passthrough / compensate / hard-drop / projection-error / beam-ratio 门槛均来自配置并写入 summary。
+- `/scan` publisher 唯一，SLAM 不消费 raw scan。
+- hard tilt 仍 drop，floor-hit risk 不会被投影成墙。
+- candidate scan availability 不低于 baseline，或 summary 明确未触发补偿原因。
+- candidate SLAM/ExternalNav/FCU health 不退化。
+- summary 明确 `scan_stabilization_claim=evaluated`、`uses_gazebo_truth_as_input=false`、`uses_official_maze_as_input=false`。
+
+设计文档：
+
+- `docs/scenarios/indoor/navlab_p11_bounded_2d_lidar_scan_stabilization_design.md`
+
+TODO：
+
+- `docs/scenarios/indoor/todos/P11_bounded_2d_lidar_scan_stabilization_todo.md`
 
 ## 5. 全局不可违反规则
 

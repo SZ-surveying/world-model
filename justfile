@@ -43,3 +43,11 @@ navlab-scan-integrity-gate-doctor *args='':
 # Run P10 body-fixed lidar scan integrity gate acceptance.
 navlab-scan-integrity-gate-acceptance duration_sec='140' *args='':
     {{orchestration_cmd}} scan-integrity-gate-acceptance {{duration_sec}} {{args}}
+
+# Check P11 bounded 2D lidar scan stabilization prerequisites.
+navlab-scan-stabilization-gate-doctor *args='':
+    {{orchestration_cmd}} scan-stabilization-gate-doctor {{args}}
+
+# Run P11 bounded 2D lidar scan stabilization acceptance with P9 replay motion.
+navlab-scan-stabilization-gate-acceptance duration_sec='240' *args='':
+    {{orchestration_cmd}} scan-stabilization-gate-acceptance {{duration_sec}} {{args}}

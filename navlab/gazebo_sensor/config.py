@@ -69,6 +69,29 @@ DEFAULT_SCAN_INTEGRITY_MIN_ATTITUDE_RATE_HZ = 20.0
 DEFAULT_SCAN_INTEGRITY_FLOOR_HIT_GUARD_RANGE_M = 8.0
 DEFAULT_SCAN_INTEGRITY_MIN_LIDAR_HEIGHT_M = 0.25
 DEFAULT_SCAN_INTEGRITY_MIN_DOWNWARD_RAY_Z = 0.05
+DEFAULT_SCAN_STABILIZATION_ENABLED = False
+DEFAULT_SCAN_STABILIZATION_MODE = "bounded_2d_projection"
+DEFAULT_SCAN_STABILIZATION_INPUT_SCAN_TOPIC = "/navlab/x2/scan_normalized"
+DEFAULT_SCAN_STABILIZATION_OUTPUT_SCAN_TOPIC = "/scan"
+DEFAULT_SCAN_STABILIZATION_STATUS_TOPIC = "/navlab/scan_stabilization/status"
+DEFAULT_SCAN_STABILIZATION_EVENTS_TOPIC = "/navlab/scan_stabilization/events"
+DEFAULT_SCAN_STABILIZATION_DEBUG_SCAN_TOPIC = "/navlab/scan_stabilization/debug_scan"
+DEFAULT_SCAN_STABILIZATION_FAULT_TOPIC = "/navlab/scan_stabilization/fault_injection"
+DEFAULT_SCAN_STABILIZATION_ATTITUDE_SOURCE_TOPIC = "/imu"
+DEFAULT_SCAN_STABILIZATION_ATTITUDE_SOURCE_TYPE = "imu"
+DEFAULT_SCAN_STABILIZATION_RANGE_TOPIC = "/rangefinder/down/range"
+DEFAULT_SCAN_STABILIZATION_BASE_FRAME_ID = "base_link"
+DEFAULT_SCAN_STABILIZATION_SCAN_FRAME_ID = "base_scan"
+DEFAULT_SCAN_STABILIZATION_PASSTHROUGH_TILT_DEG = 3.0
+DEFAULT_SCAN_STABILIZATION_COMPENSATION_TILT_DEG = 8.0
+DEFAULT_SCAN_STABILIZATION_HARD_DROP_TILT_DEG = 10.0
+DEFAULT_SCAN_STABILIZATION_MAX_VERTICAL_ERROR_M = 0.15
+DEFAULT_SCAN_STABILIZATION_MAX_REJECTED_BEAM_RATIO = 0.35
+DEFAULT_SCAN_STABILIZATION_MIN_RETAINED_BEAM_RATIO = 0.55
+DEFAULT_SCAN_STABILIZATION_MAX_FLOOR_HIT_RISK_RATIO = 0.05
+DEFAULT_SCAN_STABILIZATION_MAX_SCAN_ATTITUDE_OFFSET_MS = 50.0
+DEFAULT_SCAN_STABILIZATION_MIN_ATTITUDE_RATE_HZ = 20.0
+DEFAULT_SCAN_STABILIZATION_MIN_STABILIZED_SCAN_RATE_HZ = 5.0
 
 
 @dataclass(slots=True)
@@ -296,6 +319,123 @@ class ScanIntegrityRuntimeConfig:
         )
 
 
+@dataclass(slots=True)
+class ScanStabilizationConfig:
+    enabled: BoolWithSource
+    mode: ValueWithSource
+    input_scan_topic: ValueWithSource
+    output_scan_topic: ValueWithSource
+    status_topic: ValueWithSource
+    events_topic: ValueWithSource
+    debug_scan_topic: ValueWithSource
+    fault_injection_topic: ValueWithSource
+    attitude_source_topic: ValueWithSource
+    attitude_source_type: ValueWithSource
+    range_topic: ValueWithSource
+    base_frame_id: ValueWithSource
+    scan_frame_id: ValueWithSource
+    passthrough_tilt_deg: FloatWithSource
+    compensation_tilt_deg: FloatWithSource
+    hard_drop_tilt_deg: FloatWithSource
+    max_vertical_projection_error_m: FloatWithSource
+    max_rejected_beam_ratio: FloatWithSource
+    min_retained_beam_ratio: FloatWithSource
+    max_floor_hit_risk_beam_ratio: FloatWithSource
+    floor_hit_guard_range_m: FloatWithSource
+    min_lidar_height_m: FloatWithSource
+    min_downward_ray_z: FloatWithSource
+    max_scan_attitude_time_offset_ms: FloatWithSource
+    min_attitude_rate_hz: FloatWithSource
+    min_stabilized_scan_rate_hz: FloatWithSource
+    publish_debug_scan: BoolWithSource
+
+
+@dataclass(frozen=True, slots=True)
+class ScanStabilizationRuntimeConfig:
+    enabled: bool
+    mode: str
+    input_scan_topic: str
+    output_scan_topic: str
+    status_topic: str
+    events_topic: str
+    debug_scan_topic: str
+    fault_injection_topic: str
+    attitude_source_topic: str
+    attitude_source_type: str
+    range_topic: str
+    base_frame_id: str
+    scan_frame_id: str
+    passthrough_tilt_deg: float
+    compensation_tilt_deg: float
+    hard_drop_tilt_deg: float
+    max_vertical_projection_error_m: float
+    max_rejected_beam_ratio: float
+    min_retained_beam_ratio: float
+    max_floor_hit_risk_beam_ratio: float
+    floor_hit_guard_range_m: float
+    min_lidar_height_m: float
+    min_downward_ray_z: float
+    max_scan_attitude_time_offset_ms: float
+    min_attitude_rate_hz: float
+    min_stabilized_scan_rate_hz: float
+    publish_debug_scan: bool
+
+    @classmethod
+    def load(cls) -> ScanStabilizationRuntimeConfig:
+        config = load_scan_stabilization_config()
+        return cls(
+            enabled=config.enabled.value,
+            mode=config.mode.value,
+            input_scan_topic=config.input_scan_topic.value,
+            output_scan_topic=config.output_scan_topic.value,
+            status_topic=config.status_topic.value,
+            events_topic=config.events_topic.value,
+            debug_scan_topic=config.debug_scan_topic.value,
+            fault_injection_topic=config.fault_injection_topic.value,
+            attitude_source_topic=config.attitude_source_topic.value,
+            attitude_source_type=config.attitude_source_type.value,
+            range_topic=config.range_topic.value,
+            base_frame_id=config.base_frame_id.value,
+            scan_frame_id=config.scan_frame_id.value,
+            passthrough_tilt_deg=config.passthrough_tilt_deg.value,
+            compensation_tilt_deg=config.compensation_tilt_deg.value,
+            hard_drop_tilt_deg=config.hard_drop_tilt_deg.value,
+            max_vertical_projection_error_m=config.max_vertical_projection_error_m.value,
+            max_rejected_beam_ratio=config.max_rejected_beam_ratio.value,
+            min_retained_beam_ratio=config.min_retained_beam_ratio.value,
+            max_floor_hit_risk_beam_ratio=config.max_floor_hit_risk_beam_ratio.value,
+            floor_hit_guard_range_m=config.floor_hit_guard_range_m.value,
+            min_lidar_height_m=config.min_lidar_height_m.value,
+            min_downward_ray_z=config.min_downward_ray_z.value,
+            max_scan_attitude_time_offset_ms=config.max_scan_attitude_time_offset_ms.value,
+            min_attitude_rate_hz=config.min_attitude_rate_hz.value,
+            min_stabilized_scan_rate_hz=config.min_stabilized_scan_rate_hz.value,
+            publish_debug_scan=config.publish_debug_scan.value,
+        )
+
+    def validate(self) -> list[str]:
+        blockers: list[str] = []
+        if self.mode != "bounded_2d_projection":
+            blockers.append("scan_stabilization_config_invalid: unsupported mode")
+        if not (0.0 <= self.passthrough_tilt_deg < self.compensation_tilt_deg < self.hard_drop_tilt_deg):
+            blockers.append("scan_stabilization_config_invalid: tilt thresholds must be ordered")
+        for name, value in (
+            ("max_rejected_beam_ratio", self.max_rejected_beam_ratio),
+            ("min_retained_beam_ratio", self.min_retained_beam_ratio),
+            ("max_floor_hit_risk_beam_ratio", self.max_floor_hit_risk_beam_ratio),
+        ):
+            if not (0.0 <= value <= 1.0):
+                blockers.append(f"scan_stabilization_config_invalid: {name} must be in [0, 1]")
+        if self.max_vertical_projection_error_m <= 0.0:
+            blockers.append("scan_stabilization_config_invalid: max_vertical_projection_error_m must be positive")
+        if self.input_scan_topic == self.output_scan_topic:
+            blockers.append("scan_stabilization_config_invalid: input and output scan topics must differ")
+        return blockers
+
+    def to_summary(self) -> dict[str, object]:
+        return {key: getattr(self, key) for key in self.__dataclass_fields__}
+
+
 def load_x2_protocol_config(path: str | Path | None = None) -> X2ProtocolConfig:
     config_file, config = load_navlab_config(path)
     raw_gazebo_sensor = section(config, "gazebo_sensor", path=config_file)
@@ -450,6 +590,109 @@ def load_scan_integrity_config(path: str | Path | None = None) -> ScanIntegrityC
         min_downward_ray_z=resolve_float_value(
             raw_integrity, "min_downward_ray_z", DEFAULT_SCAN_INTEGRITY_MIN_DOWNWARD_RAY_Z
         ),
+    )
+
+
+def load_scan_stabilization_config(path: str | Path | None = None) -> ScanStabilizationConfig:
+    config_file, config = load_navlab_config(path)
+    raw_gazebo_sensor = section(config, "gazebo_sensor", path=config_file)
+    raw_stabilization = section(raw_gazebo_sensor, "scan_stabilization", path=config_file, default={})
+    return ScanStabilizationConfig(
+        enabled=resolve_bool_value(raw_stabilization, "enabled", DEFAULT_SCAN_STABILIZATION_ENABLED),
+        mode=resolve_str_value(raw_stabilization, "mode", DEFAULT_SCAN_STABILIZATION_MODE),
+        input_scan_topic=resolve_str_value(
+            raw_stabilization, "input_scan_topic", DEFAULT_SCAN_STABILIZATION_INPUT_SCAN_TOPIC
+        ),
+        output_scan_topic=resolve_str_value(
+            raw_stabilization, "output_scan_topic", DEFAULT_SCAN_STABILIZATION_OUTPUT_SCAN_TOPIC
+        ),
+        status_topic=resolve_str_value(raw_stabilization, "status_topic", DEFAULT_SCAN_STABILIZATION_STATUS_TOPIC),
+        events_topic=resolve_str_value(raw_stabilization, "events_topic", DEFAULT_SCAN_STABILIZATION_EVENTS_TOPIC),
+        debug_scan_topic=resolve_str_value(
+            raw_stabilization, "debug_scan_topic", DEFAULT_SCAN_STABILIZATION_DEBUG_SCAN_TOPIC
+        ),
+        fault_injection_topic=resolve_str_value(
+            raw_stabilization, "fault_injection_topic", DEFAULT_SCAN_STABILIZATION_FAULT_TOPIC
+        ),
+        attitude_source_topic=resolve_str_value(
+            raw_stabilization,
+            "attitude_source_topic",
+            DEFAULT_SCAN_STABILIZATION_ATTITUDE_SOURCE_TOPIC,
+        ),
+        attitude_source_type=resolve_str_value(
+            raw_stabilization,
+            "attitude_source_type",
+            DEFAULT_SCAN_STABILIZATION_ATTITUDE_SOURCE_TYPE,
+        ),
+        range_topic=resolve_str_value(raw_stabilization, "range_topic", DEFAULT_SCAN_STABILIZATION_RANGE_TOPIC),
+        base_frame_id=resolve_str_value(raw_stabilization, "base_frame_id", DEFAULT_SCAN_STABILIZATION_BASE_FRAME_ID),
+        scan_frame_id=resolve_str_value(raw_stabilization, "scan_frame_id", DEFAULT_SCAN_STABILIZATION_SCAN_FRAME_ID),
+        passthrough_tilt_deg=resolve_float_value(
+            raw_stabilization,
+            "passthrough_tilt_deg",
+            DEFAULT_SCAN_STABILIZATION_PASSTHROUGH_TILT_DEG,
+        ),
+        compensation_tilt_deg=resolve_float_value(
+            raw_stabilization,
+            "compensation_tilt_deg",
+            DEFAULT_SCAN_STABILIZATION_COMPENSATION_TILT_DEG,
+        ),
+        hard_drop_tilt_deg=resolve_float_value(
+            raw_stabilization,
+            "hard_drop_tilt_deg",
+            DEFAULT_SCAN_STABILIZATION_HARD_DROP_TILT_DEG,
+        ),
+        max_vertical_projection_error_m=resolve_float_value(
+            raw_stabilization,
+            "max_vertical_projection_error_m",
+            DEFAULT_SCAN_STABILIZATION_MAX_VERTICAL_ERROR_M,
+        ),
+        max_rejected_beam_ratio=resolve_float_value(
+            raw_stabilization,
+            "max_rejected_beam_ratio",
+            DEFAULT_SCAN_STABILIZATION_MAX_REJECTED_BEAM_RATIO,
+        ),
+        min_retained_beam_ratio=resolve_float_value(
+            raw_stabilization,
+            "min_retained_beam_ratio",
+            DEFAULT_SCAN_STABILIZATION_MIN_RETAINED_BEAM_RATIO,
+        ),
+        max_floor_hit_risk_beam_ratio=resolve_float_value(
+            raw_stabilization,
+            "max_floor_hit_risk_beam_ratio",
+            DEFAULT_SCAN_STABILIZATION_MAX_FLOOR_HIT_RISK_RATIO,
+        ),
+        floor_hit_guard_range_m=resolve_float_value(
+            raw_stabilization,
+            "floor_hit_guard_range_m",
+            DEFAULT_SCAN_INTEGRITY_FLOOR_HIT_GUARD_RANGE_M,
+        ),
+        min_lidar_height_m=resolve_float_value(
+            raw_stabilization,
+            "min_lidar_height_m",
+            DEFAULT_SCAN_INTEGRITY_MIN_LIDAR_HEIGHT_M,
+        ),
+        min_downward_ray_z=resolve_float_value(
+            raw_stabilization,
+            "min_downward_ray_z",
+            DEFAULT_SCAN_INTEGRITY_MIN_DOWNWARD_RAY_Z,
+        ),
+        max_scan_attitude_time_offset_ms=resolve_float_value(
+            raw_stabilization,
+            "max_scan_attitude_time_offset_ms",
+            DEFAULT_SCAN_STABILIZATION_MAX_SCAN_ATTITUDE_OFFSET_MS,
+        ),
+        min_attitude_rate_hz=resolve_float_value(
+            raw_stabilization,
+            "min_attitude_rate_hz",
+            DEFAULT_SCAN_STABILIZATION_MIN_ATTITUDE_RATE_HZ,
+        ),
+        min_stabilized_scan_rate_hz=resolve_float_value(
+            raw_stabilization,
+            "min_stabilized_scan_rate_hz",
+            DEFAULT_SCAN_STABILIZATION_MIN_STABILIZED_SCAN_RATE_HZ,
+        ),
+        publish_debug_scan=resolve_bool_value(raw_stabilization, "publish_debug_scan", False),
     )
 
 

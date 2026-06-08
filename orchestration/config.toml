@@ -360,6 +360,58 @@ motion_claim = "evaluated"
 exploration_claim = "not_evaluated"
 scan_integrity_claim = "evaluated"
 
+[scan_stabilization]
+enabled = true
+mode = "bounded_2d_projection"
+input_scan_topic = "/navlab/x2/scan_normalized"
+output_scan_topic = "/scan"
+status_topic = "/navlab/scan_stabilization/status"
+events_topic = "/navlab/scan_stabilization/events"
+debug_scan_topic = "/navlab/scan_stabilization/debug_scan"
+fault_injection_topic = "/navlab/scan_stabilization/fault_injection"
+attitude_source_topic = "/imu"
+attitude_source_type = "imu"
+range_topic = "/rangefinder/down/range"
+base_frame_id = "base_link"
+scan_frame_id = "base_scan"
+passthrough_tilt_deg = 3.0
+compensation_tilt_deg = 8.0
+hard_drop_tilt_deg = 10.0
+max_vertical_projection_error_m = 0.15
+max_rejected_beam_ratio = 0.35
+min_retained_beam_ratio = 0.55
+max_floor_hit_risk_beam_ratio = 0.05
+floor_hit_guard_range_m = 8.0
+min_lidar_height_m = 0.25
+min_downward_ray_z = 0.05
+max_scan_attitude_time_offset_ms = 50.0
+min_attitude_rate_hz = 20.0
+min_stabilized_scan_rate_hz = 5.0
+publish_debug_scan = false
+uses_gazebo_truth_as_input = false
+scan_stabilization_claim = "evaluated"
+
+[scan_stabilization_gate]
+rosbag_profile = "profiles/navlab-scan-stabilization-gate-rosbag-topics.txt"
+motion_profile = "p9_representative_replay"
+baseline_mode = "p10_drop_only"
+candidate_mode = "bounded_2d_projection"
+raw_scan_topic = "/navlab/x2/scan_raw"
+normalized_scan_topic = "/navlab/x2/scan_normalized"
+validated_scan_topic = "/scan"
+scan_source_topic = "/lidar"
+x2_status_topic = "/sim/x2/status"
+imu_topic = "/imu"
+fcu_pose_topic = "/ap/v1/pose/filtered"
+uses_official_maze_as_input = false
+official_maze_layer_role = "visualization_only"
+hover_claim = "evaluated"
+motion_claim = "evaluated"
+exploration_claim = "evaluated"
+scan_stabilization_claim = "evaluated"
+replay_readiness_timeout_sec = 90.0
+controller_summary_timeout_sec = 45.0
+
 [foxglove_upload]
 enabled = true
 api_url = "https://api.foxglove.dev/v1"

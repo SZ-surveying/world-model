@@ -18,7 +18,7 @@ P10 要在进入真机试飞前，证明机体固连 2D lidar 在 roll/pitch 扰
 - [x] 新增 P10 TODO 文档。
 - [x] 在 `docs/README.md` 中加入 P10 design / TODO 入口。
 - [x] 在 master roadmap 中把 P10 定义为机体固连 lidar 姿态补偿与 scan integrity gate。
-- [x] 文档明确原先的探索策略优化顺延到 P11。
+- [x] 文档明确 P11 先做 2D scan 稳定化，原先的探索策略优化顺延到 P12+。
 - [x] 文档明确 P10 不使用 Gazebo truth 作为 scan 修正输入。
 - [x] 文档明确 P10 首版优先 filter/clip/drop，不做假水平投影补偿。
 
@@ -268,7 +268,7 @@ P10 全部完成必须满足：
 ### 2026-06-08 P10 文档初始化
 
 - 范围：新增 P10 设计文档和 TODO 文档，更新 README 与 master roadmap。
-- 结果：P10 被定义为机体固连 lidar 姿态补偿与 scan integrity gate；原先探索策略优化顺延到 P11。
+- 结果：P10 被定义为机体固连 lidar 姿态补偿与 scan integrity gate；P11 先做 2D scan 稳定化，原先探索策略优化顺延到 P12+。
 - 验证：已运行 `rg` 检查 P10/P0-P10 索引关键字；已运行 `git diff --check`，通过。
 - 备注：P10.0 文档和边界已完成；后续从 P10.1 topic contract、P10.2 姿态源 selector 和 P10.3 scan integrity filter 开始实现。
 

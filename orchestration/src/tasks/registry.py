@@ -63,6 +63,7 @@ class TaskRegistry:
             "src.tasks.motion_gate",
             "src.tasks.exploration_gate",
             "src.tasks.scan_integrity_gate",
+            "src.tasks.scan_stabilization_gate",
         ):
             import_module(module_name)
 

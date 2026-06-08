@@ -29,6 +29,7 @@ from src.tasks import hover_slam_diagnostic as hover_slam_diagnostic_task_module
 from src.tasks import official_baseline as official_baseline_task_module
 from src.tasks import rangefinder_imu as rangefinder_imu_task_module
 from src.tasks import scan_integrity_gate as scan_integrity_gate_task_module
+from src.tasks import scan_stabilization_gate as scan_stabilization_gate_task_module
 from src.tasks import slam_hover as slam_hover_task_module
 from src.tasks import slam_backend as slam_backend_task_module
 from src.tasks.acceptance import AcceptanceTask
@@ -47,6 +48,7 @@ from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, Official
 from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
 from src.tasks.registry import TaskRegistry
 from src.tasks.scan_integrity_gate import ScanIntegrityGateAcceptanceTask, ScanIntegrityGateDoctorTask
+from src.tasks.scan_stabilization_gate import ScanStabilizationGateAcceptanceTask, ScanStabilizationGateDoctorTask
 from src.tasks.slam_hover import SlamHoverAcceptanceTask, SlamHoverDoctorTask
 from src.tasks.slam_backend import SlamBackendAcceptanceTask, SlamBackendDoctorTask
 
@@ -325,6 +327,21 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.scan_integrity_gate.hard_tilt_deg == 6.0
     assert config.scan_integrity_gate.uses_gazebo_truth_as_input is False
     assert config.scan_integrity_gate.scan_integrity_claim == "evaluated"
+    assert config.scan_stabilization.enabled is True
+    assert config.scan_stabilization.mode == "bounded_2d_projection"
+    assert config.scan_stabilization.input_scan_topic == "/navlab/x2/scan_normalized"
+    assert config.scan_stabilization.output_scan_topic == "/scan"
+    assert config.scan_stabilization.status_topic == "/navlab/scan_stabilization/status"
+    assert config.scan_stabilization.passthrough_tilt_deg == 3.0
+    assert config.scan_stabilization.compensation_tilt_deg == 8.0
+    assert config.scan_stabilization.hard_drop_tilt_deg == 10.0
+    assert config.scan_stabilization.uses_gazebo_truth_as_input is False
+    assert config.scan_stabilization_gate.rosbag_profile == "profiles/navlab-scan-stabilization-gate-rosbag-topics.txt"
+    assert config.scan_stabilization_gate.motion_profile == "p9_representative_replay"
+    assert config.scan_stabilization_gate.baseline_mode == "p10_drop_only"
+    assert config.scan_stabilization_gate.candidate_mode == "bounded_2d_projection"
+    assert config.scan_stabilization_gate.replay_readiness_timeout_sec == 90.0
+    assert config.scan_stabilization_gate.controller_summary_timeout_sec == 45.0
 
 
 def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> None:
@@ -1475,6 +1492,99 @@ def test_p10_normal_profile_ok_ignores_displacement_only_failures() -> None:
     assert scan_integrity_gate_task_module._p10_normal_profile_ok(summary) is True
 
 
+def test_p11_scan_stabilization_config_validation_accepts_defaults() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", duration_sec=10.0)
+
+    assert scan_stabilization_gate_task_module._validate_p11_config(config) == []
+
+
+def test_p11_scan_stabilization_config_validation_rejects_p8_motion_profile() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", duration_sec=10.0)
+    gate = replace(config.orchestration.scan_stabilization_gate, motion_profile="p8_slow_exploration")
+    orchestration = replace(config.orchestration, scan_stabilization_gate=gate)
+    invalid = replace(config, orchestration=orchestration)
+
+    assert "motion_profile_not_p9_representative_replay" in scan_stabilization_gate_task_module._validate_p11_config(invalid)
+
+
+def test_p11_summary_schema_parser_accepts_required_shape() -> None:
+    summary = {
+        "scan_stabilization_claim": "evaluated",
+        "motion_profile": "p9_representative_replay",
+        "uses_gazebo_truth_as_input": False,
+        "uses_official_maze_as_input": False,
+        "scan_stabilization": {
+            "mode": "bounded_2d_projection",
+            "input_scan_topic": "/navlab/x2/scan_normalized",
+            "output_scan_topic": "/scan",
+            "runtime_config": {},
+            "passthrough_scan_count": 10,
+            "compensated_scan_count": 0,
+            "dropped_scan_count": 0,
+            "false_wall_risk_ok": True,
+        },
+        "baseline_comparison": {
+            "baseline_mode": "p10_drop_only",
+            "candidate_mode": "bounded_2d_projection",
+            "baseline_validated_scan_count": 10,
+            "candidate_validated_scan_count": 10,
+            "scan_availability_improved": True,
+            "slam_health_regressed": False,
+            "map_artifact_risk_ok": True,
+        },
+        "rosbag_profile": {"ok": True},
+    }
+
+    assert scan_stabilization_gate_task_module._p11_summary_schema_blockers(summary) == []
+
+
+def test_p11_summary_schema_parser_reports_missing_fields() -> None:
+    blockers = scan_stabilization_gate_task_module._p11_summary_schema_blockers(
+        {"scan_stabilization": {}, "baseline_comparison": {}}
+    )
+
+    assert "p11_summary_schema_missing:scan_stabilization_claim" in blockers
+    assert "p11_summary_schema_missing:scan_stabilization.mode" in blockers
+    assert "p11_summary_schema_missing:baseline_comparison.map_artifact_risk_ok" in blockers
+
+
+def test_p11_blockers_detect_candidate_scan_availability_regression() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", duration_sec=10.0)
+    blockers: list[str] = []
+    scan = config.orchestration.scan_stabilization
+    gate = config.orchestration.scan_stabilization_gate
+    counts = {
+        gate.raw_scan_topic: 10,
+        gate.normalized_scan_topic: 10,
+        scan.output_scan_topic: 9,
+        scan.status_topic: 10,
+        scan.events_topic: 1,
+        scan.attitude_source_topic: 10,
+        scan.range_topic: 10,
+    }
+    topic_info = {
+        scan.output_scan_topic: {"publisher_nodes": ["navlab_scan_stabilization_filter"]},
+        gate.raw_scan_topic: {"subscription_nodes": ["navlab_x2_scan_time_normalizer"]},
+    }
+
+    scan_stabilization_gate_task_module._append_p11_blockers(
+        blockers=blockers,
+        config=config,
+        counts=counts,
+        topic_info=topic_info,
+        latest_status={
+            "base_scan_static_tf_ok": True,
+            "attitude_source_is_truth": False,
+            "candidate_validated_scan_count": 8,
+            "baseline_drop_only_validated_scan_count": 9,
+            "false_wall_risk_ok": True,
+        },
+        rosbag_profile={"ok": True},
+    )
+
+    assert "candidate scan availability regressed below drop-only baseline estimate" in blockers
+
+
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.names() == (
         "acceptance",
@@ -1498,6 +1608,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         "rangefinder-imu-doctor",
         "scan-integrity-gate-acceptance",
         "scan-integrity-gate-doctor",
+        "scan-stabilization-gate-acceptance",
+        "scan-stabilization-gate-doctor",
         "slam-backend-acceptance",
         "slam-backend-doctor",
         "slam-hover-acceptance",
@@ -1521,6 +1633,8 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.create("official-baseline-acceptance").description
     assert TaskRegistry.create("scan-integrity-gate-doctor").description
     assert TaskRegistry.create("scan-integrity-gate-acceptance").description
+    assert TaskRegistry.create("scan-stabilization-gate-doctor").description
+    assert TaskRegistry.create("scan-stabilization-gate-acceptance").description
     assert TaskRegistry.create("slam-backend-doctor").description
     assert TaskRegistry.create("slam-backend-acceptance").description
     assert TaskRegistry.create("slam-hover-doctor").description

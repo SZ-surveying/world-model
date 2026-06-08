@@ -10,6 +10,7 @@ from navlab.gazebo_sensor.runtime import (
     build_down_rangefinder_sender_command,
     build_emulator_command,
     build_scan_integrity_filter_command,
+    build_scan_stabilization_filter_command,
     build_scan_ideal_bridge_command,
     build_scan_time_normalizer_command,
     build_vendor_driver_command,
@@ -39,6 +40,7 @@ def _runtime_config() -> X2SensorLaunchConfig:
         down_rangefinder_scan_ideal_topic="/rangefinder/down/scan_ideal",
         down_rangefinder_frame_id="rangefinder_down_frame",
         scan_integrity_enabled=False,
+        scan_stabilization_enabled=False,
     )
 
 
@@ -102,6 +104,12 @@ def test_x2_sensor_runtime_can_launch_scan_integrity_filter() -> None:
     command = build_scan_integrity_filter_command()
 
     assert command == [command[0], "-m", "navlab.gazebo_sensor.scan_integrity"]
+
+
+def test_x2_sensor_runtime_can_launch_scan_stabilization_filter() -> None:
+    command = build_scan_stabilization_filter_command()
+
+    assert command == [command[0], "-m", "navlab.gazebo_sensor.scan_stabilization"]
 
 
 def test_x2_sensor_runtime_waits_for_virtual_serial_link(tmp_path: Path) -> None:

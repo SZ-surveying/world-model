@@ -278,7 +278,7 @@ Reason: `Failed to parse type hash ... USER_DATA '(null)'` comes from DDS discov
 
 ## 2026-06-08: P10 prioritizes body-fixed lidar scan integrity before real flight
 
-Decision: make P10 the body-fixed lidar attitude compensation and scan integrity gate, and move the earlier true-lidar exploration strategy optimization to P11.
+Decision: make P10 the body-fixed lidar attitude compensation and scan integrity gate, and move the earlier true-lidar exploration strategy optimization out of P10.
 
 Basis: P9 official-maze overlay replay validation and the real-drone risk that motor/ESC/prop mismatch can tilt a non-gimbaled 2D lidar scan plane.
 
@@ -299,3 +299,27 @@ Decision: add P10.1 flight attitude metrics, scan attitude quality schema, and b
 Basis: P10 green artifact `artifacts/ros/navlab_companion_sitl_gazebo/20260608_103819/summary.json` and the real-drone concern that non-synchronized motor/ESC outputs can tilt a body-fixed 2D lidar.
 
 Reason: before correcting tilted scans, the gate should first quantify how much the vehicle actually rolled/pitched during flight and whether actuator output is observable at all. The summary now records max/RMS roll and pitch, yaw and attitude-rate metrics, scan tilt/filter/warn counts, and motor-output fields. If no motor/servo/actuator/ESC output topic is exposed in the ROS graph, the summary explicitly reports `motor_output_claim=not_available` with null PWM/RPM/bias fields rather than inventing actuator evidence.
+
+## 2026-06-08: P11 uses P9 replay for bounded 2D scan stabilization
+
+Decision: define P11 as a bounded 2D lidar scan stabilization gate based on the P9 representative replay profile, rather than as a P8 slow-exploration check or a 3D lidar migration.
+
+Basis: P10 proved that hard tilted scans can be dropped safely, but higher-speed representative replay can reduce SLAM scan availability if P10 remains purely drop-only.
+
+Reason: the next risk is medium roll/pitch during faster motion, not a new exploration strategy. P11 should compare a P10 drop-only baseline against a bounded 2D projection candidate under the P9 replay motion profile, keep all pass/compensate/drop thresholds configurable, and preserve the P10 rule that hard tilt and floor-hit risk are rejected instead of being projected into fake walls. Broader exploration strategy optimization moves to P12+ after the 2D scan input contract is stable.
+
+## 2026-06-08: P11 keeps live replay conservative when tilt stays below passthrough
+
+Decision: accept the P11 live P9 representative replay when the vehicle remains in the passthrough tilt zone, while proving bounded projection behavior through the P11 fault profile and recording `compensation_not_triggered_reason` in the summary.
+
+Basis: P11 acceptance artifact `artifacts/ros/navlab_companion_sitl_gazebo/20260608_122544/summary.json` passed with `ok=true`, `blockers=[]`, and `compensation_not_triggered_reason=tilt_never_exceeded_passthrough_tilt_deg`.
+
+Reason: the acceptance run is still the correct P9 representative replay profile, but the simulated FCU held roll/pitch below the configured `passthrough_tilt_deg`, so forcing live compensation would require injecting artificial attitude into the flight loop and would weaken the real replay evidence. P11 therefore records a same-run P10 drop-only baseline estimate, keeps `/scan` uniquely owned by `navlab_scan_stabilization_filter`, and uses the fault profile to prove medium safe tilt, floor-hit risk, hard tilt, stale attitude, and invalid config behavior without projecting unsafe beams into SLAM.
+
+## 2026-06-08: P11 waits longer for replay readiness than P8 slow gates
+
+Decision: give P11 representative replay an explicit `replay_readiness_timeout_sec=90.0` and collect the FCU controller runtime summary after rosbag recording finishes, with `controller_summary_timeout_sec=45.0`.
+
+Basis: failed P11 artifact `artifacts/ros/navlab_companion_sitl_gazebo/20260608_135843/summary.json` had healthy scan stabilization topics but failed because the P8 replay probe timed out before map/controller readiness fully settled, while `controller_runtime_summary.json` appeared later in the same artifact.
+
+Reason: P11 is testing bounded scan stabilization under the P9 representative replay profile, not the minimum P8 slow exploration profile. The scan chain can be healthy while the replay layer needs a longer readiness window for Cartographer map publication and FCU hold-ready completion. Making these waits explicit config fields avoids hiding the timing dependency in code and prevents a late controller summary from being misreported as missing.
