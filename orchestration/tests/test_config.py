@@ -18,39 +18,25 @@ from src.config import (
     RunConfig,
 )
 from src.project_config import load_navlab_images_config, load_runtime_config, resolve_navlab_image_tag
-from src.tasks import acceptance as acceptance_task_module
+from src.runtime import ServiceSpec
 from src.tasks import build as build_task_module
-from src.tasks import exploration_gate as exploration_gate_task_module
-from src.tasks import fcu_controller as fcu_controller_task_module
-from src.tasks import frame_contract as frame_contract_task_module
+from src.tasks.legacy import exploration_gate as exploration_gate_task_module
+from src.tasks.legacy import fcu_controller as fcu_controller_task_module
+from src.tasks.legacy import frame_contract as frame_contract_task_module
 from src.tasks import hover as hover_task_module
-from src.tasks import hover_diagnostic as hover_diagnostic_task_module
-from src.tasks import hover_slam_diagnostic as hover_slam_diagnostic_task_module
-from src.tasks import official_baseline as official_baseline_task_module
-from src.tasks import rangefinder_imu as rangefinder_imu_task_module
-from src.tasks import scan_integrity_gate as scan_integrity_gate_task_module
-from src.tasks import scan_stabilization_gate as scan_stabilization_gate_task_module
-from src.tasks import slam_hover as slam_hover_task_module
-from src.tasks import slam_backend as slam_backend_task_module
-from src.tasks.acceptance import AcceptanceTask
+from src.tasks.legacy import motion_gate as motion_gate_task_module
+from src.tasks.legacy import official_baseline as official_baseline_task_module
+from src.tasks.legacy import official_maze_x2 as official_maze_x2_task_module
+from src.tasks.legacy import rangefinder_imu as rangefinder_imu_task_module
+from src.tasks.legacy import scan_integrity_gate as scan_integrity_gate_task_module
+from src.tasks.legacy import scan_stabilization_gate as scan_stabilization_gate_task_module
+from src.tasks.legacy import slam_backend as slam_backend_task_module
+from src.tasks.legacy import slam_hover as slam_hover_task_module
 from src.tasks.base import OrchestrationTask
 from src.tasks.build import BuildTask
-from src.tasks.exploration_gate import ExplorationGateAcceptanceTask, ExplorationGateDoctorTask
-from src.tasks.fcu_controller import FcuControllerAcceptanceTask, FcuControllerDoctorTask
-from src.tasks.frame_contract import FrameContractAcceptanceTask, FrameContractDoctorTask
 from src.tasks.hover import HoverAcceptanceTask
-from src.tasks.hover_diagnostic import HoverDiagnosticTask
-from src.tasks.hover_slam_diagnostic import HoverSlamDiagnosticTask
-from src.tasks import motion_gate as motion_gate_task_module
-from src.tasks import official_maze_x2 as official_maze_x2_task_module
-from src.tasks.motion_gate import MotionGateAcceptanceTask, MotionGateDoctorTask
-from src.tasks.official_baseline import OfficialBaselineAcceptanceTask, OfficialBaselineDoctorTask
-from src.tasks.rangefinder_imu import RangefinderImuAcceptanceTask, RangefinderImuDoctorTask
+from src.tasks.legacy.official_baseline import run_official_baseline_acceptance, run_official_baseline_doctor
 from src.tasks.registry import TaskRegistry
-from src.tasks.scan_integrity_gate import ScanIntegrityGateAcceptanceTask, ScanIntegrityGateDoctorTask
-from src.tasks.scan_stabilization_gate import ScanStabilizationGateAcceptanceTask, ScanStabilizationGateDoctorTask
-from src.tasks.slam_hover import SlamHoverAcceptanceTask, SlamHoverDoctorTask
-from src.tasks.slam_backend import SlamBackendAcceptanceTask, SlamBackendDoctorTask
 
 from navlab.companion.config import (
     ExternalNavSenderConfig,
@@ -1589,60 +1575,38 @@ def test_p11_blockers_detect_candidate_scan_availability_regression() -> None:
 
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.names() == (
-        "acceptance",
-        "airframe-disturbance-gate-acceptance",
-        "airframe-disturbance-gate-doctor",
         "build",
         "doctor",
-        "exploration-gate-acceptance",
-        "exploration-gate-doctor",
-        "fcu-controller-acceptance",
-        "fcu-controller-doctor",
-        "frame-contract-acceptance",
-        "frame-contract-doctor",
+        "exploration",
+        "exploration-doctor",
         "hover",
-        "hover-diagnostic",
-        "hover-slam-diagnostic",
-        "motion-gate-acceptance",
-        "motion-gate-doctor",
-        "official-baseline-acceptance",
-        "official-baseline-doctor",
-        "official-maze-x2-acceptance",
-        "rangefinder-imu-acceptance",
-        "rangefinder-imu-doctor",
-        "scan-integrity-gate-acceptance",
-        "scan-integrity-gate-doctor",
-        "scan-stabilization-gate-acceptance",
-        "scan-stabilization-gate-doctor",
-        "slam-backend-acceptance",
-        "slam-backend-doctor",
-        "slam-hover-acceptance",
-        "slam-hover-doctor",
+        "real-preflight-doctor",
+        "scan-robustness",
+        "scan-robustness-doctor",
     )
     assert TaskRegistry.create("build").description
     assert TaskRegistry.create("doctor").description
-    assert TaskRegistry.create("acceptance").description
-    assert TaskRegistry.create("exploration-gate-doctor").description
-    assert TaskRegistry.create("exploration-gate-acceptance").description
-    assert TaskRegistry.create("fcu-controller-doctor").description
-    assert TaskRegistry.create("fcu-controller-acceptance").description
-    assert TaskRegistry.create("frame-contract-doctor").description
-    assert TaskRegistry.create("frame-contract-acceptance").description
+    assert TaskRegistry.create("exploration-doctor").description
+    assert TaskRegistry.create("exploration").description
     assert TaskRegistry.create("hover").description
-    assert TaskRegistry.create("hover-diagnostic").description
-    assert TaskRegistry.create("hover-slam-diagnostic").description
-    assert TaskRegistry.create("motion-gate-doctor").description
-    assert TaskRegistry.create("motion-gate-acceptance").description
-    assert TaskRegistry.create("official-baseline-doctor").description
-    assert TaskRegistry.create("official-baseline-acceptance").description
-    assert TaskRegistry.create("scan-integrity-gate-doctor").description
-    assert TaskRegistry.create("scan-integrity-gate-acceptance").description
-    assert TaskRegistry.create("scan-stabilization-gate-doctor").description
-    assert TaskRegistry.create("scan-stabilization-gate-acceptance").description
-    assert TaskRegistry.create("slam-backend-doctor").description
-    assert TaskRegistry.create("slam-backend-acceptance").description
-    assert TaskRegistry.create("slam-hover-doctor").description
-    assert TaskRegistry.create("slam-hover-acceptance").description
+    assert TaskRegistry.create("real-preflight-doctor").description
+    assert TaskRegistry.create("scan-robustness-doctor").description
+    assert TaskRegistry.create("scan-robustness").description
+    with pytest.raises(ValueError, match="unknown orchestration task 'scan-stabilization-gate-acceptance'"):
+        TaskRegistry.create("scan-stabilization-gate-acceptance")
+
+
+def test_legacy_task_helpers_do_not_define_runnable_tasks() -> None:
+    legacy_dir = Path("orchestration/src/tasks/legacy")
+    assert legacy_dir.is_dir()
+    for path in legacy_dir.glob("*.py"):
+        if path.name == "__init__.py":
+            continue
+        source = path.read_text(encoding="utf-8")
+        assert "@TaskRegistry.register" not in source
+        assert "TASK_NAME" not in source
+        assert "OrchestrationTask" not in source
+        assert "class " not in source or "Task(" not in source
 
 
 def test_orchestration_task_registry_requires_task_name() -> None:
@@ -1692,7 +1656,7 @@ def test_navlab_official_baseline_doctor_writes_cartographer_summary(monkeypatch
 
     monkeypatch.setattr(host, "_docker_run_ros_shell_capture", fake_run_ros_shell_capture)
 
-    rc = OfficialBaselineDoctorTask().run(console=Console(file=io.StringIO()))
+    rc = run_official_baseline_doctor(console=Console(file=io.StringIO()))
 
     assert rc == 0
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
@@ -1779,7 +1743,7 @@ def test_navlab_official_baseline_acceptance_blocks_mavlink_fallback_without_ap_
 
     monkeypatch.setattr(host, "_docker_run_ros_shell_capture", fake_run_ros_shell_capture)
 
-    rc = OfficialBaselineAcceptanceTask().run(duration_sec=1.0, console=Console(file=io.StringIO()))
+    rc = run_official_baseline_acceptance(duration_sec=1.0, console=Console(file=io.StringIO()))
 
     assert rc == 30
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
@@ -1842,29 +1806,32 @@ def test_navlab_orchestration_starts_slam_container(monkeypatch) -> None:
         duration_sec=45.0,
         run_id="20260603_000000",
     )
-    runs: list[dict[str, object]] = []
+    services: list[ServiceSpec] = []
 
-    class FakeDockerClient:
-        def run(self, image, command, **kwargs):  # noqa: ANN001
-            runs.append({"image": image, "command": command, **kwargs})
+    class FakeDockerBackend:
+        def start_service(self, spec: ServiceSpec) -> None:
+            services.append(spec)
 
-    monkeypatch.setattr(host, "DockerClient", FakeDockerClient)
+        def remove_container(self, *_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
+            return None
+
+    monkeypatch.setattr(host, "DockerBackend", FakeDockerBackend)
     monkeypatch.setattr(host, "_gazebo_network_namespace", lambda: "container:gazebo-id")
     monkeypatch.setattr(host, "_remove_slam_container", lambda: None)
 
     host._start_slam_container(config)
 
-    assert len(runs) == 1
-    run = runs[0]
-    assert run["image"] == "world-model/navlab-slam-cartographer:latest"
-    assert run["name"] == "navlab-slam"
-    assert run["networks"] == ["container:gazebo-id"]
-    command = " ".join(run["command"])
+    assert len(services) == 1
+    service = services[0]
+    assert service.image == "world-model/navlab-slam-cartographer:latest"
+    assert service.container_name == "navlab-slam"
+    assert service.networks == ("container:gazebo-id",)
+    command = " ".join(service.command)
     assert "python3 -m navlab.slam.cli launch" in command
     assert "--config /workspace/navlab/config.toml" in command
     assert "--backend cartographer" in command
     assert "/gazebo/truth/odom" not in command
-    assert run["envs"]["NAVLAB_SLAM_RUNTIME_CONFIG"] == "/workspace/navlab/config.toml"
+    assert service.env["NAVLAB_SLAM_RUNTIME_CONFIG"] == "/workspace/navlab/config.toml"
 
 
 def test_navlab_official_baseline_uses_artifact_sitl_workdir(monkeypatch, tmp_path) -> None:
@@ -1874,26 +1841,26 @@ def test_navlab_official_baseline_uses_artifact_sitl_workdir(monkeypatch, tmp_pa
         run_id="20260603_000000",
         artifact_dir=tmp_path,
     )
-    runs: list[dict[str, object]] = []
+    services: list[ServiceSpec] = []
 
-    class FakeDockerClient:
-        def run(self, image, command, **kwargs):  # noqa: ANN001
-            runs.append({"image": image, "command": command, **kwargs})
+    class FakeDockerBackend:
+        def start_service(self, spec: ServiceSpec) -> None:
+            services.append(spec)
 
-        def remove(self, *_args, **_kwargs):  # noqa: ANN001
+        def remove_container(self, *_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
             return None
 
-    monkeypatch.setattr(host, "DockerClient", FakeDockerClient)
+    monkeypatch.setattr(host, "DockerBackend", FakeDockerBackend)
     monkeypatch.setattr(host, "_workspace_path", lambda path: f"/workspace/{Path(path).name}")
 
     host._start_official_baseline_container(config)
 
     assert (tmp_path / "sitl_work").is_dir()
-    assert len(runs) == 1
-    run = runs[0]
-    assert run["image"] == "world-model/navlab-official-baseline:latest"
-    assert run["name"] == "navlab-official-baseline"
-    assert run["workdir"] == "/workspace/sitl_work"
+    assert len(services) == 1
+    service = services[0]
+    assert service.image == "world-model/navlab-official-baseline:latest"
+    assert service.container_name == "navlab-official-baseline"
+    assert service.cwd == "/workspace/sitl_work"
 
 
 def test_navlab_orchestration_starts_companion_with_runtime_config(monkeypatch) -> None:
@@ -1902,61 +1869,26 @@ def test_navlab_orchestration_starts_companion_with_runtime_config(monkeypatch) 
         duration_sec=45.0,
         run_id="20260603_000000",
     )
-    runs: list[dict[str, object]] = []
+    services: list[ServiceSpec] = []
 
-    class FakeDockerClient:
-        def run(self, image, command, **kwargs):  # noqa: ANN001
-            runs.append({"image": image, "command": command, **kwargs})
+    class FakeDockerBackend:
+        def start_service(self, spec: ServiceSpec) -> None:
+            services.append(spec)
 
-        def remove(self, *_args, **_kwargs):  # noqa: ANN001
+        def remove_container(self, *_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
             return None
 
-    monkeypatch.setattr(host, "DockerClient", FakeDockerClient)
+    monkeypatch.setattr(host, "DockerBackend", FakeDockerBackend)
     monkeypatch.setattr(host, "_gazebo_network_namespace", lambda: "container:gazebo-id")
 
     host._start_companion_container(config)
 
-    assert len(runs) == 1
-    run = runs[0]
-    assert run["image"] == "world-model/navlab-companion:latest"
-    assert run["name"] == "navlab-companion"
-    assert run["envs"]["NAVLAB_RUNTIME_CONFIG"] == "/workspace/navlab/config.toml"
-    assert "NAVLAB_CONFIG" not in run["envs"]
-
-
-def test_navlab_acceptance_invokes_single_command_runtime_cli(monkeypatch, tmp_path) -> None:
-    calls: list[dict[str, object]] = []
-
-    monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path))
-    monkeypatch.setattr(host, "_render_run_config", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(host, "_compose_up", lambda _config: None)
-    monkeypatch.setattr(host, "_start_slam_container", lambda _config: None)
-    monkeypatch.setattr(host, "_start_companion_container", lambda _config: None)
-    monkeypatch.setattr(host, "_capture_stack_logs", lambda **_kwargs: None)
-    monkeypatch.setattr(acceptance_task_module, "finalize_navlab_artifact", lambda **_kwargs: None)
-    monkeypatch.setattr(host, "_remove_companion_container", lambda: None)
-    monkeypatch.setattr(host, "_remove_slam_container", lambda: None)
-    monkeypatch.setattr(host, "_compose_stop", lambda _config: None)
-    monkeypatch.setattr(
-        acceptance_task_module,
-        "upload_acceptance_rosbag",
-        lambda _config: SimpleNamespace(ok=False, state="skipped", reason="test"),
-    )
-
-    def fake_exec_runtime_command(**kwargs):  # noqa: ANN001
-        calls.append(kwargs)
-        return 0
-
-    monkeypatch.setattr(host, "_docker_exec_runtime_command", fake_exec_runtime_command)
-
-    rc = AcceptanceTask().run(duration_sec=12.0, console=Console(file=io.StringIO()))
-
-    assert rc == 0
-    assert len(calls) == 1
-    assert calls[0]["module"] == "navlab.companion.acceptance_cli"
-    args = calls[0]["args"]
-    assert args[0] == "--artifact-dir"
-    assert "execute-acceptance" not in args
+    assert len(services) == 1
+    service = services[0]
+    assert service.image == "world-model/navlab-companion:latest"
+    assert service.container_name == "navlab-companion"
+    assert service.env["NAVLAB_RUNTIME_CONFIG"] == "/workspace/navlab/config.toml"
+    assert "NAVLAB_CONFIG" not in service.env
 
 
 def test_navlab_hover_acceptance_invokes_hover_runtime_cli(monkeypatch, tmp_path) -> None:
@@ -1994,86 +1926,6 @@ def test_navlab_hover_acceptance_invokes_hover_runtime_cli(monkeypatch, tmp_path
     args = calls[0]["args"]
     assert args[0] == "execute-hover-acceptance"
     assert "--artifact-dir" in args
-    assert captured_logs[0]["service"] == "sitl"
-    assert captured_logs[0]["output_path"] == tmp_path / "sitl.log"
-
-
-def test_navlab_hover_diagnostic_skips_slam_and_invokes_diagnostic_runtime_cli(monkeypatch, tmp_path) -> None:
-    calls: list[dict[str, object]] = []
-    captured_logs: list[dict[str, object]] = []
-
-    monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path))
-    monkeypatch.setattr(host, "_render_run_config", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(host, "_compose_up", lambda _config: None)
-    monkeypatch.setattr(host, "_start_slam_container", lambda _config: (_ for _ in ()).throw(AssertionError("no SLAM")))
-    monkeypatch.setattr(host, "_start_companion_container", lambda _config: None)
-    monkeypatch.setattr(host, "_capture_stack_logs", lambda **_kwargs: None)
-    monkeypatch.setattr(host, "_capture_compose_service_log", lambda **kwargs: captured_logs.append(kwargs))
-    monkeypatch.setattr(hover_diagnostic_task_module, "finalize_navlab_artifact", lambda **_kwargs: None)
-    monkeypatch.setattr(host, "_remove_companion_container", lambda: None)
-    monkeypatch.setattr(host, "_remove_slam_container", lambda: None)
-    monkeypatch.setattr(host, "_compose_stop", lambda _config: None)
-    monkeypatch.setattr(
-        hover_diagnostic_task_module,
-        "upload_acceptance_rosbag",
-        lambda _config: SimpleNamespace(ok=False, state="skipped", reason="test"),
-    )
-
-    def fake_exec_runtime_command(**kwargs):  # noqa: ANN001
-        calls.append(kwargs)
-        return 0
-
-    monkeypatch.setattr(host, "_docker_exec_runtime_command", fake_exec_runtime_command)
-
-    rc = HoverDiagnosticTask().run(duration_sec=12.0, console=Console(file=io.StringIO()))
-
-    assert rc == 0
-    assert len(calls) == 1
-    assert calls[0]["module"] == "navlab.companion.acceptance_cli"
-    args = calls[0]["args"]
-    assert args[0] == "execute-hover-diagnostic-acceptance"
-    assert "profiles/navlab-hover-diagnostic-rosbag-topics.txt" in args
-    assert captured_logs[0]["service"] == "sitl"
-    assert captured_logs[0]["output_path"] == tmp_path / "sitl.log"
-
-
-def test_navlab_hover_slam_diagnostic_starts_slam_and_invokes_runtime_cli(monkeypatch, tmp_path) -> None:
-    calls: list[dict[str, object]] = []
-    captured_logs: list[dict[str, object]] = []
-    slam_started: list[bool] = []
-
-    monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path))
-    monkeypatch.setattr(host, "_render_run_config", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(host, "_compose_up", lambda _config: None)
-    monkeypatch.setattr(host, "_start_slam_container", lambda _config: slam_started.append(True))
-    monkeypatch.setattr(host, "_start_companion_container", lambda _config: None)
-    monkeypatch.setattr(host, "_capture_stack_logs", lambda **_kwargs: None)
-    monkeypatch.setattr(host, "_capture_compose_service_log", lambda **kwargs: captured_logs.append(kwargs))
-    monkeypatch.setattr(hover_slam_diagnostic_task_module, "finalize_navlab_artifact", lambda **_kwargs: None)
-    monkeypatch.setattr(host, "_remove_companion_container", lambda: None)
-    monkeypatch.setattr(host, "_remove_slam_container", lambda: None)
-    monkeypatch.setattr(host, "_compose_stop", lambda _config: None)
-    monkeypatch.setattr(
-        hover_slam_diagnostic_task_module,
-        "upload_acceptance_rosbag",
-        lambda _config: SimpleNamespace(ok=False, state="skipped", reason="test"),
-    )
-
-    def fake_exec_runtime_command(**kwargs):  # noqa: ANN001
-        calls.append(kwargs)
-        return 0
-
-    monkeypatch.setattr(host, "_docker_exec_runtime_command", fake_exec_runtime_command)
-
-    rc = HoverSlamDiagnosticTask().run(duration_sec=12.0, console=Console(file=io.StringIO()))
-
-    assert rc == 0
-    assert slam_started == [True]
-    assert len(calls) == 1
-    assert calls[0]["module"] == "navlab.companion.acceptance_cli"
-    args = calls[0]["args"]
-    assert args[0] == "execute-hover-slam-diagnostic-acceptance"
-    assert "profiles/navlab-rosbag-topics.txt" in args
     assert captured_logs[0]["service"] == "sitl"
     assert captured_logs[0]["output_path"] == tmp_path / "sitl.log"
 

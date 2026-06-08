@@ -608,3 +608,11 @@ P12 不说明：
 - 不需要机械减振、标定或云台。
 - active frontier exploration 已经最优。
 - 真机可以无保护自由飞行。
+
+## Runtime Mode 分流
+
+- `docker + simulation`：保持当前 motor thrust multiplier / ESC lag proxy / vibration profile / disturbed P9 replay 验收路径。
+- `process + real`：不注入 motor bias、ESC lag、SDF thrust multiplier 或 Gazebo vibration；只观测真实 flight window 内 attitude、motor output best-effort、scan drop/compensation、SLAM health 和 FCU mode continuity。
+- real mode 禁止 P12 disturbed SDF overlay、gazebo-sensor runtime 和 official baseline replay。
+- real mode 下如果 P12 试图制造仿真扰动，必须以 `runtime_mode_violation:*` blocker 失败。
+- P12 real mode 的目标不是“制造扰动”，而是证明真实无人机自身扰动没有破坏 scan/SLAM contract。

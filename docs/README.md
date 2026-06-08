@@ -54,6 +54,10 @@
 ### 工程重构
 
 - `docs/general/lab_env_service_refactor_todo.md`: Python 服务边界、目录重构和测试拆分记录
+- `docs/general/orchestration_runtime_backend_refactor_todo.md`: orchestration runtime backend 抽象和迁移 TODO
+- `docs/general/orchestration_runtime_backend_guide.md`: DockerBackend / ProcessBackend 使用说明和排障口径
+- `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`: simulation/real runtime mode 分流设计
+- `docs/general/orchestration_runtime_backend_inventory.md`: runtime backend 迁移清单和当前样板
 
 ## 推荐阅读顺序
 
@@ -89,6 +93,9 @@
 30. `docs/sim/x2_lidar_simulation_design.md`
 31. `docs/sim/x2_lidar_protocol_todo.md`
 32. `docs/general/lab_env_service_refactor_todo.md`
+33. `docs/general/orchestration_runtime_backend_refactor_todo.md`
+34. `docs/general/orchestration_runtime_backend_guide.md`
+35. `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`
 
 ## 当前目录结构
 
@@ -98,6 +105,10 @@ docs/
   decisions.md
   general/
     lab_env_service_refactor_todo.md
+    orchestration_runtime_backend_refactor_todo.md
+    orchestration_runtime_backend_guide.md
+    orchestration_runtime_backend_inventory.md
+    orchestration_runtime_mode_real_vs_sim_design.md
   scenarios/
     indoor/
       navlab_master_roadmap.md

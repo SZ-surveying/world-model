@@ -7,7 +7,7 @@ import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import tomli_w
 from python_on_whales import DockerClient
@@ -16,8 +16,7 @@ from rich.console import Console
 
 from src import host
 from src.config import RunConfig
-from src.tasks.base import OrchestrationTask
-from src.tasks.official_baseline import (
+from src.tasks.legacy.official_baseline import (
     _build_doctor_summary,
     _collect_official_dds_probe,
     _collect_ros_graph,
@@ -26,7 +25,7 @@ from src.tasks.official_baseline import (
     _write_json,
     _write_text,
 )
-from src.tasks.official_maze_x2 import (
+from src.tasks.legacy.official_maze_x2 import (
     GAZEBO_SENSOR_CONTAINER,
     OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
     _capture_container_log,
@@ -39,7 +38,7 @@ from src.tasks.official_maze_x2 import (
     _write_p1_bridge_override,
     _write_p1_vendor_profile,
 )
-from src.tasks.rangefinder_imu import (
+from src.tasks.legacy.rangefinder_imu import (
     OFFICIAL_GAZEBO_IRIS_PARAMS,
     OFFICIAL_IRIS_WITH_LIDAR_MODEL,
     _collect_imu_probe,
@@ -49,7 +48,6 @@ from src.tasks.rangefinder_imu import (
     _write_p2_param_overlay,
     _write_p2_sensor_config,
 )
-from src.tasks.registry import TaskRegistry
 
 SLAM_BACKEND_CONTAINER = "navlab-p3-slam-backend"
 OFFICIAL_IRIS_LIDAR_Z_M = "0.075077"
@@ -645,343 +643,5 @@ def _build_p3_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict
     return summary
 
 
-@TaskRegistry.register
-@dataclass(frozen=True, slots=True)
-class SlamBackendDoctorTask(OrchestrationTask):
-    TASK_NAME: ClassVar[str] = "slam-backend-doctor"
-    TASK_DESCRIPTION: ClassVar[str] = "Check P3 SLAM backend quality prerequisites."
-
-    def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
-        console = console or Console()
-        config = RunConfig.from_config(config_path=config_path)
-        artifact_dir = Path(f"artifacts/ros/navlab_slam_backend_doctor/{config.run_id}")
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        runtime_config = artifact_dir / "p3_slam_runtime.toml"
-        _write_p3_slam_runtime_config(config, runtime_config)
-        console.print("[bold cyan]Checking P3 SLAM backend prerequisites[/bold cyan]")
-        summary = _build_p3_doctor_summary(config, runtime_config=runtime_config)
-        _write_json(artifact_dir / "summary.json", summary)
-        color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]P3 SLAM backend doctor rc={0 if summary['ok'] else 20}[/{color}]")
-        console.print(f"[bold]Summary:[/bold] {artifact_dir / 'summary.json'}")
-        return 0 if summary["ok"] else 20
 
 
-@TaskRegistry.register
-@dataclass(frozen=True, slots=True)
-class SlamBackendAcceptanceTask(OrchestrationTask):
-    TASK_NAME: ClassVar[str] = "slam-backend-acceptance"
-    TASK_DESCRIPTION: ClassVar[str] = "Run P3 SLAM backend quality acceptance."
-
-    def run(
-        self,
-        *,
-        config_path: str | Path | None = None,
-        duration_sec: float = 90.0,
-        console: Console | None = None,
-    ) -> int:
-        console = console or Console()
-        config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
-        config.artifact_dir.mkdir(parents=True, exist_ok=True)
-        host._render_run_config(console, config)
-        baseline = config.orchestration.official_baseline
-        p2 = config.orchestration.rangefinder_imu
-        p3 = config.orchestration.slam_backend
-        bridge_override = config.artifact_dir / "official_iris_3Dlidar_bridge_p3.yaml"
-        model_overlay = config.artifact_dir / "iris_with_lidar_p3_rangefinder_x2.sdf"
-        param_overlay = config.artifact_dir / "gazebo-iris-p3-rangefinder.parm"
-        sensor_config = config.artifact_dir / "p3_gazebo_sensor_runtime.toml"
-        vendor_profile = config.artifact_dir / "x2_vendor_driver_p3.yaml"
-        slam_runtime_config = config.artifact_dir / "p3_slam_runtime.toml"
-        _write_p1_bridge_override(bridge_override)
-        _write_p1_vendor_profile(vendor_profile, virtual_serial_link=p2.x2_virtual_serial_link)
-
-        summary: dict[str, Any] | None = None
-        try:
-            model_overlay_summary = _write_p2_model_overlay(config, model_overlay)
-            param_overlay_summary = _write_p2_param_overlay(config, param_overlay)
-            sensor_config_summary = _write_p2_sensor_config(config, sensor_config, vendor_profile=vendor_profile)
-            slam_runtime_summary = _write_p3_slam_runtime_config(config, slam_runtime_config)
-
-            console.print("[bold cyan]Starting official maze + NavLab SLAM backend quality gate[/bold cyan]")
-            try:
-                host._compose_stop(config)
-            except DockerException:
-                pass
-            host._start_official_baseline_container(
-                config,
-                volume_overrides=[
-                    (bridge_override.resolve(), OFFICIAL_IRIS_3D_BRIDGE_CONFIG),
-                    (model_overlay.resolve(), OFFICIAL_IRIS_WITH_LIDAR_MODEL),
-                    (param_overlay.resolve(), OFFICIAL_GAZEBO_IRIS_PARAMS),
-                ],
-            )
-            time.sleep(min(max(duration_sec, 1.0), 10.0))
-            _start_gazebo_sensor_container(config, sensor_config=sensor_config)
-            time.sleep(8.0)
-            _start_p3_rosbag_recording(
-                config,
-                image=baseline.runtime_image,
-                duration_sec=max(45.0, min(duration_sec, 90.0)),
-            )
-            time.sleep(2.0)
-            _start_p3_slam_container(config, runtime_config=slam_runtime_config)
-            time.sleep(min(max(duration_sec - 18.0, 10.0), 25.0))
-
-            graph = _collect_ros_graph(
-                config,
-                config.artifact_dir,
-                image=baseline.runtime_image,
-                network="host",
-            )
-            probe = _collect_official_dds_probe(
-                config,
-                config.artifact_dir,
-                image=baseline.runtime_image,
-                network="host",
-            )
-            topic_info = _collect_topic_info(
-                config,
-                image=baseline.runtime_image,
-                topics=(
-                    p3.scan_topic,
-                    p3.imu_topic,
-                    p3.odometry_topic,
-                    p3.slam_odom_topic,
-                    p3.slam_status_topic,
-                    p3.external_nav_status_topic,
-                    p3.x2_vendor_scan_topic,
-                    p3.x2_status_topic,
-                    p3.rangefinder_range_topic,
-                    p3.rangefinder_status_topic,
-                    "/map",
-                    "/submap_list",
-                    "/trajectory_node_list",
-                ),
-            )
-            x2_status = _collect_json_status_sample(
-                config,
-                image=baseline.runtime_image,
-                topic=p3.x2_status_topic,
-                artifact_name="x2_status_probe.txt",
-                node_name="navlab_p3_x2_status_probe",
-            )
-            slam_status = _collect_json_status_sample(
-                config,
-                image=baseline.runtime_image,
-                topic=p3.slam_status_topic,
-                artifact_name="slam_status_probe.txt",
-                node_name="navlab_p3_slam_status_probe",
-            )
-            external_nav_status = _collect_json_status_sample(
-                config,
-                image=baseline.runtime_image,
-                topic=p3.external_nav_status_topic,
-                artifact_name="external_nav_status_probe.txt",
-                node_name="navlab_p3_external_nav_status_probe",
-            )
-            scan_sample = _collect_laser_scan_sample(config, image=baseline.runtime_image, topic=p3.scan_topic)
-            imu_probe = _collect_imu_probe(config, image=baseline.runtime_image)
-            rangefinder_probe = _collect_rangefinder_probe(config, image=baseline.runtime_image)
-            slam_odom_probe = _collect_odometry_probe(
-                config,
-                image=baseline.runtime_image,
-                topic=p3.slam_odom_topic,
-                artifact_name="slam_odom_probe.txt",
-            )
-            truth_probe = _collect_odometry_probe(
-                config,
-                image=baseline.runtime_image,
-                topic=p3.truth_diagnostic_topic,
-                artifact_name="truth_odometry_probe.txt",
-            )
-            tf_probe = _collect_tf_probe(config, image=baseline.runtime_image)
-            truth_error_probe = _collect_truth_error_probe(config, image=baseline.runtime_image)
-            rosbag_profile = _finish_p3_rosbag_recording(config)
-            counts = _message_counts(config)
-
-            scan_publishers = topic_info.get(p3.scan_topic, {}).get("publisher_nodes", [])
-            scan_subscribers = topic_info.get(p3.scan_topic, {}).get("subscription_nodes", [])
-            vendor_scan_publishers = topic_info.get(p3.x2_vendor_scan_topic, {}).get("publisher_nodes", [])
-            vendor_scan_subscribers = topic_info.get(p3.x2_vendor_scan_topic, {}).get("subscription_nodes", [])
-            imu_publishers = topic_info.get(p3.imu_topic, {}).get("publisher_nodes", [])
-            imu_subscribers = topic_info.get(p3.imu_topic, {}).get("subscription_nodes", [])
-            odom_publishers = topic_info.get(p3.slam_odom_topic, {}).get("publisher_nodes", [])
-            slam_status_sample = slam_status.get("result", {}).get("sample") or {}
-            slam_odom_result = slam_odom_probe.get("result", {})
-            truth_result = truth_probe.get("result", {})
-            tf_result = tf_probe.get("result", {})
-            truth_error_result = truth_error_probe.get("result", {})
-
-            blockers: list[str] = []
-            doctor = _build_p3_doctor_summary(config, runtime_config=slam_runtime_config)
-            if not doctor.get("ok"):
-                blockers.extend(str(item) for item in doctor.get("blockers", []))
-            if not probe.get("result", {}).get("time_received"):
-                blockers.append("official DDS probe did not receive /ap/v1/time")
-            if "ydlidar_ros2_driver_node" not in vendor_scan_publishers:
-                blockers.append(f"{p3.x2_vendor_scan_topic} is not published by ydlidar_ros2_driver_node")
-            if "navlab_x2_scan_time_normalizer" not in scan_publishers:
-                blockers.append(f"{p3.scan_topic} is not published by navlab_x2_scan_time_normalizer")
-            if any("ros_gz_bridge" in publisher for publisher in scan_publishers):
-                blockers.append("/scan is still published by ros_gz_bridge; X2 route is polluted")
-            if "cartographer_node" not in scan_subscribers:
-                blockers.append("cartographer_node is not subscribed to /scan")
-            if "navlab_cartographer_adapter_node" not in scan_subscribers:
-                blockers.append("navlab_cartographer_adapter_node is not subscribed to /scan")
-            if "navlab_cartographer_adapter_node" not in odom_publishers:
-                blockers.append(f"{p3.slam_odom_topic} is not published by navlab_cartographer_adapter_node")
-            if not scan_sample.get("result", {}).get("received"):
-                blockers.append(f"P3 did not receive {p3.scan_topic} LaserScan")
-            if not imu_probe.get("result", {}).get("received"):
-                blockers.append(f"P3 did not receive {p3.imu_topic} IMU")
-            if float(imu_probe.get("result", {}).get("rate_hz", 0.0) or 0.0) < 4.0:
-                blockers.append("P3 IMU rate is below minimum")
-            rangefinder_result = rangefinder_probe.get("result", {})
-            rangefinder_status = rangefinder_result.get("status_sample") or {}
-            if not rangefinder_result.get("range_received"):
-                blockers.append(f"P3 did not receive {p3.rangefinder_range_topic}")
-            if rangefinder_status.get("state") != "sending":
-                blockers.append("P3 rangefinder status is not sending")
-            if slam_status_sample.get("state") != "publishing_tf_backed_odom":
-                blockers.append("SLAM adapter is not publishing TF-backed odom")
-            _append_slam_odom_quality_blockers(blockers=blockers, p3=p3, slam_odom_result=slam_odom_result)
-            transforms = tf_result.get("transforms", {})
-            if not transforms.get("odom_to_base"):
-                blockers.append("TF missing odom -> base_link")
-            if not transforms.get("base_to_imu"):
-                blockers.append("TF missing base_link -> imu_link")
-            if not transforms.get("base_to_laser"):
-                blockers.append("TF missing base_link -> base_scan")
-            if not rosbag_profile.get("ok"):
-                blockers.append("P3 rosbag profile did not pass")
-            for topic in (p3.scan_topic, p3.imu_topic, p3.odometry_topic, p3.slam_odom_topic, "/map"):
-                if counts.get(topic, 0) <= 0:
-                    blockers.append(f"{topic} was not recorded")
-
-            quality = {
-                "canonical_slam_odom_topic": p3.slam_odom_topic,
-                "status_topic": p3.slam_status_topic,
-                "backend": p3.backend,
-                "slam_status": slam_status_sample,
-                "slam_odom_probe": slam_odom_result,
-                "truth_diagnostic_topic": p3.truth_diagnostic_topic,
-                "truth_diagnostic_probe": truth_result,
-                "truth_error_diagnostic": truth_error_result,
-                "uses_gazebo_truth_as_input": p3.uses_gazebo_truth_as_input,
-                "thresholds": {
-                    "min_slam_odom_rate_hz": p3.min_slam_odom_rate_hz,
-                    "max_latest_age_sec": p3.max_latest_age_sec,
-                    "max_jump_m": p3.max_jump_m,
-                    "max_yaw_jump_rad": p3.max_yaw_jump_rad,
-                    "max_stationary_drift_m": p3.max_stationary_drift_m,
-                },
-            }
-            slam_inputs = {
-                "scan_topic": p3.scan_topic,
-                "scan_publishers": scan_publishers,
-                "scan_subscribers": scan_subscribers,
-                "vendor_scan_topic": p3.x2_vendor_scan_topic,
-                "vendor_scan_publishers": vendor_scan_publishers,
-                "vendor_scan_subscribers": vendor_scan_subscribers,
-                "scan_sample": scan_sample.get("result", {}),
-                "imu_topic": p3.imu_topic,
-                "imu_publishers": imu_publishers,
-                "imu_subscribers": imu_subscribers,
-                "imu_probe": imu_probe.get("result", {}),
-                "odometry_topic": p3.odometry_topic,
-                "odometry_publishers": topic_info.get(p3.odometry_topic, {}).get("publisher_nodes", []),
-                "odometry_subscribers": topic_info.get(p3.odometry_topic, {}).get("subscription_nodes", []),
-                "truth_diagnostic_topic": p3.truth_diagnostic_topic,
-                "uses_gazebo_truth_as_input": p3.uses_gazebo_truth_as_input,
-            }
-            slam_outputs = {
-                "slam_odom_topic": p3.slam_odom_topic,
-                "slam_odom_publishers": odom_publishers,
-                "slam_odom_probe": slam_odom_result,
-                "slam_status_topic": p3.slam_status_topic,
-                "slam_status": slam_status_sample,
-                "map_topics": {
-                    "/map": {"count": counts.get("/map", 0), **topic_info.get("/map", {})},
-                    "/submap_list": {
-                        "count": counts.get("/submap_list", 0),
-                        **topic_info.get("/submap_list", {}),
-                    },
-                    "/trajectory_node_list": {
-                        "count": counts.get("/trajectory_node_list", 0),
-                        **topic_info.get("/trajectory_node_list", {}),
-                    },
-                },
-            }
-            p3_summary = {
-                "world_source": config.orchestration.official_maze_x2.world_source,
-                "vehicle_model_source": config.orchestration.official_maze_x2.vehicle_model_source,
-                "model_overlay": model_overlay_summary,
-                "param_overlay": param_overlay_summary,
-                "sensor_config": sensor_config_summary,
-                "slam_runtime_config": slam_runtime_summary,
-                "slam_backend_doctor": doctor.get("p3_slam_backend_doctor", {}),
-                "slam_launch_command": doctor.get("p3_slam_backend_doctor", {}).get("command", ""),
-                "backend_image": config.slam_image,
-                "backend_container": SLAM_BACKEND_CONTAINER,
-                "gazebo_sensor_container": GAZEBO_SENSOR_CONTAINER,
-                "official_container": host.OFFICIAL_BASELINE_CONTAINER,
-                "scan_publishers": scan_publishers,
-                "scan_subscribers": scan_subscribers,
-                "vendor_scan_topic": p3.x2_vendor_scan_topic,
-                "vendor_scan_publishers": vendor_scan_publishers,
-                "vendor_scan_subscribers": vendor_scan_subscribers,
-                "imu_publishers": imu_publishers,
-                "imu_subscribers": imu_subscribers,
-                "slam_odom_publishers": odom_publishers,
-                "x2_status": x2_status.get("result", {}),
-                "external_nav_status": external_nav_status.get("result", {}),
-                "rangefinder": rangefinder_probe.get("result", {}),
-                "imu": imu_probe.get("result", {}),
-                "tf": tf_result,
-                "message_counts": counts,
-                "rosbag_path": str(config.artifact_dir / "rosbag"),
-                "mcap_path": str(config.artifact_dir / "rosbag" / "rosbag_0.mcap"),
-                "direct_set_pose": False,
-                "hover_claim": "not_evaluated",
-                "external_nav_claim": "not_evaluated",
-            }
-            summary = {
-                "ok": not blockers,
-                "blocked": bool(blockers),
-                "blockers": blockers,
-                "p3_slam_backend": p3_summary,
-                "slam_inputs": slam_inputs,
-                "slam_outputs": slam_outputs,
-                "slam_quality": quality,
-                "ros_graph": graph,
-                "official_dds_probe": probe,
-                "topic_info": topic_info,
-                "rosbag_profile": rosbag_profile,
-            }
-            _write_json(config.artifact_dir / "summary.json", summary)
-            _write_foxglove_notes(config)
-        finally:
-            host._capture_official_baseline_log(config=config)
-            _capture_container_log(config, container=GAZEBO_SENSOR_CONTAINER, output_name="gazebo_sensor_tail.log")
-            _capture_container_log(config, container=SLAM_BACKEND_CONTAINER, output_name="slam_backend_tail.log")
-            _capture_container_log(config, container=P3_ROSBAG_CONTAINER, output_name="rosbag_tail.log")
-            _remove_container(P3_ROSBAG_CONTAINER)
-            _remove_container(SLAM_BACKEND_CONTAINER)
-            _remove_container(GAZEBO_SENSOR_CONTAINER)
-            host._remove_official_baseline_container()
-            try:
-                host._compose_stop(config)
-            except DockerException:
-                pass
-        if summary is None:
-            summary = {
-                "ok": False,
-                "blocked": True,
-                "blockers": ["P3 SLAM backend acceptance did not produce a summary"],
-            }
-            _write_json(config.artifact_dir / "summary.json", summary)
-        color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]P3 SLAM backend acceptance completed rc={0 if summary['ok'] else 30}[/{color}]")
-        console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")
-        return 0 if summary["ok"] else 30

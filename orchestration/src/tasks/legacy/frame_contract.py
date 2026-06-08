@@ -6,7 +6,7 @@ import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import tomli_w
 from python_on_whales import DockerClient
@@ -15,8 +15,7 @@ from rich.console import Console
 
 from src import host
 from src.config import RunConfig
-from src.tasks.base import OrchestrationTask
-from src.tasks.fcu_controller import (
+from src.tasks.legacy.fcu_controller import (
     P4_CONTROLLER_CONTAINER,
     _append_controller_blockers,
     _append_owner_blockers,
@@ -26,7 +25,7 @@ from src.tasks.fcu_controller import (
     _write_controller_runtime_script,
     _write_p4_runtime_config,
 )
-from src.tasks.official_baseline import (
+from src.tasks.legacy.official_baseline import (
     _build_doctor_summary,
     _collect_official_dds_probe,
     _collect_ros_graph,
@@ -35,7 +34,7 @@ from src.tasks.official_baseline import (
     _write_json,
     _write_text,
 )
-from src.tasks.official_maze_x2 import (
+from src.tasks.legacy.official_maze_x2 import (
     GAZEBO_SENSOR_CONTAINER,
     OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
     _capture_container_log,
@@ -47,7 +46,7 @@ from src.tasks.official_maze_x2 import (
     _write_p1_bridge_override,
     _write_p1_vendor_profile,
 )
-from src.tasks.rangefinder_imu import (
+from src.tasks.legacy.rangefinder_imu import (
     OFFICIAL_GAZEBO_IRIS_PARAMS,
     OFFICIAL_IRIS_WITH_LIDAR_MODEL,
     _collect_imu_probe,
@@ -56,8 +55,7 @@ from src.tasks.rangefinder_imu import (
     _write_p2_param_overlay,
     _write_p2_sensor_config,
 )
-from src.tasks.registry import TaskRegistry
-from src.tasks.slam_backend import (
+from src.tasks.legacy.slam_backend import (
     SLAM_BACKEND_CONTAINER,
     _build_p3_doctor_summary,
     _start_p3_slam_container,
@@ -866,230 +864,5 @@ def _write_foxglove_notes(config: RunConfig) -> None:
     )
 
 
-@TaskRegistry.register
-@dataclass(frozen=True, slots=True)
-class FrameContractDoctorTask(OrchestrationTask):
-    TASK_NAME: ClassVar[str] = "frame-contract-doctor"
-    TASK_DESCRIPTION: ClassVar[str] = "Check P5 frame contract prerequisites."
-
-    def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
-        console = console or Console()
-        config = RunConfig.from_config(config_path=config_path)
-        artifact_dir = Path(os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_frame_contract_doctor/{config.run_id}"))
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        config = RunConfig.from_config(config_path=config_path, artifact_dir=artifact_dir, run_id=config.run_id)
-        runtime_config = artifact_dir / "p5_frame_contract_runtime.toml"
-        _write_p5_runtime_config(config, runtime_config)
-        console.print("[bold cyan]Checking P5 frame contract prerequisites[/bold cyan]")
-        summary = _build_p5_doctor_summary(config, runtime_config=runtime_config)
-        _write_json(artifact_dir / "summary.json", summary)
-        color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]P5 frame contract doctor rc={0 if summary['ok'] else 20}[/{color}]")
-        console.print(f"[bold]Summary:[/bold] {artifact_dir / 'summary.json'}")
-        return 0 if summary["ok"] else 20
 
 
-@TaskRegistry.register
-@dataclass(frozen=True, slots=True)
-class FrameContractAcceptanceTask(OrchestrationTask):
-    TASK_NAME: ClassVar[str] = "frame-contract-acceptance"
-    TASK_DESCRIPTION: ClassVar[str] = "Run P5 frame contract acceptance."
-
-    def run(
-        self,
-        *,
-        config_path: str | Path | None = None,
-        duration_sec: float = 90.0,
-        console: Console | None = None,
-    ) -> int:
-        console = console or Console()
-        config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
-        config.artifact_dir.mkdir(parents=True, exist_ok=True)
-        host._render_run_config(console, config)
-        baseline = config.orchestration.official_baseline
-        p2 = config.orchestration.rangefinder_imu
-        p4 = config.orchestration.fcu_controller
-        p5 = config.orchestration.frame_contract
-        bridge_override = config.artifact_dir / "official_iris_3Dlidar_bridge_p5.yaml"
-        model_overlay = config.artifact_dir / "iris_with_lidar_p5_rangefinder_x2.sdf"
-        param_overlay = config.artifact_dir / "gazebo-iris-p5-rangefinder.parm"
-        sensor_config = config.artifact_dir / "p5_gazebo_sensor_runtime.toml"
-        vendor_profile = config.artifact_dir / "x2_vendor_driver_p5.yaml"
-        slam_runtime_config = config.artifact_dir / "p5_slam_runtime.toml"
-        p4_runtime_config = config.artifact_dir / "p5_fcu_controller_runtime.toml"
-        p5_runtime_config = config.artifact_dir / "p5_frame_contract_runtime.toml"
-        controller_script = config.artifact_dir / "p5_fcu_controller_runtime.py"
-        frame_probe_script = config.artifact_dir / "p5_frame_contract_probe.py"
-        _write_p1_bridge_override(bridge_override)
-        _write_p1_vendor_profile(vendor_profile, virtual_serial_link=p2.x2_virtual_serial_link)
-
-        summary: dict[str, Any] | None = None
-        try:
-            model_overlay_summary = _write_p2_model_overlay(config, model_overlay)
-            param_overlay_summary = _write_p2_param_overlay(config, param_overlay)
-            sensor_config_summary = _write_p2_sensor_config(config, sensor_config, vendor_profile=vendor_profile)
-            slam_runtime_summary = _write_p3_slam_runtime_config(config, slam_runtime_config)
-            p4_runtime_summary = _write_p4_runtime_config(config, p4_runtime_config)
-            p5_runtime_summary = _write_p5_runtime_config(config, p5_runtime_config)
-            controller_script_summary = _write_controller_runtime_script(
-                config,
-                controller_script,
-                duration_sec=max(35.0, min(duration_sec, 75.0)),
-            )
-            frame_probe_script_summary = _write_frame_probe_script(config, frame_probe_script)
-
-            console.print("[bold cyan]Starting official maze + P5 frame contract gate[/bold cyan]")
-            try:
-                host._compose_stop(config)
-            except DockerException:
-                pass
-            host._start_official_baseline_container(
-                config,
-                volume_overrides=[
-                    (bridge_override.resolve(), OFFICIAL_IRIS_3D_BRIDGE_CONFIG),
-                    (model_overlay.resolve(), OFFICIAL_IRIS_WITH_LIDAR_MODEL),
-                    (param_overlay.resolve(), OFFICIAL_GAZEBO_IRIS_PARAMS),
-                ],
-            )
-            time.sleep(min(max(duration_sec, 1.0), 10.0))
-            _start_gazebo_sensor_container(config, sensor_config=sensor_config)
-            time.sleep(8.0)
-            _start_p3_slam_container(config, runtime_config=slam_runtime_config)
-            time.sleep(4.0)
-            _start_p5_rosbag_recording(config, duration_sec=max(60.0, min(duration_sec, 105.0)))
-            time.sleep(2.0)
-            _start_p4_controller_container(config, script_path=controller_script)
-            time.sleep(8.0)
-            frame_summary = _run_frame_probe(config, script_path=frame_probe_script)
-            controller_summary = _wait_for_controller_summary(config, timeout_sec=max(45.0, duration_sec + 20.0))
-            rosbag_profile = _finish_p5_rosbag_recording(config)
-            counts = _message_counts(config)
-
-            graph = _collect_ros_graph(config, config.artifact_dir, image=baseline.runtime_image, network="host")
-            probe = _collect_official_dds_probe(config, config.artifact_dir, image=baseline.runtime_image, network="host")
-            rangefinder_probe = _collect_rangefinder_probe(config, image=baseline.runtime_image)
-            imu_probe = _collect_imu_probe(config, image=baseline.runtime_image)
-            topic_info = _collect_topic_info(
-                config,
-                image=baseline.runtime_image,
-                topics=(
-                    p5.scan_topic,
-                    p5.imu_topic,
-                    p5.rangefinder_range_topic,
-                    p5.rangefinder_status_topic,
-                    p5.fcu_pose_topic,
-                    p5.fcu_twist_topic,
-                    p5.fcu_status_topic,
-                    p5.cmd_vel_topic,
-                    p5.slam_odom_topic,
-                    p5.slam_status_topic,
-                    p5.truth_diagnostic_topic,
-                    p5.controller_status_topic,
-                    p5.setpoint_output_topic,
-                    p5.owner_status_topic,
-                    p5.status_topic,
-                ),
-            )
-            doctor = _build_p5_doctor_summary(config, runtime_config=p5_runtime_config)
-            blockers: list[str] = []
-            if not doctor.get("ok"):
-                blockers.extend(str(item) for item in doctor.get("blockers", []))
-            if not probe.get("result", {}).get("time_received"):
-                blockers.append("official DDS probe did not receive /ap/v1/time")
-            if not rangefinder_probe.get("result", {}).get("range_received"):
-                blockers.append("P5 did not receive rangefinder")
-            if not imu_probe.get("result", {}).get("received"):
-                blockers.append("P5 did not receive IMU")
-            _append_controller_blockers(blockers=blockers, controller=controller_summary)
-            owner_summary = controller_summary.get("owner", {}) if controller_summary else {}
-            cmd_vel_publishers = topic_info.get(p4.cmd_vel_topic, {}).get("publisher_nodes", [])
-            _append_owner_blockers(
-                blockers=blockers,
-                owner_summary=owner_summary,
-                cmd_vel_publishers=cmd_vel_publishers,
-                p4=p4,
-            )
-            _append_p5_blockers(
-                blockers=blockers,
-                frame_summary=frame_summary,
-                rosbag_profile=rosbag_profile,
-                counts=counts,
-                p5=p5,
-            )
-            for topic in (
-                p5.scan_topic,
-                p5.imu_topic,
-                p5.rangefinder_range_topic,
-                p5.fcu_pose_topic,
-                p5.slam_odom_topic,
-                p5.status_topic,
-            ):
-                if counts.get(topic, 0) <= 0:
-                    blockers.append(f"{topic} was not recorded")
-
-            summary = {
-                "ok": not blockers,
-                "blocked": bool(blockers),
-                "blockers": blockers,
-                "p5_frame_contract": {
-                    "runtime_config": p5_runtime_summary,
-                    "frame_probe_script": frame_probe_script_summary,
-                    "frame_probe": frame_summary,
-                    "model_overlay": model_overlay_summary,
-                    "param_overlay": param_overlay_summary,
-                    "sensor_config": sensor_config_summary,
-                    "slam_runtime_config": slam_runtime_summary,
-                    "p4_runtime_config": p4_runtime_summary,
-                    "controller_script": controller_script_summary,
-                    "controller_runtime": controller_summary,
-                    "owner": owner_summary,
-                    "set_pose_count": owner_summary.get("set_pose_count"),
-                    "uses_gazebo_truth_as_input": p5.uses_gazebo_truth_as_input,
-                    "hover_claim": p5.hover_claim,
-                    "exploration_claim": p5.exploration_claim,
-                    "rosbag_path": str(config.artifact_dir / "rosbag"),
-                    "mcap_path": str(config.artifact_dir / "rosbag" / "rosbag_0.mcap"),
-                },
-                "tf": frame_summary.get("tf", {}),
-                "scan": frame_summary.get("scan", {}),
-                "imu": frame_summary.get("imu", {}),
-                "rangefinder": frame_summary.get("rangefinder", {}),
-                "direction_consistency": frame_summary.get("direction_consistency", {}),
-                "official_dds_probe": probe,
-                "rangefinder_probe": rangefinder_probe.get("result", {}),
-                "imu_probe": imu_probe.get("result", {}),
-                "topic_info": topic_info,
-                "ros_graph": graph,
-                "message_counts": counts,
-                "rosbag_profile": rosbag_profile,
-                "hover_claim": p5.hover_claim,
-                "exploration_claim": p5.exploration_claim,
-            }
-            _write_json(config.artifact_dir / "summary.json", summary)
-            _write_foxglove_notes(config)
-        finally:
-            host._capture_official_baseline_log(config=config)
-            _capture_container_log(config, container=GAZEBO_SENSOR_CONTAINER, output_name="gazebo_sensor_tail.log")
-            _capture_container_log(config, container=SLAM_BACKEND_CONTAINER, output_name="slam_backend_tail.log")
-            _capture_container_log(config, container=P4_CONTROLLER_CONTAINER, output_name="fcu_controller_tail.log")
-            _capture_container_log(config, container=P5_ROSBAG_CONTAINER, output_name="rosbag_tail.log")
-            _remove_container(P5_ROSBAG_CONTAINER)
-            _remove_container(P4_CONTROLLER_CONTAINER)
-            _remove_container(SLAM_BACKEND_CONTAINER)
-            _remove_container(GAZEBO_SENSOR_CONTAINER)
-            host._remove_official_baseline_container()
-            try:
-                host._compose_stop(config)
-            except DockerException:
-                pass
-        if summary is None:
-            summary = {
-                "ok": False,
-                "blocked": True,
-                "blockers": ["P5 frame contract acceptance did not produce a summary"],
-            }
-            _write_json(config.artifact_dir / "summary.json", summary)
-        color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]P5 frame contract acceptance completed rc={0 if summary['ok'] else 30}[/{color}]")
-        console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")
-        return 0 if summary["ok"] else 30

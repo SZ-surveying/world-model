@@ -218,9 +218,9 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 ### 验收
 
 - [x] `just --list` 不出现旧 Stage 0/Stage 1 启动命令。
-- [ ] `uv run --project orchestration python orchestration/main.py build gazebo-sensor` 可构建目标镜像。
-- [ ] `X2_MODE=driver-smoke X2_SMOKE_DURATION_SEC=8 X2_ARTIFACT_DIR=/artifacts/ros/x2_driver_smoke/manual docker compose --file compose/docker-compose.yaml --project-directory . --profile x2_sensor up --abort-on-container-exit --exit-code-from gazebo-sensor gazebo-sensor` 通过。
-- [ ] `uv run --project orchestration python orchestration/main.py doctor` 通过。
+- [x] `uv run --project orchestration python orchestration/main.py build gazebo-sensor` 可构建目标镜像。
+- [x] `X2_MODE=driver-smoke X2_SMOKE_DURATION_SEC=8 X2_ARTIFACT_DIR=/artifacts/ros/x2_driver_smoke/manual docker compose --file compose/docker-compose.yaml --project-directory . --profile x2_sensor up --abort-on-container-exit --exit-code-from gazebo-sensor gazebo-sensor` 通过。
+- [x] `uv run --project orchestration python orchestration/main.py doctor` 通过。
 
 ## P7：完整 acceptance 和 rosbag 回放
 
@@ -228,19 +228,19 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 
 ### 任务
 
-- [ ] 构建 companion、SLAM、gazebo-sensor 镜像。
-- [ ] 跑 `uv run --project orchestration python orchestration/main.py acceptance 90`。
-- [ ] 检查 summary 中 `scan_source = "x2_virtual_serial_vendor_driver"`。
-- [ ] 检查 rosbag 包含 `/scan`、`/scan_ideal`、`/sim/x2/status`、`/scan_features`。
-- [ ] 检查 `/scan_features` message count 非零。
-- [ ] 在 Foxglove 回放中确认能看到 ideal scan 和最终 vendor scan。
+- [x] 构建 companion、SLAM、gazebo-sensor 镜像。
+- [x] 跑 `uv run --project orchestration python orchestration/main.py acceptance 90`。
+- [x] 检查 summary 中 `scan_source = "x2_virtual_serial_vendor_driver"`。
+- [x] 检查 rosbag 包含 `/scan`、`/scan_ideal`、`/sim/x2/status`、`/scan_features`。
+- [x] 检查 `/scan_features` message count 非零。
+- [x] 在 Foxglove 回放中确认能看到 ideal scan 和最终 vendor scan。
 
 ### 验收
 
-- [ ] summary.json 中 `ok=true`。
-- [ ] summary.md 写出 X2 sensor 和 `/scan` publisher。
-- [ ] rosbag MCAP 可以用于 Foxglove 回放完整任务。
-- [ ] companion、SLAM、SITL 镜像没有 X2 vendor dependency。
+- [x] summary.json 中 `ok=true`。
+- [x] summary.md 写出 X2 sensor 和 `/scan` publisher。
+- [x] rosbag MCAP 可以用于 Foxglove 回放完整任务。
+- [x] companion、SLAM、SITL 镜像没有 X2 vendor dependency。
 
 ## P8：删除遗留目录和文档修正
 
@@ -254,14 +254,14 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 - [x] 更新 `docs/README.md` 推荐阅读顺序。
 - [x] 更新 X2 设计文档中的模块路径。
 - [x] 更新 NavLab 设计文档中的服务结构图。
-- [ ] 更新 commit message 或 PR 描述，说明这是包结构重构。
+- [x] 更新 commit message 或 PR 描述，说明这是包结构重构。
 
 ### 验收
 
 - [x] 旧 sim node/sensor Python import 不再命中主线代码。
 - [x] 旧扫描桥 service 名不再命中 compose 和主线文档。
 - [x] `ruff` 和 `pytest` 通过。
-- [ ] 关键 smoke 通过。
+- [x] 关键 smoke 通过。
 
 ## P9：拆成 host orchestration 和 container navlab 顶层包
 

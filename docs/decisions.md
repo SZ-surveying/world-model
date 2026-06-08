@@ -355,3 +355,43 @@ Decision: require each P12 live disturbed replay to prove FCU mode stays `GUIDED
 Basis: P12 can otherwise pass scan/SLAM health even if a disturbance profile pushes ArduPilot into RTL/LAND/failsafe and the replay keeps publishing stale or degraded data.
 
 Reason: the mode gate uses `/navlab/exploration/status` first-to-last samples as the conservative P9 replay disturbance window, so pre-replay bootstrap is excluded but the active exploration/motion period is covered. `/ap/v1/status` and the window topic are required in the P12 raw rosbag profile; missing status data, invalid `mode_number`, or any non-GUIDED sample now produces an explicit blocker instead of being hidden inside generic FCU health.
+
+## 2026-06-08: Orchestration gets a backend abstraction before any language rewrite
+
+Decision: keep `orchestration` in Python for now and introduce a `RuntimeBackend` abstraction with Docker and process implementations instead of rewriting the orchestration layer in Go or Rust.
+
+Basis: current P8/P9/P10/P11/P12 gates are already Python-based and their risk is not Python syntax or runtime speed; the real coupling is that service start/stop, rosbag recording, probe execution, logs, and path mapping are scattered across `python_on_whales` calls.
+
+Reason: Docker remains the reproducible default for development and CI, while a process backend is the right shape for the compute box where ROS services may run under host process management or systemd. The backend boundary lets gate logic stay unchanged, makes missing process config fail explicitly, and avoids silent Docker/process fallback that would hide field failures.
+
+## 2026-06-08: Runtime backend and runtime mode are explicit two-lane contracts
+
+Decision: support only `docker + simulation` and `process + real` as valid orchestration runtime combinations.
+
+Basis: codebase research and real-machine migration requirement.
+
+Reason: `backend` describes lifecycle management, while `mode` describes the data/source boundary. The Docker path remains the P8-P12 Gazebo/SITL acceptance mainline, and the process path is reserved for the compute-box / real-drone mainline. `process + simulation` and `docker + real` are rejected for now so host-process debugging cannot be mistaken for real flight, and containerized real hardware cannot silently bypass device, udev, network, and FCU boundary design.
+
+## 2026-06-08: Orchestration task surface moves to built-in runtime tasks
+
+Decision: expose only built-in orchestration tasks for hover, P8 movement/exploration, real preflight, and scan robustness, while keeping old P-stage modules as legacy helper implementation details for now.
+
+Basis: codebase research showed `orchestration/src/tasks` had grown to many phase-specific CLI entries and about 13k lines, with P9/P10/P11/P12 now converging on one tilted-scan robustness concern under explicit runtime mode.
+
+Reason: real/sim is now a runtime mode concern, so individual historical phase commands should not be the operator-facing API. The stable task surface is `hover`, `exploration`, `real-preflight-doctor`, and `scan-robustness`; P9 replay, P10 integrity, P11 stabilization, and P12 disturbance behavior are folded under scan robustness. The old modules remain importable during this transition because P8 and P12 still share helper functions, but `TaskRegistry` and the CLI no longer expose them as runnable top-level tasks.
+
+## 2026-06-08: Legacy P-stage task helpers move out of the task root
+
+Decision: move retained P-stage helper modules under `src.tasks.legacy`, remove their `TaskRegistry` decorators, and delete obsolete `acceptance`, `hover-diagnostic`, and `hover-slam-diagnostic` orchestration task files.
+
+Basis: the built-in task surface now provides the operator API, while code reference checks showed P8 exploration and scan robustness still depend on helper functions from older phase modules.
+
+Reason: deleting all P-stage modules in one step would break the current P8/P12 helper graph, but leaving them in `src.tasks` root made them look like runnable first-class tasks. The legacy subpackage keeps shared helpers available for the transition, makes imports explicit, and lets truly unreferenced old task files leave the tree.
+
+## 2026-06-08: Legacy helpers no longer define runnable task classes
+
+Decision: convert the remaining legacy `*Task` classes into module-level `run_*` helper functions and add a regression test that forbids `TASK_NAME`, `OrchestrationTask`, and `TaskRegistry` usage inside `src.tasks.legacy`.
+
+Basis: the built-in task wrappers still need P8 exploration and P12 scan-robustness implementations, and the P12 live path still needs P11 replay logic, but these are implementation helpers rather than operator-facing tasks.
+
+Reason: keeping old `*Task` classes in legacy made the code look like hidden runnable tasks even though registry and CLI no longer exposed them. Removing the class shells makes the boundary explicit. A dependency graph from `exploration` and `scan-robustness` still reaches all remaining legacy modules, so no additional legacy file is currently safe to delete without deeper helper extraction.

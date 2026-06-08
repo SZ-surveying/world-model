@@ -4,7 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from src.config import RunConfig
-from src.tasks import airframe_disturbance_gate as p12
+from src.tasks.legacy import airframe_disturbance_gate as p12
 
 
 def test_p12_config_loads_airframe_disturbance_sections() -> None:

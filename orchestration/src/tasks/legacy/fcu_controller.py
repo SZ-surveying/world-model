@@ -6,7 +6,7 @@ import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import tomli_w
 from python_on_whales import DockerClient
@@ -15,8 +15,7 @@ from rich.console import Console
 
 from src import host
 from src.config import RunConfig
-from src.tasks.base import OrchestrationTask
-from src.tasks.official_baseline import (
+from src.tasks.legacy.official_baseline import (
     _build_doctor_summary,
     _collect_official_dds_probe,
     _collect_ros_graph,
@@ -24,7 +23,7 @@ from src.tasks.official_baseline import (
     _write_json,
     _write_text,
 )
-from src.tasks.official_maze_x2 import (
+from src.tasks.legacy.official_maze_x2 import (
     GAZEBO_SENSOR_CONTAINER,
     OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
     _capture_container_log,
@@ -36,7 +35,7 @@ from src.tasks.official_maze_x2 import (
     _write_p1_bridge_override,
     _write_p1_vendor_profile,
 )
-from src.tasks.rangefinder_imu import (
+from src.tasks.legacy.rangefinder_imu import (
     OFFICIAL_GAZEBO_IRIS_PARAMS,
     OFFICIAL_IRIS_WITH_LIDAR_MODEL,
     _collect_imu_probe,
@@ -45,8 +44,7 @@ from src.tasks.rangefinder_imu import (
     _write_p2_param_overlay,
     _write_p2_sensor_config,
 )
-from src.tasks.registry import TaskRegistry
-from src.tasks.slam_backend import (
+from src.tasks.legacy.slam_backend import (
     SLAM_BACKEND_CONTAINER,
     _build_p3_doctor_summary,
     _start_p3_slam_container,
@@ -903,7 +901,7 @@ def _message_counts(config: RunConfig) -> dict[str, int]:
     metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
     if not metadata.is_file():
         return {}
-    from src.tasks.official_baseline import _load_rosbag_metadata_counts
+    from src.tasks.legacy.official_baseline import _load_rosbag_metadata_counts
 
     return _load_rosbag_metadata_counts(metadata)
 
@@ -1054,272 +1052,5 @@ def _write_foxglove_notes(config: RunConfig) -> None:
     )
 
 
-@TaskRegistry.register
-@dataclass(frozen=True, slots=True)
-class FcuControllerDoctorTask(OrchestrationTask):
-    TASK_NAME: ClassVar[str] = "fcu-controller-doctor"
-    TASK_DESCRIPTION: ClassVar[str] = "Check P4 FCU controller prerequisites."
-
-    def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
-        console = console or Console()
-        config = RunConfig.from_config(config_path=config_path)
-        artifact_dir = Path(os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_fcu_controller_doctor/{config.run_id}"))
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        runtime_config = artifact_dir / "p4_fcu_controller_runtime.toml"
-        _write_p4_runtime_config(config, runtime_config)
-        console.print("[bold cyan]Checking P4 FCU controller prerequisites[/bold cyan]")
-        summary = _build_p4_doctor_summary(config, runtime_config=runtime_config)
-        _write_json(artifact_dir / "summary.json", summary)
-        color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]P4 FCU controller doctor rc={0 if summary['ok'] else 20}[/{color}]")
-        console.print(f"[bold]Summary:[/bold] {artifact_dir / 'summary.json'}")
-        return 0 if summary["ok"] else 20
 
 
-@TaskRegistry.register
-@dataclass(frozen=True, slots=True)
-class FcuControllerAcceptanceTask(OrchestrationTask):
-    TASK_NAME: ClassVar[str] = "fcu-controller-acceptance"
-    TASK_DESCRIPTION: ClassVar[str] = "Run P4 FCU state machine and unique controller acceptance."
-
-    def run(
-        self,
-        *,
-        config_path: str | Path | None = None,
-        duration_sec: float = 90.0,
-        console: Console | None = None,
-    ) -> int:
-        console = console or Console()
-        config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
-        config.artifact_dir.mkdir(parents=True, exist_ok=True)
-        host._render_run_config(console, config)
-        baseline = config.orchestration.official_baseline
-        p2 = config.orchestration.rangefinder_imu
-        p3 = config.orchestration.slam_backend
-        p4 = config.orchestration.fcu_controller
-        bridge_override = config.artifact_dir / "official_iris_3Dlidar_bridge_p4.yaml"
-        model_overlay = config.artifact_dir / "iris_with_lidar_p4_rangefinder_x2.sdf"
-        param_overlay = config.artifact_dir / "gazebo-iris-p4-rangefinder.parm"
-        sensor_config = config.artifact_dir / "p4_gazebo_sensor_runtime.toml"
-        vendor_profile = config.artifact_dir / "x2_vendor_driver_p4.yaml"
-        slam_runtime_config = config.artifact_dir / "p4_slam_runtime.toml"
-        p4_runtime_config = config.artifact_dir / "p4_fcu_controller_runtime.toml"
-        controller_script = config.artifact_dir / "p4_fcu_controller_runtime.py"
-        _write_p1_bridge_override(bridge_override)
-        _write_p1_vendor_profile(vendor_profile, virtual_serial_link=p2.x2_virtual_serial_link)
-
-        summary: dict[str, Any] | None = None
-        try:
-            model_overlay_summary = _write_p2_model_overlay(config, model_overlay)
-            param_overlay_summary = _write_p2_param_overlay(config, param_overlay)
-            sensor_config_summary = _write_p2_sensor_config(config, sensor_config, vendor_profile=vendor_profile)
-            slam_runtime_summary = _write_p3_slam_runtime_config(config, slam_runtime_config)
-            p4_runtime_summary = _write_p4_runtime_config(config, p4_runtime_config)
-            controller_script_summary = _write_controller_runtime_script(
-                config,
-                controller_script,
-                duration_sec=max(35.0, min(duration_sec, 75.0)),
-            )
-
-            console.print("[bold cyan]Starting official maze + P4 FCU controller gate[/bold cyan]")
-            try:
-                host._compose_stop(config)
-            except DockerException:
-                pass
-            host._start_official_baseline_container(
-                config,
-                volume_overrides=[
-                    (bridge_override.resolve(), OFFICIAL_IRIS_3D_BRIDGE_CONFIG),
-                    (model_overlay.resolve(), OFFICIAL_IRIS_WITH_LIDAR_MODEL),
-                    (param_overlay.resolve(), OFFICIAL_GAZEBO_IRIS_PARAMS),
-                ],
-            )
-            time.sleep(min(max(duration_sec, 1.0), 10.0))
-            _start_gazebo_sensor_container(config, sensor_config=sensor_config)
-            time.sleep(8.0)
-            if p4.require_slam_backend:
-                _start_p3_slam_container(config, runtime_config=slam_runtime_config)
-                time.sleep(4.0)
-            _start_p4_rosbag_recording(config, duration_sec=max(55.0, min(duration_sec, 100.0)))
-            time.sleep(2.0)
-            _start_p4_controller_container(config, script_path=controller_script)
-            time.sleep(12.0)
-
-            topic_info = _collect_topic_info(
-                config,
-                image=baseline.runtime_image,
-                topics=(
-                    p4.cmd_vel_topic,
-                    p4.fcu_state_topic,
-                    p4.controller_status_topic,
-                    p4.setpoint_intent_topic,
-                    p4.setpoint_output_topic,
-                    p4.owner_status_topic,
-                    p4.time_topic,
-                    p4.pose_topic,
-                    p4.twist_topic,
-                    p4.status_topic,
-                    p4.rangefinder_range_topic,
-                    p4.rangefinder_status_topic,
-                    p4.imu_topic,
-                    p4.slam_odom_topic,
-                    p4.slam_status_topic,
-                    "/scan",
-                ),
-            )
-            graph = _collect_ros_graph(config, config.artifact_dir, image=baseline.runtime_image, network="host")
-            probe = _collect_official_dds_probe(config, config.artifact_dir, image=baseline.runtime_image, network="host")
-            rangefinder_probe = _collect_rangefinder_probe(config, image=baseline.runtime_image)
-            imu_probe = _collect_imu_probe(config, image=baseline.runtime_image)
-            controller_summary = _wait_for_controller_summary(config, timeout_sec=max(45.0, duration_sec + 20.0))
-            rosbag_profile = _finish_p4_rosbag_recording(config)
-            counts = _message_counts(config)
-            doctor = _build_p4_doctor_summary(config, runtime_config=p4_runtime_config)
-
-            blockers: list[str] = []
-            if not doctor.get("ok"):
-                blockers.extend(str(item) for item in doctor.get("blockers", []))
-            if not probe.get("result", {}).get("time_received"):
-                blockers.append("official DDS probe did not receive /ap/v1/time")
-            if not probe.get("result", {}).get("prearm_service_available"):
-                blockers.append("official DDS probe did not find /ap/v1/prearm_check service")
-            if p4.control_route == "official_dds" and probe.get("result", {}).get("prearm_success") is not True:
-                blockers.append("official DDS /ap/v1/prearm_check service call did not return success")
-            if not rangefinder_probe.get("result", {}).get("range_received"):
-                blockers.append("P4 did not receive rangefinder")
-            if not imu_probe.get("result", {}).get("received"):
-                blockers.append("P4 did not receive IMU")
-            _append_controller_blockers(blockers=blockers, controller=controller_summary)
-            owner_summary = controller_summary.get("owner", {}) if controller_summary else {}
-            cmd_vel_publishers = topic_info.get(p4.cmd_vel_topic, {}).get("publisher_nodes", [])
-            _append_owner_blockers(
-                blockers=blockers,
-                owner_summary=owner_summary,
-                cmd_vel_publishers=cmd_vel_publishers,
-                p4=p4,
-            )
-            if p4.require_slam_backend:
-                slam_publishers = topic_info.get(p4.slam_odom_topic, {}).get("publisher_nodes", [])
-                if "navlab_cartographer_adapter_node" not in slam_publishers:
-                    blockers.append("P4 required SLAM backend is not publishing /slam/odom")
-            if not rosbag_profile.get("ok"):
-                blockers.append("P4 rosbag profile did not pass")
-            for topic in (
-                p4.fcu_state_topic,
-                p4.controller_status_topic,
-                p4.setpoint_intent_topic,
-                p4.setpoint_output_topic,
-                p4.owner_status_topic,
-            ):
-                if counts.get(topic, 0) <= 0:
-                    blockers.append(f"{topic} was not recorded")
-
-            setpoint_flow = {
-                "intent_topic": p4.setpoint_intent_topic,
-                "output_topic": p4.setpoint_output_topic,
-                "movement_output_topic": p4.cmd_vel_topic,
-                "intent_count": controller_summary.get("counts", {}).get("intent", 0) if controller_summary else 0,
-                "output_count": controller_summary.get("counts", {}).get("output", 0) if controller_summary else 0,
-                "cmd_vel_count": controller_summary.get("counts", {}).get("cmd_vel", 0) if controller_summary else 0,
-                "rejected_before_ready": (
-                    controller_summary.get("counts", {}).get("rejected_before_ready", 0)
-                    if controller_summary
-                    else 0
-                ),
-                "cmd_vel_publishers": cmd_vel_publishers,
-                "uses_gazebo_truth": False,
-                "uses_slam_for_planning": False,
-            }
-            fcu_state = {
-                "time_received": bool(controller_summary.get("counts", {}).get("time", 0) > 0)
-                if controller_summary
-                else False,
-                "prearm_ok": bool(controller_summary.get("command_results", {}).get("prearm_check", {}).get("success"))
-                if controller_summary
-                else False,
-                "guided_ok": bool(controller_summary.get("command_results", {}).get("set_guided", {}).get("success"))
-                if controller_summary
-                else False,
-                "arm_ok": bool(controller_summary.get("command_results", {}).get("arm", {}).get("success"))
-                if controller_summary
-                else False,
-                "takeoff_ok": bool(controller_summary.get("command_results", {}).get("takeoff", {}).get("success"))
-                if controller_summary
-                else False,
-                "local_position_ready": bool(controller_summary.get("counts", {}).get("pose", 0) > 0)
-                if controller_summary
-                else False,
-                "rangefinder_ready": bool(controller_summary.get("counts", {}).get("range", 0) > 0)
-                if controller_summary
-                else False,
-                "imu_ready": bool(controller_summary.get("counts", {}).get("imu", 0) > 0)
-                if controller_summary
-                else False,
-            }
-            p4_summary = {
-                "official_bringup": True,
-                "control_route": p4.control_route,
-                "official_control_claim": p4.control_route == "official_dds",
-                "mavlink_bootstrap_claim": p4.control_route == "mavlink_bootstrap_plus_dds_cmd_vel",
-                "mavlink_bootstrap_endpoint": p4.mavlink_bootstrap_endpoint,
-                "runtime_config": p4_runtime_summary,
-                "controller_script": controller_script_summary,
-                "controller_runtime": controller_summary,
-                "model_overlay": model_overlay_summary,
-                "param_overlay": param_overlay_summary,
-                "sensor_config": sensor_config_summary,
-                "slam_runtime_config": slam_runtime_summary if p4.require_slam_backend else {},
-                "owner": owner_summary,
-                "set_pose_count": owner_summary.get("set_pose_count"),
-                "hover_claim": p4.hover_claim,
-                "exploration_claim": p4.exploration_claim,
-                "slam_hover_claim": "not_evaluated",
-                "rosbag_path": str(config.artifact_dir / "rosbag"),
-                "mcap_path": str(config.artifact_dir / "rosbag" / "rosbag_0.mcap"),
-            }
-            summary = {
-                "ok": not blockers,
-                "blocked": bool(blockers),
-                "blockers": blockers,
-                "p4_fcu_controller": p4_summary,
-                "fcu_state": fcu_state,
-                "setpoint_owner": owner_summary,
-                "setpoint_flow": setpoint_flow,
-                "official_dds_probe": probe,
-                "rangefinder": rangefinder_probe.get("result", {}),
-                "imu": imu_probe.get("result", {}),
-                "topic_info": topic_info,
-                "ros_graph": graph,
-                "message_counts": counts,
-                "rosbag_profile": rosbag_profile,
-                "hover_claim": p4.hover_claim,
-                "exploration_claim": p4.exploration_claim,
-            }
-            _write_json(config.artifact_dir / "summary.json", summary)
-            _write_foxglove_notes(config)
-        finally:
-            host._capture_official_baseline_log(config=config)
-            _capture_container_log(config, container=GAZEBO_SENSOR_CONTAINER, output_name="gazebo_sensor_tail.log")
-            _capture_container_log(config, container=SLAM_BACKEND_CONTAINER, output_name="slam_backend_tail.log")
-            _capture_container_log(config, container=P4_CONTROLLER_CONTAINER, output_name="fcu_controller_tail.log")
-            _capture_container_log(config, container=P4_ROSBAG_CONTAINER, output_name="rosbag_tail.log")
-            _remove_container(P4_ROSBAG_CONTAINER)
-            _remove_container(P4_CONTROLLER_CONTAINER)
-            _remove_container(SLAM_BACKEND_CONTAINER)
-            _remove_container(GAZEBO_SENSOR_CONTAINER)
-            host._remove_official_baseline_container()
-            try:
-                host._compose_stop(config)
-            except DockerException:
-                pass
-        if summary is None:
-            summary = {
-                "ok": False,
-                "blocked": True,
-                "blockers": ["P4 FCU controller acceptance did not produce a summary"],
-            }
-            _write_json(config.artifact_dir / "summary.json", summary)
-        color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]P4 FCU controller acceptance completed rc={0 if summary['ok'] else 30}[/{color}]")
-        console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")
-        return 0 if summary["ok"] else 30

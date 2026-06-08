@@ -1,31 +1,36 @@
 from __future__ import annotations
 
-import json
 import os
 import shlex
 import sys
 import time
-import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import tomli_w
-from python_on_whales import DockerClient
+import tomllib
 from python_on_whales.exceptions import DockerException
 from rich.console import Console
 
 from src import host
 from src.config import RunConfig
-from src.tasks.base import OrchestrationTask
-from src.tasks.exploration_gate import (
+from src.runtime import (
+    SERVICE_ROLE_SIMULATION_ROSBAG,
+    DockerBackend,
+    RuntimeHandle,
+    ServiceSpec,
+    ServiceWaitError,
+    VolumeMount,
+)
+from src.tasks.legacy.exploration_gate import (
     _append_p8_blockers,
     _apply_replay_profile,
     _run_exploration_probe,
     _write_exploration_probe_script,
     _write_p8_runtime_config,
 )
-from src.tasks.fcu_controller import (
+from src.tasks.legacy.fcu_controller import (
     P4_CONTROLLER_CONTAINER,
     _append_controller_blockers,
     _append_owner_blockers,
@@ -34,15 +39,20 @@ from src.tasks.fcu_controller import (
     _write_controller_runtime_script,
     _write_p4_runtime_config,
 )
-from src.tasks.frame_contract import _append_p5_blockers, _run_frame_probe, _write_frame_probe_script, _write_p5_runtime_config
-from src.tasks.official_baseline import (
+from src.tasks.legacy.frame_contract import (
+    _append_p5_blockers,
+    _run_frame_probe,
+    _write_frame_probe_script,
+    _write_p5_runtime_config,
+)
+from src.tasks.legacy.official_baseline import (
     _collect_official_dds_probe,
     _load_rosbag_metadata_counts,
     _validate_official_rosbag_profile,
     _write_json,
     _write_text,
 )
-from src.tasks.official_maze_x2 import (
+from src.tasks.legacy.official_maze_x2 import (
     GAZEBO_SENSOR_CONTAINER,
     OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
     _capture_container_log,
@@ -56,7 +66,7 @@ from src.tasks.official_maze_x2 import (
     _write_p1_bridge_override,
     _write_p1_vendor_profile,
 )
-from src.tasks.rangefinder_imu import (
+from src.tasks.legacy.rangefinder_imu import (
     OFFICIAL_GAZEBO_IRIS_PARAMS,
     OFFICIAL_IRIS_WITH_LIDAR_MODEL,
     _collect_imu_probe,
@@ -64,15 +74,14 @@ from src.tasks.rangefinder_imu import (
     _write_p2_model_overlay,
     _write_p2_param_overlay,
 )
-from src.tasks.registry import TaskRegistry
-from src.tasks.scan_integrity_gate import _motor_output_summary
-from src.tasks.slam_backend import (
+from src.tasks.legacy.scan_integrity_gate import _motor_output_summary
+from src.tasks.legacy.slam_backend import (
     SLAM_BACKEND_CONTAINER,
     _collect_odometry_probe,
     _start_p3_slam_container,
     _write_p3_slam_runtime_config,
 )
-from src.tasks.slam_hover import _baseline_env, _build_p6_doctor_summary, _load_json, _source_official_setup
+from src.tasks.legacy.slam_hover import _baseline_env, _build_p6_doctor_summary, _load_json, _source_official_setup
 
 P11_ROSBAG_CONTAINER = "navlab-p11-rosbag"
 
@@ -219,7 +228,6 @@ def _apply_p11_replay_runtime_profile(config: RunConfig) -> RunConfig:
 
 def _write_p11_sensor_config(config: RunConfig, path: Path, *, vendor_profile: Path) -> dict[str, Any]:
     p2 = config.orchestration.rangefinder_imu
-    p11 = config.orchestration.scan_stabilization
     gate = config.orchestration.scan_stabilization_gate
     data = {
         "gazebo_sensor": {
@@ -301,26 +309,48 @@ def _p11_rosbag_shell_command(config: RunConfig, *, duration_sec: float) -> tupl
         f"ros2 bag record -s mcap -o {shlex.quote(str(container_rosbag))} --topics {topic_args}; "
         "rc=$?; set -e; "
         'if [ "$rc" != "0" ] && [ "$rc" != "124" ] && [ "$rc" != "130" ]; then exit "$rc"; fi; '
-        f"for i in $(seq 1 40); do [ -f {shlex.quote(str(container_rosbag / 'metadata.yaml'))} ] && exit 0; sleep 0.25; done; exit 2"
+        "for i in $(seq 1 40); do "
+        f"[ -f {shlex.quote(str(container_rosbag / 'metadata.yaml'))} ] && exit 0; "
+        "sleep 0.25; done; exit 2"
     )
     return profile_path, required, optional, command
 
 
 def _start_p11_rosbag_recording(config: RunConfig, *, duration_sec: float) -> None:
+    host._assert_runtime_service_role(
+        config,
+        service_name="p11_rosbag",
+        service_role=SERVICE_ROLE_SIMULATION_ROSBAG,
+    )
     _remove_container(P11_ROSBAG_CONTAINER)
     profile_path, required, optional, command = _p11_rosbag_shell_command(config, duration_sec=duration_sec)
     if not command:
-        _write_json(config.artifact_dir / "rosbag_profile_summary.json", {"ok": False, "recorded": False, "profile": str(profile_path), "required_topics": required, "optional_topics": optional, "reason": "rosbag profile missing or empty"})
+        _write_json(
+            config.artifact_dir / "rosbag_profile_summary.json",
+            {
+                "ok": False,
+                "recorded": False,
+                "profile": str(profile_path),
+                "required_topics": required,
+                "optional_topics": optional,
+                "rosbag_backend": "docker",
+                "runtime_mode": host._runtime_mode_name(config),
+                "reason": "rosbag profile missing or empty",
+            },
+        )
         return
-    DockerClient().run(
-        config.orchestration.official_baseline.runtime_image,
-        ["bash", "-lc", _source_official_setup(command)],
-        detach=True,
-        name=P11_ROSBAG_CONTAINER,
-        networks=["host"],
-        volumes=[(Path.cwd(), "/workspace")],
-        workdir="/workspace",
-        envs={**_baseline_env(config), "PYTHONPATH": "/workspace"},
+    DockerBackend().start_service(
+        ServiceSpec(
+            name="p11_rosbag",
+            image=config.orchestration.official_baseline.runtime_image,
+            command=("bash", "-lc", _source_official_setup(command)),
+            container_name=P11_ROSBAG_CONTAINER,
+            networks=("host",),
+            volumes=(VolumeMount(Path.cwd(), "/workspace"),),
+            cwd="/workspace",
+            env={**_baseline_env(config), "PYTHONPATH": "/workspace"},
+            service_role=SERVICE_ROLE_SIMULATION_ROSBAG,
+        )
     )
 
 
@@ -328,26 +358,50 @@ def _finish_p11_rosbag_recording(config: RunConfig) -> dict[str, Any]:
     profile_path = Path(config.scan_stabilization_gate_rosbag_profile)
     required, optional, _topics = _profile_topics(profile_path)
     metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
+    backend = DockerBackend()
+    handle = RuntimeHandle(backend=backend.name, service_name="p11_rosbag", identifier=P11_ROSBAG_CONTAINER, command=())
     try:
-        rc = DockerClient().wait(P11_ROSBAG_CONTAINER)
-    except DockerException as exc:
-        rc = exc.return_code or 1
+        rc = backend.wait(handle)
+    except ServiceWaitError as exc:
+        rc = 1
+        wait_error = str(exc)
+    else:
+        wait_error = ""
     try:
-        output = DockerClient().logs(P11_ROSBAG_CONTAINER, tail=2000)
-    except DockerException as exc:
+        output = backend.logs(handle, tail=2000)
+    except ServiceWaitError as exc:
         output = str(exc)
+    if wait_error:
+        output = f"{output}\n{wait_error}" if output else wait_error
     _write_text(config.artifact_dir / "rosbag_record.txt", str(output))
     for _ in range(160):
         if metadata.is_file():
             break
         time.sleep(0.25)
     if rc != 0 or not metadata.is_file():
-        summary = {"ok": False, "recorded": False, "profile": str(profile_path), "required_topics": required, "optional_topics": optional, "reason": f"rosbag record failed rc={rc}", "record_output": str(output)}
+        summary = {
+            "ok": False,
+            "recorded": False,
+            "profile": str(profile_path),
+            "required_topics": required,
+            "optional_topics": optional,
+            "rosbag_backend": "docker",
+            "runtime_mode": host._runtime_mode_name(config),
+            "reason": f"rosbag record failed rc={rc}",
+            "record_output": str(output),
+        }
         _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
         return summary
-    summary = _validate_official_rosbag_profile(profile=profile_path, metadata=metadata, required=required, optional=optional)
+    summary = _validate_official_rosbag_profile(
+        profile=profile_path,
+        metadata=metadata,
+        required=required,
+        optional=optional,
+    )
     summary["rosbag_path"] = str(config.artifact_dir / "rosbag")
     summary["mcap_path"] = str(config.artifact_dir / "rosbag" / "rosbag_0.mcap")
+    summary["rosbag_backend"] = "docker"
+    summary["runtime_mode"] = host._runtime_mode_name(config)
     _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
     return summary
 
@@ -492,6 +546,10 @@ def _build_p11_doctor_summary(config: RunConfig, *, runtime_config: Path, includ
         "ok": not blockers,
         "blocked": bool(blockers),
         "blockers": blockers,
+        "runtime_backend": host._runtime_backend_name(config),
+        "runtime_mode": host._runtime_mode_name(config),
+        "runtime_backend_summary": host._runtime_backend_summary(config),
+        "source_claims": host._runtime_source_claims(config),
         "p11_scan_stabilization_doctor": {
             "runtime_config": str(runtime_config),
             "runtime_config_sha256": _file_sha256(runtime_config) if runtime_config.is_file() else "",
@@ -695,304 +753,306 @@ def _write_foxglove_notes(config: RunConfig) -> None:
     )
 
 
-@TaskRegistry.register
-@dataclass(frozen=True, slots=True)
-class ScanStabilizationGateDoctorTask(OrchestrationTask):
-    TASK_NAME: ClassVar[str] = "scan-stabilization-gate-doctor"
-    TASK_DESCRIPTION: ClassVar[str] = "Check P11 bounded 2D lidar scan stabilization gate prerequisites."
 
-    def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
-        console = console or Console()
-        config = RunConfig.from_config(config_path=config_path)
-        artifact_dir = Path(os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_scan_stabilization_gate_doctor/{config.run_id}"))
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        config = RunConfig.from_config(config_path=config_path, artifact_dir=artifact_dir, run_id=config.run_id)
-        runtime_config = artifact_dir / "p11_scan_stabilization_gate_runtime.toml"
-        _write_p11_runtime_config(config, runtime_config)
-        console.print("[bold cyan]Checking P11 bounded 2D lidar scan stabilization gate prerequisites[/bold cyan]")
-        summary = _build_p11_doctor_summary(config, runtime_config=runtime_config, include_dependencies=False)
-        _write_json(artifact_dir / "summary.json", summary)
-        color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]P11 scan stabilization gate doctor rc={0 if summary['ok'] else 20}[/{color}]")
-        console.print(f"[bold]Summary:[/bold] {artifact_dir / 'summary.json'}")
-        return 0 if summary["ok"] else 20
+def run_scan_stabilization_gate_doctor(*, config_path: str | Path | None = None, console: Console | None = None) -> int:
+    console = console or Console()
+    config = RunConfig.from_config(config_path=config_path)
+    artifact_dir = Path(os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_scan_stabilization_gate_doctor/{config.run_id}"))
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    config = RunConfig.from_config(config_path=config_path, artifact_dir=artifact_dir, run_id=config.run_id)
+    runtime_config = artifact_dir / "p11_scan_stabilization_gate_runtime.toml"
+    _write_p11_runtime_config(config, runtime_config)
+    console.print("[bold cyan]Checking P11 bounded 2D lidar scan stabilization gate prerequisites[/bold cyan]")
+    summary = _build_p11_doctor_summary(config, runtime_config=runtime_config, include_dependencies=False)
+    _write_json(artifact_dir / "summary.json", summary)
+    color = "green" if summary["ok"] else "red"
+    console.print(f"[{color}]P11 scan stabilization gate doctor rc={0 if summary['ok'] else 20}[/{color}]")
+    console.print(f"[bold]Summary:[/bold] {artifact_dir / 'summary.json'}")
+    return 0 if summary["ok"] else 20
 
 
-@TaskRegistry.register
-@dataclass(frozen=True, slots=True)
-class ScanStabilizationGateAcceptanceTask(OrchestrationTask):
-    TASK_NAME: ClassVar[str] = "scan-stabilization-gate-acceptance"
-    TASK_DESCRIPTION: ClassVar[str] = "Run P11 bounded 2D lidar scan stabilization gate acceptance."
 
-    def run(self, *, config_path: str | Path | None = None, duration_sec: float = 240.0, console: Console | None = None) -> int:
-        console = console or Console()
-        config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
-        config = _apply_replay_profile(config, "display")
-        config = _apply_p11_replay_runtime_profile(config)
-        config.artifact_dir.mkdir(parents=True, exist_ok=True)
-        host._render_run_config(console, config)
-        baseline = config.orchestration.official_baseline
-        p2 = config.orchestration.rangefinder_imu
-        p3 = config.orchestration.slam_backend
-        p4 = config.orchestration.fcu_controller
-        p5 = config.orchestration.frame_contract
-        p8 = config.orchestration.exploration_gate
-        p11 = config.orchestration.scan_stabilization
-        gate = config.orchestration.scan_stabilization_gate
-        bridge_override = config.artifact_dir / "official_iris_3Dlidar_bridge_p11.yaml"
-        model_overlay = config.artifact_dir / "iris_with_lidar_p11_rangefinder_x2.sdf"
-        param_overlay = config.artifact_dir / "gazebo-iris-p11-rangefinder.parm"
-        sensor_config = config.artifact_dir / "p11_gazebo_sensor_runtime.toml"
-        vendor_profile = config.artifact_dir / "x2_vendor_driver_p11.yaml"
-        slam_runtime_config = config.artifact_dir / "p11_slam_runtime.toml"
-        p4_runtime_config = config.artifact_dir / "p11_fcu_controller_runtime.toml"
-        p5_runtime_config = config.artifact_dir / "p11_frame_contract_runtime.toml"
-        p8_runtime_config = config.artifact_dir / "p11_replay_runtime.toml"
-        p11_runtime_config = config.artifact_dir / "p11_scan_stabilization_gate_runtime.toml"
-        controller_script = config.artifact_dir / "p11_fcu_controller_runtime.py"
-        frame_probe_script = config.artifact_dir / "p11_frame_contract_probe.py"
-        exploration_probe_script = config.artifact_dir / "p11_representative_replay_probe.py"
-        _write_p1_bridge_override(bridge_override)
-        _write_p1_vendor_profile(vendor_profile, virtual_serial_link=p2.x2_virtual_serial_link)
-        summary: dict[str, Any] | None = None
+def run_scan_stabilization_gate_acceptance(*, config_path: str | Path | None = None, duration_sec: float = 240.0, console: Console | None = None) -> int:
+    console = console or Console()
+    config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
+    config = _apply_replay_profile(config, "display")
+    config = _apply_p11_replay_runtime_profile(config)
+    config.artifact_dir.mkdir(parents=True, exist_ok=True)
+    host._render_run_config(console, config)
+    baseline = config.orchestration.official_baseline
+    p2 = config.orchestration.rangefinder_imu
+    p3 = config.orchestration.slam_backend
+    p4 = config.orchestration.fcu_controller
+    p5 = config.orchestration.frame_contract
+    p8 = config.orchestration.exploration_gate
+    p11 = config.orchestration.scan_stabilization
+    gate = config.orchestration.scan_stabilization_gate
+    bridge_override = config.artifact_dir / "official_iris_3Dlidar_bridge_p11.yaml"
+    model_overlay = config.artifact_dir / "iris_with_lidar_p11_rangefinder_x2.sdf"
+    param_overlay = config.artifact_dir / "gazebo-iris-p11-rangefinder.parm"
+    sensor_config = config.artifact_dir / "p11_gazebo_sensor_runtime.toml"
+    vendor_profile = config.artifact_dir / "x2_vendor_driver_p11.yaml"
+    slam_runtime_config = config.artifact_dir / "p11_slam_runtime.toml"
+    p4_runtime_config = config.artifact_dir / "p11_fcu_controller_runtime.toml"
+    p5_runtime_config = config.artifact_dir / "p11_frame_contract_runtime.toml"
+    p8_runtime_config = config.artifact_dir / "p11_replay_runtime.toml"
+    p11_runtime_config = config.artifact_dir / "p11_scan_stabilization_gate_runtime.toml"
+    controller_script = config.artifact_dir / "p11_fcu_controller_runtime.py"
+    frame_probe_script = config.artifact_dir / "p11_frame_contract_probe.py"
+    exploration_probe_script = config.artifact_dir / "p11_representative_replay_probe.py"
+    _write_p1_bridge_override(bridge_override)
+    _write_p1_vendor_profile(vendor_profile, virtual_serial_link=p2.x2_virtual_serial_link)
+    summary: dict[str, Any] | None = None
+    try:
+        model_overlay_summary = _write_p2_model_overlay(config, model_overlay)
+        param_overlay_summary = _write_p2_param_overlay(config, param_overlay)
+        sensor_config_summary = _write_p11_sensor_config(config, sensor_config, vendor_profile=vendor_profile)
+        slam_runtime_summary = _write_p3_slam_runtime_config(config, slam_runtime_config)
+        p4_runtime_summary = _write_p4_runtime_config(config, p4_runtime_config)
+        p5_runtime_summary = _write_p5_runtime_config(config, p5_runtime_config)
+        p8_runtime_summary = _write_p8_runtime_config(config, p8_runtime_config)
+        p11_runtime_summary = _write_p11_runtime_config(config, p11_runtime_config)
+        controller_script_summary = _write_controller_runtime_script(config, controller_script, duration_sec=max(260.0, duration_sec + 60.0), hold_after_ready_sec=max(220.0, duration_sec), enable_motion_intent_control=True, hover_status_topic=p8.hover_status_topic)
+        frame_probe_script_summary = _write_frame_probe_script(config, frame_probe_script)
+        exploration_probe_script_summary = _write_exploration_probe_script(config, exploration_probe_script)
+
+        console.print("[bold cyan]Starting official maze + P11 scan stabilization gate profile=display[/bold cyan]")
         try:
-            model_overlay_summary = _write_p2_model_overlay(config, model_overlay)
-            param_overlay_summary = _write_p2_param_overlay(config, param_overlay)
-            sensor_config_summary = _write_p11_sensor_config(config, sensor_config, vendor_profile=vendor_profile)
-            slam_runtime_summary = _write_p3_slam_runtime_config(config, slam_runtime_config)
-            p4_runtime_summary = _write_p4_runtime_config(config, p4_runtime_config)
-            p5_runtime_summary = _write_p5_runtime_config(config, p5_runtime_config)
-            p8_runtime_summary = _write_p8_runtime_config(config, p8_runtime_config)
-            p11_runtime_summary = _write_p11_runtime_config(config, p11_runtime_config)
-            controller_script_summary = _write_controller_runtime_script(config, controller_script, duration_sec=max(260.0, duration_sec + 60.0), hold_after_ready_sec=max(220.0, duration_sec), enable_motion_intent_control=True, hover_status_topic=p8.hover_status_topic)
-            frame_probe_script_summary = _write_frame_probe_script(config, frame_probe_script)
-            exploration_probe_script_summary = _write_exploration_probe_script(config, exploration_probe_script)
-
-            console.print("[bold cyan]Starting official maze + P11 scan stabilization gate profile=display[/bold cyan]")
-            try:
-                host._compose_stop(config)
-            except DockerException:
-                pass
-            official_volume_overrides = [
-                (bridge_override.resolve(), OFFICIAL_IRIS_3D_BRIDGE_CONFIG),
-                (model_overlay.resolve(), OFFICIAL_IRIS_WITH_LIDAR_MODEL),
-                (param_overlay.resolve(), OFFICIAL_GAZEBO_IRIS_PARAMS),
-            ]
-            host._start_official_baseline_container(config, volume_overrides=official_volume_overrides)
-            time.sleep(min(max(duration_sec, 1.0), 10.0))
-            _start_gazebo_sensor_container(config, sensor_config=sensor_config)
-            time.sleep(10.0)
-            rangefinder_preflight = _collect_p11_rangefinder_preflight(
-                config=config,
-                image=baseline.runtime_image,
-                sensor_config=sensor_config,
-                official_volume_overrides=official_volume_overrides,
-                console=console,
-            )
-            lidar_preflight, x2_preflight = _collect_p11_lidar_preflight(
-                config=config,
-                image=baseline.runtime_image,
-                sensor_config=sensor_config,
-                official_volume_overrides=official_volume_overrides,
-                console=console,
-            )
-            rangefinder_preflight = _collect_rangefinder_probe(
-                config,
-                image=baseline.runtime_image,
-                artifact_name="p11_rangefinder_preflight_final_probe.txt",
-            )
-            _start_p3_slam_container(config, runtime_config=slam_runtime_config)
-            time.sleep(4.0)
-            _start_p11_rosbag_recording(config, duration_sec=max(180.0, min(duration_sec, 260.0)))
-            time.sleep(2.0)
-            _start_p4_controller_container(config, script_path=controller_script)
-            frame_summary = _run_frame_probe(config, script_path=frame_probe_script)
-            exploration_summary = _run_exploration_probe(config, script_path=exploration_probe_script)
-            latest_status = _latest_stabilization_status(config)
-            fault_profile = _run_p11_fault_profile(config)
-            rosbag_profile = _finish_p11_rosbag_recording(config)
-            controller_summary = _wait_for_controller_summary(
-                config,
-                timeout_sec=gate.controller_summary_timeout_sec,
-            )
-            counts = _message_counts(config)
-            graph = _collect_official_dds_probe(config, config.artifact_dir, image=baseline.runtime_image, network="host")
-            x2_status = _collect_x2_status(config, image=baseline.runtime_image)
-            rangefinder_probe = _collect_rangefinder_probe(config, image=baseline.runtime_image)
-            imu_probe = _collect_imu_probe(config, image=baseline.runtime_image)
-            slam_odom_probe = _collect_odometry_probe(config, image=baseline.runtime_image, topic=p3.slam_odom_topic, artifact_name="p11_slam_odom_probe.txt")
-            topic_info = _collect_topic_info(
-                config,
-                image=baseline.runtime_image,
-                topics=(
-                    p11.output_scan_topic,
-                    gate.raw_scan_topic,
-                    gate.normalized_scan_topic,
-                    p11.status_topic,
-                    p11.events_topic,
-                    gate.scan_source_topic,
-                    gate.x2_status_topic,
-                    p11.attitude_source_topic,
-                    p11.range_topic,
-                    p3.slam_odom_topic,
-                    p3.slam_status_topic,
-                    p3.external_nav_status_topic,
-                    p8.map_topic,
-                    p4.cmd_vel_topic,
-                    p4.owner_status_topic,
-                    p8.exploration_status_topic,
-                    p8.exploration_goal_topic,
-                    p8.exploration_coverage_topic,
-                ),
-                transient_topics=(p4.cmd_vel_topic, p4.owner_status_topic, p8.exploration_status_topic, p8.exploration_goal_topic, p8.exploration_coverage_topic),
-            )
-            blockers = _validate_p11_config(config)
-            if not graph.get("result", {}).get("time_received"):
-                blockers.append("official DDS probe did not receive /ap/v1/time")
-            x2_sample = x2_status.get("result", {}).get("sample") or {}
-            if not x2_status.get("result", {}).get("received"):
-                blockers.append("X2 status probe did not receive /sim/x2/status")
-            if x2_sample.get("scan_source") != "gazebo_ideal":
-                blockers.append("X2 emulator is not consuming Gazebo lidar input")
-            if not lidar_preflight.get("result", {}).get("received"):
-                blockers.append("P11 lidar preflight did not receive Gazebo lidar data")
-            if not _x2_status_uses_gazebo_lidar(x2_preflight):
-                blockers.append("P11 X2 preflight did not observe Gazebo lidar input")
-            if not rangefinder_preflight.get("result", {}).get("range_received"):
-                blockers.append("P11 rangefinder preflight did not receive range data")
-            if not rangefinder_probe.get("result", {}).get("range_received"):
-                blockers.append("P11 did not receive rangefinder")
-            if not imu_probe.get("result", {}).get("received"):
-                blockers.append("P11 did not receive IMU")
-            if not fault_profile.get("ok"):
-                blockers.append("scan_stabilization_fault_profile_not_run")
-            _append_controller_blockers(blockers=blockers, controller=controller_summary)
-            owner_summary = exploration_summary.get("owner", {}) if exploration_summary else {}
-            if not owner_summary and controller_summary:
-                owner_summary = controller_summary.get("owner", {})
-            cmd_vel_publishers = topic_info.get(p4.cmd_vel_topic, {}).get("publisher_nodes", [])
-            _append_owner_blockers(blockers=blockers, owner_summary=owner_summary, cmd_vel_publishers=cmd_vel_publishers, p4=p4)
-            _append_p5_blockers(blockers=blockers, frame_summary=frame_summary, rosbag_profile={"ok": True}, counts={p5.status_topic: max(1, counts.get(p5.status_topic, 0))}, p5=p5)
-            _append_p8_blockers(blockers=blockers, exploration_summary=exploration_summary, rosbag_profile={"ok": True}, counts=counts, p8=p8)
-            _append_p11_blockers(blockers=blockers, config=config, counts=counts, topic_info=topic_info, latest_status=latest_status, rosbag_profile=rosbag_profile)
-            motor_output = _motor_output_summary(ros_graph={})
-            owner = owner_summary or {}
-            candidate_count = int(latest_status.get("candidate_validated_scan_count") or counts.get(p11.output_scan_topic, 0))
-            baseline_count = int(latest_status.get("baseline_drop_only_validated_scan_count") or 0)
-            summary = {
-                "ok": not blockers,
-                "blocked": bool(blockers),
-                "blockers": blockers,
-                "p11_scan_stabilization_gate": {
-                    "runtime_config": p11_runtime_summary,
-                    "sensor_config": sensor_config_summary,
-                    "model_overlay": model_overlay_summary,
-                    "param_overlay": param_overlay_summary,
-                    "slam_runtime_config": slam_runtime_summary,
-                    "p4_runtime_config": p4_runtime_summary,
-                    "p5_runtime_config": p5_runtime_summary,
-                    "p8_replay_runtime_config": p8_runtime_summary,
-                    "controller_script": controller_script_summary,
-                    "frame_probe_script": frame_probe_script_summary,
-                    "exploration_probe_script": exploration_probe_script_summary,
-                    "controller_runtime": controller_summary,
-                    "motion_profile": gate.motion_profile,
-                    "baseline_mode": gate.baseline_mode,
-                    "candidate_mode": gate.candidate_mode,
-                    "comparison_method": "same_run_drop_only_estimate_from_passthrough_count",
-                    "rosbag_path": str(config.artifact_dir / "rosbag"),
-                    "mcap_path": str(config.artifact_dir / "rosbag" / "rosbag_0.mcap"),
-                },
-                "scan_stabilization_claim": gate.scan_stabilization_claim,
+            host._compose_stop(config)
+        except DockerException:
+            pass
+        official_volume_overrides = [
+            (bridge_override.resolve(), OFFICIAL_IRIS_3D_BRIDGE_CONFIG),
+            (model_overlay.resolve(), OFFICIAL_IRIS_WITH_LIDAR_MODEL),
+            (param_overlay.resolve(), OFFICIAL_GAZEBO_IRIS_PARAMS),
+        ]
+        host._start_official_baseline_container(config, volume_overrides=official_volume_overrides)
+        time.sleep(min(max(duration_sec, 1.0), 10.0))
+        _start_gazebo_sensor_container(config, sensor_config=sensor_config)
+        time.sleep(10.0)
+        rangefinder_preflight = _collect_p11_rangefinder_preflight(
+            config=config,
+            image=baseline.runtime_image,
+            sensor_config=sensor_config,
+            official_volume_overrides=official_volume_overrides,
+            console=console,
+        )
+        lidar_preflight, x2_preflight = _collect_p11_lidar_preflight(
+            config=config,
+            image=baseline.runtime_image,
+            sensor_config=sensor_config,
+            official_volume_overrides=official_volume_overrides,
+            console=console,
+        )
+        rangefinder_preflight = _collect_rangefinder_probe(
+            config,
+            image=baseline.runtime_image,
+            artifact_name="p11_rangefinder_preflight_final_probe.txt",
+        )
+        _start_p3_slam_container(config, runtime_config=slam_runtime_config)
+        time.sleep(4.0)
+        _start_p11_rosbag_recording(config, duration_sec=max(180.0, min(duration_sec, 260.0)))
+        time.sleep(2.0)
+        _start_p4_controller_container(config, script_path=controller_script)
+        frame_summary = _run_frame_probe(config, script_path=frame_probe_script)
+        exploration_summary = _run_exploration_probe(config, script_path=exploration_probe_script)
+        latest_status = _latest_stabilization_status(config)
+        fault_profile = _run_p11_fault_profile(config)
+        rosbag_profile = _finish_p11_rosbag_recording(config)
+        controller_summary = _wait_for_controller_summary(
+            config,
+            timeout_sec=gate.controller_summary_timeout_sec,
+        )
+        counts = _message_counts(config)
+        graph = _collect_official_dds_probe(config, config.artifact_dir, image=baseline.runtime_image, network="host")
+        x2_status = _collect_x2_status(config, image=baseline.runtime_image)
+        rangefinder_probe = _collect_rangefinder_probe(config, image=baseline.runtime_image)
+        imu_probe = _collect_imu_probe(config, image=baseline.runtime_image)
+        slam_odom_probe = _collect_odometry_probe(config, image=baseline.runtime_image, topic=p3.slam_odom_topic, artifact_name="p11_slam_odom_probe.txt")
+        topic_info = _collect_topic_info(
+            config,
+            image=baseline.runtime_image,
+            topics=(
+                p11.output_scan_topic,
+                gate.raw_scan_topic,
+                gate.normalized_scan_topic,
+                p11.status_topic,
+                p11.events_topic,
+                gate.scan_source_topic,
+                gate.x2_status_topic,
+                p11.attitude_source_topic,
+                p11.range_topic,
+                p3.slam_odom_topic,
+                p3.slam_status_topic,
+                p3.external_nav_status_topic,
+                p8.map_topic,
+                p4.cmd_vel_topic,
+                p4.owner_status_topic,
+                p8.exploration_status_topic,
+                p8.exploration_goal_topic,
+                p8.exploration_coverage_topic,
+            ),
+            transient_topics=(p4.cmd_vel_topic, p4.owner_status_topic, p8.exploration_status_topic, p8.exploration_goal_topic, p8.exploration_coverage_topic),
+        )
+        blockers = _validate_p11_config(config)
+        if not graph.get("result", {}).get("time_received"):
+            blockers.append("official DDS probe did not receive /ap/v1/time")
+        x2_sample = x2_status.get("result", {}).get("sample") or {}
+        if not x2_status.get("result", {}).get("received"):
+            blockers.append("X2 status probe did not receive /sim/x2/status")
+        if x2_sample.get("scan_source") != "gazebo_ideal":
+            blockers.append("X2 emulator is not consuming Gazebo lidar input")
+        if not lidar_preflight.get("result", {}).get("received"):
+            blockers.append("P11 lidar preflight did not receive Gazebo lidar data")
+        if not _x2_status_uses_gazebo_lidar(x2_preflight):
+            blockers.append("P11 X2 preflight did not observe Gazebo lidar input")
+        if not rangefinder_preflight.get("result", {}).get("range_received"):
+            blockers.append("P11 rangefinder preflight did not receive range data")
+        if not rangefinder_probe.get("result", {}).get("range_received"):
+            blockers.append("P11 did not receive rangefinder")
+        if not imu_probe.get("result", {}).get("received"):
+            blockers.append("P11 did not receive IMU")
+        if not fault_profile.get("ok"):
+            blockers.append("scan_stabilization_fault_profile_not_run")
+        _append_controller_blockers(blockers=blockers, controller=controller_summary)
+        owner_summary = exploration_summary.get("owner", {}) if exploration_summary else {}
+        if not owner_summary and controller_summary:
+            owner_summary = controller_summary.get("owner", {})
+        cmd_vel_publishers = topic_info.get(p4.cmd_vel_topic, {}).get("publisher_nodes", [])
+        _append_owner_blockers(blockers=blockers, owner_summary=owner_summary, cmd_vel_publishers=cmd_vel_publishers, p4=p4)
+        _append_p5_blockers(blockers=blockers, frame_summary=frame_summary, rosbag_profile={"ok": True}, counts={p5.status_topic: max(1, counts.get(p5.status_topic, 0))}, p5=p5)
+        _append_p8_blockers(blockers=blockers, exploration_summary=exploration_summary, rosbag_profile={"ok": True}, counts=counts, p8=p8)
+        _append_p11_blockers(blockers=blockers, config=config, counts=counts, topic_info=topic_info, latest_status=latest_status, rosbag_profile=rosbag_profile)
+        motor_output = _motor_output_summary(ros_graph={})
+        owner = owner_summary or {}
+        candidate_count = int(latest_status.get("candidate_validated_scan_count") or counts.get(p11.output_scan_topic, 0))
+        baseline_count = int(latest_status.get("baseline_drop_only_validated_scan_count") or 0)
+        summary = {
+            "ok": not blockers,
+            "blocked": bool(blockers),
+            "blockers": blockers,
+            "runtime_backend": host._runtime_backend_name(config),
+            "runtime_mode": host._runtime_mode_name(config),
+            "runtime_backend_summary": host._runtime_backend_summary(config),
+            "source_claims": host._runtime_source_claims(config),
+            "p11_scan_stabilization_gate": {
+                "runtime_config": p11_runtime_summary,
+                "sensor_config": sensor_config_summary,
+                "model_overlay": model_overlay_summary,
+                "param_overlay": param_overlay_summary,
+                "slam_runtime_config": slam_runtime_summary,
+                "p4_runtime_config": p4_runtime_summary,
+                "p5_runtime_config": p5_runtime_summary,
+                "p8_replay_runtime_config": p8_runtime_summary,
+                "controller_script": controller_script_summary,
+                "frame_probe_script": frame_probe_script_summary,
+                "exploration_probe_script": exploration_probe_script_summary,
+                "controller_runtime": controller_summary,
                 "motion_profile": gate.motion_profile,
-                "uses_gazebo_truth_as_input": p11.uses_gazebo_truth_as_input,
-                "uses_official_maze_as_input": gate.uses_official_maze_as_input,
-                "official_maze_layer_role": gate.official_maze_layer_role,
-                "scan_stabilization": {
-                    "mode": p11.mode,
-                    "input_scan_topic": p11.input_scan_topic,
-                    "output_scan_topic": p11.output_scan_topic,
-                    "status_topic": p11.status_topic,
-                    "runtime_config": _p11_runtime_config(config),
-                    "latest_status": latest_status,
-                    "passthrough_scan_count": latest_status.get("passthrough_scan_count"),
-                    "compensated_scan_count": latest_status.get("compensated_scan_count"),
-                    "dropped_scan_count": latest_status.get("dropped_scan_count"),
-                    "rejected_beam_count": latest_status.get("rejected_beam_count"),
-                    "retained_beam_ratio": latest_status.get("retained_beam_ratio"),
-                    "rejected_beam_ratio": latest_status.get("rejected_beam_ratio"),
-                    "max_vertical_projection_error_m": latest_status.get("max_vertical_projection_error_m"),
-                    "mean_vertical_projection_error_m": latest_status.get("mean_vertical_projection_error_m"),
-                    "max_observed_tilt_deg": latest_status.get("max_observed_tilt_deg"),
-                    "max_compensated_tilt_deg": latest_status.get("max_compensated_tilt_deg"),
-                    "compensation_not_triggered_reason": _p11_compensation_not_triggered_reason(config, latest_status),
-                    "floor_hit_rejected_count": latest_status.get("floor_hit_rejected_count"),
-                    "false_wall_risk_ok": latest_status.get("false_wall_risk_ok"),
-                    "hard_tilt_dropped": latest_status.get("hard_tilt_dropped"),
-                },
-                "scan_stabilization_fault_profile": fault_profile,
-                "baseline_comparison": {
-                    "baseline_mode": gate.baseline_mode,
-                    "candidate_mode": gate.candidate_mode,
-                    "comparison_method": "same_run_drop_only_estimate_from_passthrough_count",
-                    "baseline_validated_scan_count": baseline_count,
-                    "candidate_validated_scan_count": candidate_count,
-                    "scan_availability_improved": candidate_count >= baseline_count,
-                    "slam_health_regressed": False,
-                    "map_artifact_risk_ok": bool(latest_status.get("false_wall_risk_ok", True)),
-                },
-                "p8_representative_replay": exploration_summary,
-                "p6_hover_prerequisite": exploration_summary.get("p6_hover_prerequisite", {}),
-                "p7_motion_prerequisite": exploration_summary.get("p7_motion_prerequisite", {}),
-                "coverage": exploration_summary.get("coverage", {}),
-                "safety": exploration_summary.get("safety", {}),
-                "slam": {"odom_healthy": exploration_summary.get("slam_odom", {}).get("ok"), "map_growth_ok": exploration_summary.get("map", {}).get("growth_ok")},
-                "slam_odom_probe": slam_odom_probe.get("result", {}),
-                "external_nav": exploration_summary.get("external_nav", {}),
-                "fcu": exploration_summary.get("fcu", {}),
-                "owner": owner,
-                "truth_control": {"set_pose_count": int(owner.get("set_pose_count", -1)), "gazebo_truth_as_input": False},
-                "motor_output": motor_output,
-                "motor_output_claim": motor_output["motor_output_claim"],
-                "frame_contract": frame_summary,
-                "official_dds_probe": graph,
-                "x2_status": x2_status.get("result", {}),
-                "x2_preflight": x2_preflight.get("result", {}),
-                "lidar_preflight": lidar_preflight.get("result", {}),
-                "rangefinder_probe": rangefinder_probe.get("result", {}),
-                "rangefinder_preflight": rangefinder_preflight.get("result", {}),
-                "imu_probe": imu_probe.get("result", {}),
-                "topic_info": topic_info,
-                "message_counts": counts,
-                "rosbag_profile": rosbag_profile,
-            }
-            schema_blockers = _p11_summary_schema_blockers(summary)
-            if schema_blockers:
-                blockers.extend(schema_blockers)
-                summary["ok"] = False
-                summary["blocked"] = True
-                summary["blockers"] = blockers
-            _write_json(config.artifact_dir / "summary.json", summary)
-            _write_foxglove_notes(config)
-        finally:
-            host._capture_official_baseline_log(config=config)
-            _capture_container_log(config, container=GAZEBO_SENSOR_CONTAINER, output_name="gazebo_sensor_tail.log")
-            _capture_container_log(config, container=SLAM_BACKEND_CONTAINER, output_name="slam_backend_tail.log")
-            _capture_container_log(config, container=P4_CONTROLLER_CONTAINER, output_name="fcu_controller_tail.log")
-            _capture_container_log(config, container=P11_ROSBAG_CONTAINER, output_name="rosbag_tail.log")
-            _remove_container(P11_ROSBAG_CONTAINER)
-            _remove_container(P4_CONTROLLER_CONTAINER)
-            _remove_container(SLAM_BACKEND_CONTAINER)
-            _remove_container(GAZEBO_SENSOR_CONTAINER)
-            host._remove_official_baseline_container()
-            try:
-                host._compose_stop(config)
-            except DockerException:
-                pass
-        if summary is None:
-            summary = {"ok": False, "blocked": True, "blockers": ["P11 scan stabilization gate acceptance did not produce a summary"]}
-            _write_json(config.artifact_dir / "summary.json", summary)
-        color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]P11 scan stabilization gate acceptance completed rc={0 if summary['ok'] else 30}[/{color}]")
-        console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")
-        return 0 if summary["ok"] else 30
+                "baseline_mode": gate.baseline_mode,
+                "candidate_mode": gate.candidate_mode,
+                "comparison_method": "same_run_drop_only_estimate_from_passthrough_count",
+                "rosbag_path": str(config.artifact_dir / "rosbag"),
+                "mcap_path": str(config.artifact_dir / "rosbag" / "rosbag_0.mcap"),
+            },
+            "scan_stabilization_claim": gate.scan_stabilization_claim,
+            "motion_profile": gate.motion_profile,
+            "uses_gazebo_truth_as_input": p11.uses_gazebo_truth_as_input,
+            "uses_official_maze_as_input": gate.uses_official_maze_as_input,
+            "official_maze_layer_role": gate.official_maze_layer_role,
+            "scan_stabilization": {
+                "mode": p11.mode,
+                "input_scan_topic": p11.input_scan_topic,
+                "output_scan_topic": p11.output_scan_topic,
+                "status_topic": p11.status_topic,
+                "runtime_config": _p11_runtime_config(config),
+                "latest_status": latest_status,
+                "passthrough_scan_count": latest_status.get("passthrough_scan_count"),
+                "compensated_scan_count": latest_status.get("compensated_scan_count"),
+                "dropped_scan_count": latest_status.get("dropped_scan_count"),
+                "rejected_beam_count": latest_status.get("rejected_beam_count"),
+                "retained_beam_ratio": latest_status.get("retained_beam_ratio"),
+                "rejected_beam_ratio": latest_status.get("rejected_beam_ratio"),
+                "max_vertical_projection_error_m": latest_status.get("max_vertical_projection_error_m"),
+                "mean_vertical_projection_error_m": latest_status.get("mean_vertical_projection_error_m"),
+                "max_observed_tilt_deg": latest_status.get("max_observed_tilt_deg"),
+                "max_compensated_tilt_deg": latest_status.get("max_compensated_tilt_deg"),
+                "compensation_not_triggered_reason": _p11_compensation_not_triggered_reason(config, latest_status),
+                "floor_hit_rejected_count": latest_status.get("floor_hit_rejected_count"),
+                "false_wall_risk_ok": latest_status.get("false_wall_risk_ok"),
+                "hard_tilt_dropped": latest_status.get("hard_tilt_dropped"),
+            },
+            "scan_stabilization_fault_profile": fault_profile,
+            "baseline_comparison": {
+                "baseline_mode": gate.baseline_mode,
+                "candidate_mode": gate.candidate_mode,
+                "comparison_method": "same_run_drop_only_estimate_from_passthrough_count",
+                "baseline_validated_scan_count": baseline_count,
+                "candidate_validated_scan_count": candidate_count,
+                "scan_availability_improved": candidate_count >= baseline_count,
+                "slam_health_regressed": False,
+                "map_artifact_risk_ok": bool(latest_status.get("false_wall_risk_ok", True)),
+            },
+            "p8_representative_replay": exploration_summary,
+            "p6_hover_prerequisite": exploration_summary.get("p6_hover_prerequisite", {}),
+            "p7_motion_prerequisite": exploration_summary.get("p7_motion_prerequisite", {}),
+            "coverage": exploration_summary.get("coverage", {}),
+            "safety": exploration_summary.get("safety", {}),
+            "slam": {"odom_healthy": exploration_summary.get("slam_odom", {}).get("ok"), "map_growth_ok": exploration_summary.get("map", {}).get("growth_ok")},
+            "slam_odom_probe": slam_odom_probe.get("result", {}),
+            "external_nav": exploration_summary.get("external_nav", {}),
+            "fcu": exploration_summary.get("fcu", {}),
+            "owner": owner,
+            "truth_control": {"set_pose_count": int(owner.get("set_pose_count", -1)), "gazebo_truth_as_input": False},
+            "motor_output": motor_output,
+            "motor_output_claim": motor_output["motor_output_claim"],
+            "frame_contract": frame_summary,
+            "official_dds_probe": graph,
+            "x2_status": x2_status.get("result", {}),
+            "x2_preflight": x2_preflight.get("result", {}),
+            "lidar_preflight": lidar_preflight.get("result", {}),
+            "rangefinder_probe": rangefinder_probe.get("result", {}),
+            "rangefinder_preflight": rangefinder_preflight.get("result", {}),
+            "imu_probe": imu_probe.get("result", {}),
+            "topic_info": topic_info,
+            "message_counts": counts,
+            "rosbag_profile": rosbag_profile,
+        }
+        schema_blockers = _p11_summary_schema_blockers(summary)
+        if schema_blockers:
+            blockers.extend(schema_blockers)
+            summary["ok"] = False
+            summary["blocked"] = True
+            summary["blockers"] = blockers
+        _write_json(config.artifact_dir / "summary.json", summary)
+        _write_foxglove_notes(config)
+    finally:
+        host._capture_official_baseline_log(config=config)
+        _capture_container_log(config, container=GAZEBO_SENSOR_CONTAINER, output_name="gazebo_sensor_tail.log")
+        _capture_container_log(config, container=SLAM_BACKEND_CONTAINER, output_name="slam_backend_tail.log")
+        _capture_container_log(config, container=P4_CONTROLLER_CONTAINER, output_name="fcu_controller_tail.log")
+        _capture_container_log(config, container=P11_ROSBAG_CONTAINER, output_name="rosbag_tail.log")
+        _remove_container(P11_ROSBAG_CONTAINER)
+        _remove_container(P4_CONTROLLER_CONTAINER)
+        _remove_container(SLAM_BACKEND_CONTAINER)
+        _remove_container(GAZEBO_SENSOR_CONTAINER)
+        host._remove_official_baseline_container()
+        try:
+            host._compose_stop(config)
+        except DockerException:
+            pass
+    if summary is None:
+        summary = {
+            "ok": False,
+            "blocked": True,
+            "blockers": ["P11 scan stabilization gate acceptance did not produce a summary"],
+            "runtime_backend": host._runtime_backend_name(config),
+            "runtime_mode": host._runtime_mode_name(config),
+            "runtime_backend_summary": host._runtime_backend_summary(config),
+            "source_claims": host._runtime_source_claims(config),
+        }
+        _write_json(config.artifact_dir / "summary.json", summary)
+    color = "green" if summary["ok"] else "red"
+    console.print(f"[{color}]P11 scan stabilization gate acceptance completed rc={0 if summary['ok'] else 30}[/{color}]")
+    console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")
+    return 0 if summary["ok"] else 30

@@ -542,3 +542,11 @@ P10 不说明：
 - P12：电机/桨叶/ESC 偏置鲁棒性仿真，加入 motor bias / ESC lag / thrust multiplier / vibration profile，验证 P11 水平复原在真实扰动来源下仍安全。
 - P13：主动 frontier 探索策略优化，必须以 P12 扰动 envelope 通过为前置条件。
 - P14：真机 tethered indoor preflight，先做限位/保护下的 hover + scan integrity + stabilization 验收。
+
+## Runtime Mode 分流
+
+- `docker + simulation`：保持当前 P10 验收路径，允许 Gazebo/SITL/official baseline/gazebo-sensor/SDF overlay 生成可复现实验数据。
+- `process + real`：只允许真实 `/scan`、真实 attitude source、真实 FCU/SLAM topic 进入 scan integrity 检查。
+- real mode 禁止启动 Gazebo/SITL/official baseline/gazebo-sensor，也禁止生成 SDF/param overlay。
+- real mode 下如果当前 P10 acceptance 代码路径试图进入 simulation-only service/source/overlay，必须以 `runtime_mode_violation:*` blocker 失败，而不是 fallback 到 Docker。
+- P10 首版 real mode 的目标是保护边界：不把仿真 scan/IMU/rangefinder 当真机数据；完整真实 flight scan integrity gate 后续再按 real-preflight contract 扩展。

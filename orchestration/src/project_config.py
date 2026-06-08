@@ -52,6 +52,52 @@ class ComposeConfig:
 
 
 @dataclass(slots=True)
+class ProcessRuntimeServiceConfig:
+    name: str
+    command: tuple[str, ...]
+    cwd: Path | None
+    env: dict[str, str]
+
+
+@dataclass(slots=True)
+class DockerRuntimeBackendConfig:
+    compose_file: Path
+    project_name: ValueWithSource
+    workspace_container_path: ValueWithSource
+
+
+@dataclass(slots=True)
+class ProcessRuntimeBackendConfig:
+    workspace_host_path: Path
+    log_dir: Path
+    require_explicit_services: bool
+    services: dict[str, ProcessRuntimeServiceConfig]
+
+
+@dataclass(slots=True)
+class RealRuntimeSourceConfig:
+    scan_source_claim: ValueWithSource
+    scan_source_topic: ValueWithSource
+    fcu_source_claim: ValueWithSource
+    imu_source_claim: ValueWithSource
+    rangefinder_source_claim: ValueWithSource
+    slam_source_claim: ValueWithSource
+    required_real_topics: tuple[str, ...]
+    forbidden_simulation_input_topics: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class OrchestrationRuntimeBackendConfig:
+    backend: ValueWithSource
+    mode: ValueWithSource
+    fail_on_missing_backend_config: bool
+    fail_on_mode_violation: bool
+    docker: DockerRuntimeBackendConfig
+    process: ProcessRuntimeBackendConfig
+    real_sources: RealRuntimeSourceConfig
+
+
+@dataclass(slots=True)
 class NavLabImageConfig:
     dockerfile: ValueWithSource
     context: ValueWithSource
@@ -86,6 +132,24 @@ DEFAULT_ROUTER_TCP_PORT = "0"
 DEFAULT_COMPOSE_FILE = REPO_PATH / "compose" / "docker-compose.yaml"
 DEFAULT_COMPOSE_PROJECT_NAME = "navlab"
 DEFAULT_COMPOSE_PROFILE = "base_env"
+DEFAULT_RUNTIME_BACKEND = "docker"
+DEFAULT_RUNTIME_MODE = "simulation"
+DEFAULT_WORKSPACE_CONTAINER_PATH = "/workspace"
+DEFAULT_PROCESS_RUNTIME_LOG_DIR = REPO_PATH / "artifacts" / "runtime_logs"
+DEFAULT_REAL_REQUIRED_TOPICS = (
+    "/scan",
+    "/tf",
+    "/tf_static",
+    "/slam/odom",
+    "/ap/v1/status",
+    "/ap/v1/pose/filtered",
+)
+DEFAULT_FORBIDDEN_SIMULATION_INPUT_TOPICS = (
+    "/gazebo/*",
+    "/scan_ideal",
+    "/sim/x2/status",
+    "/rangefinder/down/scan_ideal",
+)
 COMPOSE_PROFILE_SERVICES: dict[str, tuple[str, ...]] = {
     "base_env": ("mavlink-router", "sitl", "gazebo"),
     "fast-lio": ("fast-lio",),
@@ -210,6 +274,184 @@ def load_compose_config(runtime: RuntimeConfig) -> ComposeConfig:
         project_name=_resolve_router_value(raw_compose, "project_name", DEFAULT_COMPOSE_PROJECT_NAME),
         default_profile=_resolve_router_value(raw_compose, "default_profile", DEFAULT_COMPOSE_PROFILE),
     )
+
+
+def load_orchestration_runtime_backend_config(runtime: RuntimeConfig) -> OrchestrationRuntimeBackendConfig:
+    config = load_project_config(runtime.config_file)
+    raw_orchestration = config.get("orchestration", {})
+    if raw_orchestration is None:
+        raw_orchestration = {}
+    if not isinstance(raw_orchestration, dict):
+        raise ValueError(f"Invalid [orchestration] section in {runtime.config_file}")
+    raw_runtime = raw_orchestration.get("runtime", {})
+    if raw_runtime is None:
+        raw_runtime = {}
+    if not isinstance(raw_runtime, dict):
+        raise ValueError(f"Invalid [orchestration.runtime] section in {runtime.config_file}")
+
+    backend = _resolve_runtime_backend(raw_runtime)
+    mode = _resolve_runtime_mode(raw_runtime)
+    raw_docker = _optional_table(raw_runtime, "docker", runtime.config_file, "orchestration.runtime")
+    raw_process = _optional_table(raw_runtime, "process", runtime.config_file, "orchestration.runtime")
+    raw_real = _optional_table(raw_runtime, "real", runtime.config_file, "orchestration.runtime")
+    raw_real_sources = _optional_table(raw_real, "sources", runtime.config_file, "orchestration.runtime.real")
+    compose = load_compose_config(runtime)
+
+    fail_on_missing_backend_config = bool(raw_runtime.get("fail_on_missing_backend_config", True))
+    fail_on_mode_violation = bool(raw_runtime.get("fail_on_mode_violation", True))
+    if fail_on_mode_violation:
+        _validate_runtime_backend_mode(backend.value, mode.value)
+    docker = DockerRuntimeBackendConfig(
+        compose_file=_resolve_path(runtime.lab_root, str(raw_docker.get("compose_file") or compose.compose_file)),
+        project_name=_resolve_router_value(raw_docker, "project_name", compose.project_name.value),
+        workspace_container_path=_resolve_router_value(
+            raw_docker,
+            "workspace_container_path",
+            DEFAULT_WORKSPACE_CONTAINER_PATH,
+        ),
+    )
+    process = ProcessRuntimeBackendConfig(
+        workspace_host_path=_resolve_path(
+            runtime.lab_root,
+            str(raw_process.get("workspace_host_path") or runtime.lab_root),
+        ),
+        log_dir=_resolve_path(runtime.lab_root, str(raw_process.get("log_dir") or DEFAULT_PROCESS_RUNTIME_LOG_DIR)),
+        require_explicit_services=bool(raw_process.get("require_explicit_services", True)),
+        services=_parse_process_services(raw_process, runtime.lab_root, runtime.config_file),
+    )
+    real_sources = RealRuntimeSourceConfig(
+        scan_source_claim=_resolve_router_value(raw_real_sources, "scan_source_claim", "real_lidar_driver"),
+        scan_source_topic=_resolve_router_value(raw_real_sources, "scan_source_topic", "/scan"),
+        fcu_source_claim=_resolve_router_value(raw_real_sources, "fcu_source_claim", "real_ardupilot_dds"),
+        imu_source_claim=_resolve_router_value(raw_real_sources, "imu_source_claim", "real_fcu_or_sensor"),
+        rangefinder_source_claim=_resolve_router_value(
+            raw_real_sources,
+            "rangefinder_source_claim",
+            "real_or_not_required",
+        ),
+        slam_source_claim=_resolve_router_value(raw_real_sources, "slam_source_claim", "real_slam"),
+        required_real_topics=_resolve_string_tuple(
+            raw_real_sources.get("required_real_topics"),
+            DEFAULT_REAL_REQUIRED_TOPICS,
+            "required_real_topics",
+        ),
+        forbidden_simulation_input_topics=_resolve_string_tuple(
+            raw_real_sources.get("forbidden_simulation_input_topics"),
+            DEFAULT_FORBIDDEN_SIMULATION_INPUT_TOPICS,
+            "forbidden_simulation_input_topics",
+        ),
+    )
+    if backend.value == "process" and fail_on_missing_backend_config and process.require_explicit_services:
+        if not process.services:
+            raise ValueError("Invalid [orchestration.runtime.process]: process backend requires explicit services")
+    return OrchestrationRuntimeBackendConfig(
+        backend=backend,
+        mode=mode,
+        fail_on_missing_backend_config=fail_on_missing_backend_config,
+        fail_on_mode_violation=fail_on_mode_violation,
+        docker=docker,
+        process=process,
+        real_sources=real_sources,
+    )
+
+
+def _resolve_runtime_backend(raw_runtime: dict[str, Any]) -> ValueWithSource:
+    env_backend = os.environ.get("NAVLAB_RUNTIME_BACKEND")
+    if env_backend:
+        backend = env_backend.strip().lower()
+        source = "NAVLAB_RUNTIME_BACKEND"
+    elif raw_runtime.get("backend") not in (None, ""):
+        backend = str(raw_runtime["backend"]).strip().lower()
+        source = "config.toml"
+    else:
+        backend = DEFAULT_RUNTIME_BACKEND
+        source = "default"
+    if backend not in {"docker", "process"}:
+        raise ValueError(f"Invalid orchestration runtime backend '{backend}': expected docker or process")
+    return ValueWithSource(backend, source)
+
+
+def _resolve_runtime_mode(raw_runtime: dict[str, Any]) -> ValueWithSource:
+    env_mode = os.environ.get("NAVLAB_RUNTIME_MODE")
+    if env_mode:
+        mode = env_mode.strip().lower()
+        source = "NAVLAB_RUNTIME_MODE"
+    elif raw_runtime.get("mode") not in (None, ""):
+        mode = str(raw_runtime["mode"]).strip().lower()
+        source = "config.toml"
+    else:
+        mode = DEFAULT_RUNTIME_MODE
+        source = "default"
+    if mode not in {"simulation", "real"}:
+        raise ValueError(f"Invalid orchestration runtime mode '{mode}': expected simulation or real")
+    return ValueWithSource(mode, source)
+
+
+def _validate_runtime_backend_mode(backend: str, mode: str) -> None:
+    if (backend, mode) in {("docker", "simulation"), ("process", "real")}:
+        return
+    raise ValueError(
+        "Invalid orchestration runtime backend/mode combination "
+        f"{backend}+{mode}: supported combinations are docker+simulation and process+real"
+    )
+
+
+def _optional_table(parent: dict[str, Any], key: str, config_file: Path, parent_name: str) -> dict[str, Any]:
+    raw = parent.get(key, {})
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"Invalid [{parent_name}.{key}] section in {config_file}")
+    return raw
+
+
+def _resolve_path(root: Path, value: str) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    return root / path
+
+
+def _resolve_string_tuple(raw: Any, default: tuple[str, ...], key: str) -> tuple[str, ...]:
+    if raw in (None, ""):
+        return default
+    if not isinstance(raw, list) or not raw or not all(isinstance(item, str) and item for item in raw):
+        raise ValueError(f"Invalid orchestration runtime real sources {key}: expected non-empty string array")
+    return tuple(raw)
+
+
+def _parse_process_services(
+    raw_process: dict[str, Any],
+    root: Path,
+    config_file: Path,
+) -> dict[str, ProcessRuntimeServiceConfig]:
+    raw_services = raw_process.get("services", {})
+    if raw_services is None:
+        raw_services = {}
+    if not isinstance(raw_services, dict):
+        raise ValueError(f"Invalid [orchestration.runtime.process.services] section in {config_file}")
+    services: dict[str, ProcessRuntimeServiceConfig] = {}
+    for name, raw_service in raw_services.items():
+        if not isinstance(raw_service, dict):
+            raise ValueError(f"Invalid [orchestration.runtime.process.services.{name}] section in {config_file}")
+        raw_command = raw_service.get("command")
+        if not isinstance(raw_command, list) or not raw_command or not all(isinstance(arg, str) for arg in raw_command):
+            raise ValueError(f"Invalid process runtime service {name}: command must be a non-empty string array")
+        raw_env = raw_service.get("env", {})
+        if raw_env is None:
+            raw_env = {}
+        if not isinstance(raw_env, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in raw_env.items()
+        ):
+            raise ValueError(f"Invalid process runtime service {name}: env must be a string table")
+        raw_cwd = raw_service.get("cwd")
+        services[str(name)] = ProcessRuntimeServiceConfig(
+            name=str(name),
+            command=tuple(raw_command),
+            cwd=(_resolve_path(root, str(raw_cwd)) if raw_cwd not in (None, "") else None),
+            env=dict(raw_env),
+        )
+    return services
 
 
 def resolve_navlab_image_tag(strategy: str, *, cwd: Path | None = None) -> str:

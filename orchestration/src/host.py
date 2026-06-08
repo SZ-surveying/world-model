@@ -6,7 +6,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from python_on_whales import DockerClient
 from python_on_whales.exceptions import DockerException
 from rich.console import Console
 from rich.table import Table
@@ -18,8 +17,25 @@ from src.config import (
     RunConfig,
 )
 from src.project_config import (
+    RuntimeConfig as ProjectRuntimeConfig,
+)
+from src.project_config import (
     load_compose_config,
+    load_orchestration_runtime_backend_config,
     load_runtime_config,
+)
+from src.runtime import (
+    SERVICE_ROLE_OFFICIAL_BASELINE,
+    SERVICE_ROLE_SIMULATION_PROBE,
+    SERVICE_ROLE_SIMULATION_RUNTIME,
+    SERVICE_ROLE_SIMULATION_STACK,
+    DockerBackend,
+    ProbeSpec,
+    RuntimeModePolicy,
+    ServiceSpec,
+    ServiceWaitError,
+    VolumeMount,
+    WorkspacePathMapper,
 )
 
 COMPANION_CONTAINER = "navlab-companion"
@@ -31,16 +47,16 @@ OFFICIAL_SITL_WORKDIR = "sitl_work"
 ROS_SHELL_STDERR_FILTER_PATTERN = r"Failed to parse type hash|share an exact name"
 
 
-def _compose_client() -> DockerClient:
+def _compose_backend() -> DockerBackend:
     runtime = load_runtime_config()
     compose = load_compose_config(runtime)
     env_file = runtime.lab_root / ".env"
-    return DockerClient(
-        compose_files=[compose.compose_file],
-        compose_profiles=list(NAVLAB_PROFILES),
+    return DockerBackend(
+        compose_files=(compose.compose_file,),
+        compose_profiles=tuple(NAVLAB_PROFILES),
         compose_project_name=compose.project_name.value,
         compose_project_directory=runtime.lab_root,
-        compose_env_files=([env_file] if env_file.is_file() else []),
+        compose_env_files=((env_file,) if env_file.is_file() else ()),
     )
 
 
@@ -63,47 +79,33 @@ def _compose_environment(config: RunConfig) -> Iterator[None]:
 
 
 def _compose_up(config: RunConfig) -> None:
+    _assert_runtime_service_role(config, service_name="compose_stack", service_role=SERVICE_ROLE_SIMULATION_STACK)
     with _compose_environment(config):
-        _compose_client().compose.up(services=list(NAVLAB_SERVICES), detach=True, build=False)
+        _compose_backend().compose_up(services=tuple(NAVLAB_SERVICES), detach=True, build=False)
 
 
 def _compose_stop(config: RunConfig) -> None:
     with _compose_environment(config):
-        _compose_client().compose.stop(services=list(NAVLAB_STOP_SERVICES))
+        _compose_backend().compose_stop(services=tuple(NAVLAB_STOP_SERVICES))
 
 
 def _compose_logs(config: RunConfig, *, tail: int) -> str:
     with _compose_environment(config):
-        output = _compose_client().compose.logs(services=list(NAVLAB_SERVICES), tail=str(tail))
-    return str(output)
+        return _compose_backend().compose_logs(services=tuple(NAVLAB_SERVICES), tail=tail)
 
 
 def _compose_ps_status(config: RunConfig) -> list[dict[str, object]]:
     with _compose_environment(config):
-        containers = _compose_client().compose.ps(services=list(NAVLAB_SERVICES), all=True)
-    statuses: list[dict[str, object]] = []
-    for container in containers:
-        container_config = getattr(container, "config", None)
-        container_state = getattr(container, "state", None)
-        statuses.append(
-            {
-                "id": getattr(container, "id", ""),
-                "name": getattr(container, "name", ""),
-                "image": getattr(container_config, "image", ""),
-                "status": getattr(container_state, "status", ""),
-                "running": bool(getattr(container_state, "running", False)),
-            }
-        )
-    return statuses
+        return _compose_backend().compose_ps_status(services=tuple(NAVLAB_SERVICES))
 
 
 def _workspace_path(path: Path) -> str:
     runtime = load_runtime_config()
+    mapper = WorkspacePathMapper(host_root=runtime.lab_root, backend_workspace_root="/workspace", backend="docker")
     try:
-        relative = path.resolve().relative_to(runtime.lab_root.resolve())
-    except ValueError:
+        return mapper.backend_path(path)
+    except Exception:
         return str(path)
-    return str(Path("/workspace") / relative)
 
 
 def _official_sitl_workdir(config: RunConfig) -> str:
@@ -125,6 +127,8 @@ def _render_run_config(console: Console, config: RunConfig) -> None:
     table.add_row("artifact", str(config.artifact_dir))
     table.add_row("duration", f"{config.duration_sec:g}s")
     table.add_row("ROS_DOMAIN_ID", config.ros_domain_id)
+    table.add_row("runtime backend", _runtime_backend_name(config))
+    table.add_row("runtime mode", _runtime_mode_name(config))
     table.add_row("companion image", config.companion_image)
     table.add_row("slam image", config.slam_image)
     table.add_row("gazebo sensor image", config.gazebo_sensor_image)
@@ -139,21 +143,22 @@ def _capture_stack_logs(*, config: RunConfig) -> None:
         output = _compose_logs(config, tail=400)
     except DockerException as exc:
         output = str(exc)
+    backend = DockerBackend()
     try:
-        companion_output = DockerClient().logs(COMPANION_CONTAINER, tail=400)
+        companion_output = backend.logs(COMPANION_CONTAINER, tail=400)
         output = f"{output}\n\n--- {COMPANION_CONTAINER} ---\n{companion_output}"
-    except DockerException:
+    except ServiceWaitError:
         pass
     try:
-        slam_output = DockerClient().logs(SLAM_CONTAINER, tail=400)
+        slam_output = backend.logs(SLAM_CONTAINER, tail=400)
         output = f"{output}\n\n--- {SLAM_CONTAINER} ---\n{slam_output}"
-    except DockerException:
+    except ServiceWaitError:
         pass
     try:
         compose = load_compose_config(load_runtime_config())
-        sensor_output = DockerClient().logs(f"{compose.project_name.value}-{GAZEBO_SENSOR_SERVICE}-1", tail=400)
+        sensor_output = backend.logs(f"{compose.project_name.value}-{GAZEBO_SENSOR_SERVICE}-1", tail=400)
         output = f"{output}\n\n--- {GAZEBO_SENSOR_SERVICE} ---\n{sensor_output}"
-    except DockerException:
+    except ServiceWaitError:
         pass
     (config.artifact_dir / "navlab_stack_tail.log").write_text(output, encoding="utf-8")
 
@@ -163,34 +168,110 @@ def _capture_compose_service_log(*, config: RunConfig, service: str, output_path
     compose = load_compose_config(load_runtime_config())
     container_name = f"{compose.project_name.value}-{service}-1"
     try:
-        output = DockerClient().logs(container_name, tail=tail)
-    except DockerException as exc:
+        output = DockerBackend().logs(container_name, tail=tail)
+    except ServiceWaitError as exc:
         output = str(exc)
     output_path.write_text(str(output), encoding="utf-8")
+
+
+def _selected_runtime_backend_config(config: RunConfig):
+    runtime = load_runtime_config()
+    return load_orchestration_runtime_backend_config(
+        ProjectRuntimeConfig(
+            lab_root=runtime.lab_root,
+            ardupilot_root=runtime.ardupilot_root,
+            mavlink_router_root=runtime.mavlink_router_root,
+            venv_path=runtime.venv_path,
+            config_file=config.orchestration.path,
+            config_loaded=config.orchestration.path.is_file(),
+        )
+    )
+
+
+def _runtime_backend_summary(config: RunConfig) -> dict[str, str | bool]:
+    selected = _selected_runtime_backend_config(config)
+    return {
+        "backend": selected.backend.value,
+        "mode": selected.mode.value,
+        "backend_source": selected.backend.source,
+        "mode_source": selected.mode.source,
+        "backend_config_path": str(config.orchestration.path),
+        "fail_on_missing_backend_config": selected.fail_on_missing_backend_config,
+        "fail_on_mode_violation": selected.fail_on_mode_violation,
+    }
+
+
+def _runtime_source_claims(config: RunConfig) -> dict[str, str]:
+    selected = _selected_runtime_backend_config(config)
+    if selected.mode.value == "real":
+        return {
+            "fcu": selected.real_sources.fcu_source_claim.value,
+            "scan": selected.real_sources.scan_source_claim.value,
+            "scan_topic": selected.real_sources.scan_source_topic.value,
+            "imu": selected.real_sources.imu_source_claim.value,
+            "rangefinder": selected.real_sources.rangefinder_source_claim.value,
+            "slam": selected.real_sources.slam_source_claim.value,
+        }
+    return {
+        "fcu": "simulation_sitl_dds",
+        "scan": "gazebo_lidar_via_x2",
+        "scan_topic": "/scan",
+        "imu": "simulation_fcu_or_gazebo",
+        "rangefinder": "simulation_gazebo_rangefinder",
+        "slam": "simulation_slam",
+    }
+
+
+def _runtime_backend_name(config: RunConfig) -> str:
+    return str(_runtime_backend_summary(config)["backend"])
+
+
+def _runtime_mode_name(config: RunConfig) -> str:
+    return str(_runtime_backend_summary(config)["mode"])
+
+
+def _runtime_mode_policy(config: RunConfig) -> RuntimeModePolicy:
+    selected = _selected_runtime_backend_config(config)
+    return RuntimeModePolicy(
+        backend=selected.backend.value,
+        mode=selected.mode.value,
+        fail_on_mode_violation=selected.fail_on_mode_violation,
+    )
+
+
+def _assert_runtime_service_role(config: RunConfig, *, service_name: str, service_role: str) -> None:
+    _runtime_mode_policy(config).assert_service_allowed(service_name=service_name, service_role=service_role)
 
 
 def _session_log_dir(config: RunConfig) -> Path:
     return Path("artifacts/sessions") / config.session_id / config.run_id
 
 
+def _volume_mounts(items: list[tuple[Path, str]] | list[tuple[Path, str, str]]) -> tuple[VolumeMount, ...]:
+    mounts: list[VolumeMount] = []
+    for item in items:
+        mounts.append(VolumeMount(*item))
+    return tuple(mounts)
+
+
 def _remove_companion_container() -> None:
     try:
-        DockerClient().remove(COMPANION_CONTAINER, force=True)
-    except DockerException:
+        DockerBackend().remove_container(COMPANION_CONTAINER, force=True)
+    except ServiceWaitError:
         pass
 
 
 def _remove_slam_container() -> None:
     try:
-        DockerClient().remove(SLAM_CONTAINER, force=True)
-    except DockerException:
+        DockerBackend().remove_container(SLAM_CONTAINER, force=True)
+    except ServiceWaitError:
         pass
 
 
 def _remove_official_baseline_container() -> None:
     try:
-        DockerClient().remove(OFFICIAL_BASELINE_CONTAINER, force=True)
-    except DockerException:
+        DockerBackend().remove_container(OFFICIAL_BASELINE_CONTAINER, force=True)
+    except ServiceWaitError:
         pass
 
 
@@ -199,6 +280,11 @@ def _start_official_baseline_container(
     *,
     volume_overrides: list[tuple[Path, str]] | None = None,
 ) -> None:
+    _assert_runtime_service_role(
+        config,
+        service_name="official_baseline",
+        service_role=SERVICE_ROLE_OFFICIAL_BASELINE,
+    )
     _remove_official_baseline_container()
     baseline = config.orchestration.official_baseline
     (config.artifact_dir / OFFICIAL_SITL_WORKDIR).mkdir(parents=True, exist_ok=True)
@@ -211,58 +297,61 @@ def _start_official_baseline_container(
         "use_gz_sim_server:=true "
         "spawn_robot:=true"
     )
-    DockerClient().run(
-        baseline.runtime_image,
-        [
-            "bash",
-            "-lc",
-            (
-                "source /opt/ros/jazzy/setup.bash && "
-                "source /opt/navlab_official_ws/install/setup.bash && "
-                "export NAVLAB_OFFICIAL_SDF_ROOTS="
-                "/opt/navlab_official_ws/install/ardupilot_gazebo/share:"
-                "/opt/navlab_official_ws/install/ardupilot_gz_description/share && "
-                "export SDF_PATH=${NAVLAB_OFFICIAL_SDF_ROOTS}:${SDF_PATH:-} && "
-                "export GZ_SIM_RESOURCE_PATH=${NAVLAB_OFFICIAL_SDF_ROOTS}:${GZ_SIM_RESOURCE_PATH:-} && "
-                f"exec {launch_command}"
+    DockerBackend().start_service(
+        ServiceSpec(
+            name="official_baseline",
+            image=baseline.runtime_image,
+            command=(
+                "bash",
+                "-lc",
+                (
+                    "source /opt/ros/jazzy/setup.bash && "
+                    "source /opt/navlab_official_ws/install/setup.bash && "
+                    "export NAVLAB_OFFICIAL_SDF_ROOTS="
+                    "/opt/navlab_official_ws/install/ardupilot_gazebo/share:"
+                    "/opt/navlab_official_ws/install/ardupilot_gz_description/share && "
+                    "export SDF_PATH=${NAVLAB_OFFICIAL_SDF_ROOTS}:${SDF_PATH:-} && "
+                    "export GZ_SIM_RESOURCE_PATH=${NAVLAB_OFFICIAL_SDF_ROOTS}:${GZ_SIM_RESOURCE_PATH:-} && "
+                    f"exec {launch_command}"
+                ),
             ),
-        ],
-        detach=True,
-        name=OFFICIAL_BASELINE_CONTAINER,
-        networks=["host"],
-        volumes=[(Path.cwd(), "/workspace"), *(volume_overrides or [])],
-        workdir=sitl_workdir,
-        envs={
-            "SESSION_ID": config.session_id,
-            "ROS_DOMAIN_ID": baseline.dds_domain_id,
-            "RMW_IMPLEMENTATION": baseline.rmw_implementation,
-            "DDS_ENABLE": baseline.dds_enable,
-            "DDS_DOMAIN_ID": baseline.dds_domain_id,
-            "PYTHONPATH": "/workspace",
-        },
+            container_name=OFFICIAL_BASELINE_CONTAINER,
+            networks=("host",),
+            volumes=(VolumeMount(Path.cwd(), "/workspace"), *(_volume_mounts(volume_overrides or []))),
+            cwd=sitl_workdir,
+            env={
+                "SESSION_ID": config.session_id,
+                "ROS_DOMAIN_ID": baseline.dds_domain_id,
+                "RMW_IMPLEMENTATION": baseline.rmw_implementation,
+                "DDS_ENABLE": baseline.dds_enable,
+                "DDS_DOMAIN_ID": baseline.dds_domain_id,
+                "PYTHONPATH": "/workspace",
+            },
+            service_role=SERVICE_ROLE_OFFICIAL_BASELINE,
+        )
     )
 
 
 def _capture_official_baseline_log(*, config: RunConfig, tail: int = 2000) -> None:
     config.artifact_dir.mkdir(parents=True, exist_ok=True)
     try:
-        output = DockerClient().logs(OFFICIAL_BASELINE_CONTAINER, tail=tail)
-    except DockerException as exc:
+        output = DockerBackend().logs(OFFICIAL_BASELINE_CONTAINER, tail=tail)
+    except ServiceWaitError as exc:
         output = str(exc)
     (config.artifact_dir / "official_baseline_tail.log").write_text(str(output), encoding="utf-8")
 
 
 def _gazebo_network_namespace() -> str:
-    containers = _compose_client().compose.ps(services=["gazebo"], all=True)
-    running = [container for container in containers if container.state.running]
+    running = [item for item in _compose_backend().compose_ps_status(services=("gazebo",)) if item.get("running")]
     if not running:
         raise RuntimeError("gazebo container is not running")
-    return f"container:{running[0].id}"
+    return f"container:{running[0]['id']}"
 
 
 def _start_slam_container(config: RunConfig) -> None:
     if not config.orchestration.slam.autostart:
         return
+    _assert_runtime_service_role(config, service_name="slam", service_role=SERVICE_ROLE_SIMULATION_RUNTIME)
     _remove_slam_container()
     slam = config.orchestration.slam
     launch_command = " ".join(
@@ -278,55 +367,62 @@ def _start_slam_container(config: RunConfig) -> None:
             slam.backend,
         ]
     )
-    DockerClient().run(
-        slam.image,
-        [
-            "bash",
-            "-lc",
-            (f"source /opt/ros/jazzy/setup.bash && source /opt/navlab_ws/install/setup.bash && exec {launch_command}"),
-        ],
-        detach=True,
-        name=SLAM_CONTAINER,
-        networks=[_gazebo_network_namespace()],
-        volumes=[(Path.cwd(), "/workspace")],
-        workdir="/workspace",
-        user=f"{os.getuid()}:{os.getgid()}",
-        envs={
-            "SESSION_ID": config.session_id,
-            "ROS_DOMAIN_ID": config.ros_domain_id,
-            "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
-            "PYTHONPATH": "/workspace",
-            "NAVLAB_SLAM_RUNTIME_CONFIG": slam.runtime_config,
-        },
+    DockerBackend().start_service(
+        ServiceSpec(
+            name="slam",
+            image=slam.image,
+            command=(
+                "bash",
+                "-lc",
+                f"source /opt/ros/jazzy/setup.bash && source /opt/navlab_ws/install/setup.bash && exec {launch_command}",
+            ),
+            container_name=SLAM_CONTAINER,
+            networks=(_gazebo_network_namespace(),),
+            volumes=(VolumeMount(Path.cwd(), "/workspace"),),
+            cwd="/workspace",
+            user=f"{os.getuid()}:{os.getgid()}",
+            env={
+                "SESSION_ID": config.session_id,
+                "ROS_DOMAIN_ID": config.ros_domain_id,
+                "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+                "PYTHONPATH": "/workspace",
+                "NAVLAB_SLAM_RUNTIME_CONFIG": slam.runtime_config,
+            },
+            service_role=SERVICE_ROLE_SIMULATION_RUNTIME,
+        )
     )
 
 
 def _start_companion_container(config: RunConfig) -> None:
+    _assert_runtime_service_role(config, service_name="companion", service_role=SERVICE_ROLE_SIMULATION_RUNTIME)
     _remove_companion_container()
-    DockerClient().run(
-        config.companion_image,
-        ["bash", "/usr/local/bin/start-navlab-companion.sh"],
-        detach=True,
-        name=COMPANION_CONTAINER,
-        networks=[_gazebo_network_namespace()],
-        volumes=[
-            (Path.cwd(), "/workspace"),
-            (
-                Path.cwd() / "docker/entrypoints/start-navlab-companion.sh",
-                "/usr/local/bin/start-navlab-companion.sh",
-                "ro",
+    DockerBackend().start_service(
+        ServiceSpec(
+            name="companion",
+            image=config.companion_image,
+            command=("bash", "/usr/local/bin/start-navlab-companion.sh"),
+            container_name=COMPANION_CONTAINER,
+            networks=(_gazebo_network_namespace(),),
+            volumes=(
+                VolumeMount(Path.cwd(), "/workspace"),
+                VolumeMount(
+                    Path.cwd() / "docker/entrypoints/start-navlab-companion.sh",
+                    "/usr/local/bin/start-navlab-companion.sh",
+                    "ro",
+                ),
             ),
-        ],
-        workdir="/workspace",
-        user=f"{os.getuid()}:{os.getgid()}",
-        envs={
-            "SESSION_ID": config.session_id,
-            "ROS_DOMAIN_ID": config.ros_domain_id,
-            "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
-            "PYTHONPATH": "/workspace",
-            "NAVLAB_RUNTIME_CONFIG": _companion_runtime_config_path(),
-            "MAVLINK20": "1",
-        },
+            cwd="/workspace",
+            user=f"{os.getuid()}:{os.getgid()}",
+            env={
+                "SESSION_ID": config.session_id,
+                "ROS_DOMAIN_ID": config.ros_domain_id,
+                "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+                "PYTHONPATH": "/workspace",
+                "NAVLAB_RUNTIME_CONFIG": _companion_runtime_config_path(),
+                "MAVLINK20": "1",
+            },
+            service_role=SERVICE_ROLE_SIMULATION_RUNTIME,
+        )
     )
 
 
@@ -350,24 +446,34 @@ def _docker_run_runtime_command(
         ),
     ]
     try:
-        DockerClient().run(
-            config.companion_image,
-            command,
-            remove=True,
-            name=name,
-            networks=([network] if network else []),
-            volumes=[(Path.cwd(), "/workspace")],
-            workdir="/workspace",
-            envs={
-                "NAVLAB_RUNTIME_CONFIG": _companion_runtime_config_path(),
-                "ROS_DOMAIN_ID": config.ros_domain_id,
-                "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
-                "MAVLINK20": "1",
-                "PYTHONPATH": "/workspace",
-            },
+        _assert_runtime_service_role(
+            config,
+            service_name=name or "runtime_command",
+            service_role=SERVICE_ROLE_SIMULATION_RUNTIME,
         )
-    except DockerException as exc:
-        return exc.return_code or 1
+        DockerBackend().start_service(
+            ServiceSpec(
+                name=name or "runtime_command",
+                image=config.companion_image,
+                command=tuple(command),
+                container_name=name,
+                networks=((network,) if network else ()),
+                volumes=(VolumeMount(Path.cwd(), "/workspace"),),
+                cwd="/workspace",
+                remove=True,
+                detach=False,
+                env={
+                    "NAVLAB_RUNTIME_CONFIG": _companion_runtime_config_path(),
+                    "ROS_DOMAIN_ID": config.ros_domain_id,
+                    "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+                    "MAVLINK20": "1",
+                    "PYTHONPATH": "/workspace",
+                },
+                service_role=SERVICE_ROLE_SIMULATION_RUNTIME,
+            )
+        )
+    except Exception:
+        return 1
     return 0
 
 
@@ -393,25 +499,30 @@ def _docker_run_ros_shell_capture(
             f"{filtered_shell_command}"
         ),
     ]
-    try:
-        output = DockerClient().run(
-            image,
-            command,
-            remove=True,
-            name=name,
-            networks=([network] if network else []),
-            volumes=[(Path.cwd(), "/workspace")],
-            workdir="/workspace",
-            envs={
+    _assert_runtime_service_role(
+        config,
+        service_name=name or "ros_shell_capture",
+        service_role=SERVICE_ROLE_SIMULATION_PROBE,
+    )
+    result = DockerBackend().run_probe(
+        ProbeSpec(
+            name=name or "ros_shell_capture",
+            image=image,
+            command=tuple(command),
+            container_name=name,
+            networks=((network,) if network else ()),
+            volumes=(VolumeMount(Path.cwd(), "/workspace"),),
+            cwd="/workspace",
+            env={
                 "ROS_DOMAIN_ID": config.ros_domain_id,
                 "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
                 "PYTHONPATH": "/workspace",
                 **(envs or {}),
             },
+            service_role=SERVICE_ROLE_SIMULATION_PROBE,
         )
-    except DockerException as exc:
-        return exc.return_code or 1, str(exc)
-    return 0, str(output)
+    )
+    return result.return_code, result.stdout
 
 
 def _with_ros_shell_stderr_filter(shell_command: str) -> str:
@@ -435,7 +546,6 @@ def _docker_exec_runtime_command(*, args: list[str], module: str = "navlab.compa
         ),
     ]
     try:
-        DockerClient().execute(COMPANION_CONTAINER, command)
-    except DockerException as exc:
-        return exc.return_code or 1
-    return 0
+        return DockerBackend().execute(COMPANION_CONTAINER, tuple(command))
+    except ServiceWaitError:
+        return 1

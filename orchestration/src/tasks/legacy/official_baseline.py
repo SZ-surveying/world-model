@@ -8,15 +8,13 @@ import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 from python_on_whales.exceptions import DockerException
 from rich.console import Console
 
 from src import host
 from src.config import RunConfig
-from src.tasks.base import OrchestrationTask
-from src.tasks.registry import TaskRegistry
 
 CARTOGRAPHER_CONFIG_PATH = Path(
     "navlab/slam/ros/localization/navlab_cartographer_adapter/config/navlab_cartographer_2d.lua"
@@ -576,157 +574,146 @@ def _write_foxglove_notes(artifact_dir: Path) -> None:
     )
 
 
-@TaskRegistry.register
-@dataclass(frozen=True, slots=True)
-class OfficialBaselineDoctorTask(OrchestrationTask):
-    TASK_NAME: ClassVar[str] = "official-baseline-doctor"
-    TASK_DESCRIPTION: ClassVar[str] = "Check official ArduPilot ROS2/Cartographer baseline prerequisites."
 
-    def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
-        console = console or Console()
-        config = RunConfig.from_config(config_path=config_path)
-        artifact_dir = Path(
-            os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_official_baseline_doctor/{config.run_id}")
-        )
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        console.print("[bold cyan]Checking official baseline prerequisites[/bold cyan]")
-        summary = _build_doctor_summary(config)
-        _write_json(artifact_dir / "summary.json", summary)
-        color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]Official baseline doctor rc={0 if summary['ok'] else 20}[/{color}]")
-        console.print(f"[bold]Summary:[/bold] {artifact_dir / 'summary.json'}")
-        return 0 if summary["ok"] else 20
+def run_official_baseline_doctor(*, config_path: str | Path | None = None, console: Console | None = None) -> int:
+    console = console or Console()
+    config = RunConfig.from_config(config_path=config_path)
+    artifact_dir = Path(
+        os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_official_baseline_doctor/{config.run_id}")
+    )
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    console.print("[bold cyan]Checking official baseline prerequisites[/bold cyan]")
+    summary = _build_doctor_summary(config)
+    _write_json(artifact_dir / "summary.json", summary)
+    color = "green" if summary["ok"] else "red"
+    console.print(f"[{color}]Official baseline doctor rc={0 if summary['ok'] else 20}[/{color}]")
+    console.print(f"[bold]Summary:[/bold] {artifact_dir / 'summary.json'}")
+    return 0 if summary["ok"] else 20
 
 
-@TaskRegistry.register
-@dataclass(frozen=True, slots=True)
-class OfficialBaselineAcceptanceTask(OrchestrationTask):
-    TASK_NAME: ClassVar[str] = "official-baseline-acceptance"
-    TASK_DESCRIPTION: ClassVar[str] = "Run the official ArduPilot ROS2/DDS baseline graph acceptance."
 
-    def run(
-        self,
-        *,
-        config_path: str | Path | None = None,
-        duration_sec: float = 30.0,
-        console: Console | None = None,
-    ) -> int:
-        console = console or Console()
-        config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
-        config.artifact_dir.mkdir(parents=True, exist_ok=True)
-        host._render_run_config(console, config)
-        summary: dict[str, Any] | None = None
+def run_official_baseline_acceptance(
+    *,
+    config_path: str | Path | None = None,
+    duration_sec: float = 30.0,
+    console: Console | None = None,
+) -> int:
+    console = console or Console()
+    config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
+    config.artifact_dir.mkdir(parents=True, exist_ok=True)
+    host._render_run_config(console, config)
+    summary: dict[str, Any] | None = None
+    try:
+        console.print("[bold cyan]Starting SITL + Gazebo stack for official baseline graph check[/bold cyan]")
         try:
-            console.print("[bold cyan]Starting SITL + Gazebo stack for official baseline graph check[/bold cyan]")
-            try:
-                host._compose_stop(config)
-            except DockerException:
-                pass
-            host._start_official_baseline_container(config)
-            time.sleep(min(max(duration_sec, 1.0), 10.0))
-            baseline = config.orchestration.official_baseline
-            graph = _collect_ros_graph(
-                config,
-                config.artifact_dir,
-                image=baseline.runtime_image,
-                network="host",
+            host._compose_stop(config)
+        except DockerException:
+            pass
+        host._start_official_baseline_container(config)
+        time.sleep(min(max(duration_sec, 1.0), 10.0))
+        baseline = config.orchestration.official_baseline
+        graph = _collect_ros_graph(
+            config,
+            config.artifact_dir,
+            image=baseline.runtime_image,
+            network="host",
+        )
+        probe = _collect_official_dds_probe(
+            config,
+            config.artifact_dir,
+            image=baseline.runtime_image,
+            network="host",
+        )
+        rosbag_profile = _record_official_rosbag(
+            config,
+            config.artifact_dir,
+            image=baseline.runtime_image,
+            network="host",
+        )
+        node_lines = graph["ros2_node_list"]["lines"]
+        topic_lines = graph["ros2_topic_list"]["lines"]
+        probe_result = probe["result"]
+        graph_ap_topics = [topic for topic in topic_lines if topic.startswith("/ap/")]
+        probe_confirmed_ap_topics = []
+        if probe_result.get("time_received") and probe_result.get("time_topic"):
+            probe_confirmed_ap_topics.append(str(probe_result["time_topic"]))
+        ap_topics = sorted(set(graph_ap_topics + probe_confirmed_ap_topics))
+        missing_required_ap_topics = [
+            topic for topic in baseline.required_ap_topics if topic not in ap_topics
+        ]
+        official_baseline = {
+            **_official_baseline_common(config),
+            **_cartographer_dependency_summary(config),
+            **_official_ros_dependency_summary(config),
+            **_cartographer_config_summary(),
+            "ap_node_present": baseline.expected_ap_node in node_lines,
+            "graph_ap_topics": graph_ap_topics,
+            "probe_confirmed_ap_topics": probe_confirmed_ap_topics,
+            "ap_topics": ap_topics,
+            "missing_required_ap_topics": missing_required_ap_topics,
+            "ap_node_info_rc": graph["ap_node_info"]["rc"],
+            "official_dds_probe_rc": probe["rc"],
+            "official_dds_probe": probe_result,
+            "official_dds_time_received": bool(probe_result.get("time_received")),
+            "official_dds_prearm_service_available": bool(
+                probe_result.get("prearm_service_available")
+            ),
+            "official_dds_prearm_success": probe_result.get("prearm_success"),
+            "process_status": host._compose_ps_status(config),
+            "official_container": host.OFFICIAL_BASELINE_CONTAINER,
+        }
+        blockers: list[str] = []
+        if not official_baseline["cartographer_ros_present"]:
+            blockers.append("cartographer_ros is not present in the configured SLAM image")
+        if not official_baseline["official_runtime_image_available"]:
+            blockers.append(official_baseline["official_runtime_image_error"])
+        if official_baseline["missing_official_ros_packages"]:
+            blockers.append(
+                "official ROS packages are missing from the configured runtime image: "
+                f"{official_baseline['missing_official_ros_packages']}"
             )
-            probe = _collect_official_dds_probe(
-                config,
-                config.artifact_dir,
-                image=baseline.runtime_image,
-                network="host",
+        if not official_baseline["micro_ros_agent_available"]:
+            blockers.append(
+                "Micro-XRCE-DDS / micro-ROS-Agent executable is missing from the configured runtime image"
             )
-            rosbag_profile = _record_official_rosbag(
-                config,
-                config.artifact_dir,
-                image=baseline.runtime_image,
-                network="host",
+        if official_baseline["direct_set_pose"]:
+            blockers.append("direct Gazebo set-pose behavior is not allowed in P0 official baseline")
+        if not official_baseline["official_dds_time_received"]:
+            blockers.append("official DDS probe did not receive /ap/v1/time")
+        if not official_baseline["official_dds_prearm_service_available"]:
+            blockers.append("official DDS probe did not find /ap/v1/prearm_check service")
+        if not rosbag_profile.get("ok"):
+            blockers.append("official baseline rosbag profile did not pass")
+        if not _route_is_official(baseline.external_nav_route):
+            blockers.append(f"external_nav_route={baseline.external_nav_route!r} is not official_dds")
+        if baseline.gazebo_bringup_mode != "official_gz_bringup":
+            blockers.append(
+                f"gazebo_bringup_mode={baseline.gazebo_bringup_mode!r} is not official_gz_bringup"
             )
-            node_lines = graph["ros2_node_list"]["lines"]
-            topic_lines = graph["ros2_topic_list"]["lines"]
-            probe_result = probe["result"]
-            graph_ap_topics = [topic for topic in topic_lines if topic.startswith("/ap/")]
-            probe_confirmed_ap_topics = []
-            if probe_result.get("time_received") and probe_result.get("time_topic"):
-                probe_confirmed_ap_topics.append(str(probe_result["time_topic"]))
-            ap_topics = sorted(set(graph_ap_topics + probe_confirmed_ap_topics))
-            missing_required_ap_topics = [
-                topic for topic in baseline.required_ap_topics if topic not in ap_topics
-            ]
-            official_baseline = {
-                **_official_baseline_common(config),
-                **_cartographer_dependency_summary(config),
-                **_official_ros_dependency_summary(config),
-                **_cartographer_config_summary(),
-                "ap_node_present": baseline.expected_ap_node in node_lines,
-                "graph_ap_topics": graph_ap_topics,
-                "probe_confirmed_ap_topics": probe_confirmed_ap_topics,
-                "ap_topics": ap_topics,
-                "missing_required_ap_topics": missing_required_ap_topics,
-                "ap_node_info_rc": graph["ap_node_info"]["rc"],
-                "official_dds_probe_rc": probe["rc"],
-                "official_dds_probe": probe_result,
-                "official_dds_time_received": bool(probe_result.get("time_received")),
-                "official_dds_prearm_service_available": bool(
-                    probe_result.get("prearm_service_available")
-                ),
-                "official_dds_prearm_success": probe_result.get("prearm_success"),
-                "process_status": host._compose_ps_status(config),
-                "official_container": host.OFFICIAL_BASELINE_CONTAINER,
-            }
-            blockers: list[str] = []
-            if not official_baseline["cartographer_ros_present"]:
-                blockers.append("cartographer_ros is not present in the configured SLAM image")
-            if not official_baseline["official_runtime_image_available"]:
-                blockers.append(official_baseline["official_runtime_image_error"])
-            if official_baseline["missing_official_ros_packages"]:
-                blockers.append(
-                    "official ROS packages are missing from the configured runtime image: "
-                    f"{official_baseline['missing_official_ros_packages']}"
-                )
-            if not official_baseline["micro_ros_agent_available"]:
-                blockers.append(
-                    "Micro-XRCE-DDS / micro-ROS-Agent executable is missing from the configured runtime image"
-                )
-            if official_baseline["direct_set_pose"]:
-                blockers.append("direct Gazebo set-pose behavior is not allowed in P0 official baseline")
-            if not official_baseline["official_dds_time_received"]:
-                blockers.append("official DDS probe did not receive /ap/v1/time")
-            if not official_baseline["official_dds_prearm_service_available"]:
-                blockers.append("official DDS probe did not find /ap/v1/prearm_check service")
-            if not rosbag_profile.get("ok"):
-                blockers.append("official baseline rosbag profile did not pass")
-            if not _route_is_official(baseline.external_nav_route):
-                blockers.append(f"external_nav_route={baseline.external_nav_route!r} is not official_dds")
-            if baseline.gazebo_bringup_mode != "official_gz_bringup":
-                blockers.append(
-                    f"gazebo_bringup_mode={baseline.gazebo_bringup_mode!r} is not official_gz_bringup"
-                )
-            summary = {
-                "ok": not blockers,
-                "blocked": bool(blockers),
-                "blockers": blockers,
-                "official_baseline": official_baseline,
-                "rosbag_profile": rosbag_profile,
-            }
-            _write_json(config.artifact_dir / "summary.json", summary)
-            _write_foxglove_notes(config.artifact_dir)
-        finally:
-            host._capture_official_baseline_log(config=config)
-            host._remove_official_baseline_container()
-            try:
-                host._compose_stop(config)
-            except DockerException:
-                pass
-        if summary is None:
-            summary = {
-                "ok": False,
-                "blocked": True,
-                "blockers": ["official baseline acceptance did not produce a summary"],
-            }
-            _write_json(config.artifact_dir / "summary.json", summary)
-        color = "green" if summary["ok"] else "red"
-        console.print(f"[{color}]Official baseline acceptance completed rc={0 if summary['ok'] else 30}[/{color}]")
-        console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")
-        return 0 if summary["ok"] else 30
+        summary = {
+            "ok": not blockers,
+            "blocked": bool(blockers),
+            "blockers": blockers,
+            "official_baseline": official_baseline,
+            "rosbag_profile": rosbag_profile,
+        }
+        _write_json(config.artifact_dir / "summary.json", summary)
+        _write_foxglove_notes(config.artifact_dir)
+    finally:
+        host._capture_official_baseline_log(config=config)
+        host._remove_official_baseline_container()
+        try:
+            host._compose_stop(config)
+        except DockerException:
+            pass
+    if summary is None:
+        summary = {
+            "ok": False,
+            "blocked": True,
+            "blockers": ["official baseline acceptance did not produce a summary"],
+        }
+        _write_json(config.artifact_dir / "summary.json", summary)
+    color = "green" if summary["ok"] else "red"
+    console.print(f"[{color}]Official baseline acceptance completed rc={0 if summary['ok'] else 30}[/{color}]")
+    console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")
+    return 0 if summary["ok"] else 30

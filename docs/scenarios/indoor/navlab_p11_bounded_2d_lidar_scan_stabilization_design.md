@@ -664,3 +664,11 @@ P11 不说明：
 - P12：motor bias / ESC lag / thrust multiplier / vibration 鲁棒性仿真，验证更真实的姿态扰动来源下 P11 水平复原仍安全。
 - P13：恢复 active frontier exploration strategy 优化，让探索走得更远、更稳。
 - P14：真机 tethered indoor preflight，先在保护/限位下验证 hover + scan integrity + stabilization，再考虑 active frontier。
+
+## Runtime Mode 分流
+
+- `docker + simulation`：保持当前 P11 bounded 2D compensation + P9 representative replay 验收路径。
+- `process + real`：只允许真实 `/scan` 和真实 attitude source 进入 stabilization 检查，不启动 P9 replay、official maze overlay、Gazebo/SITL 或 gazebo-sensor。
+- real mode 下如果代码路径试图使用 simulation-only replay/source/overlay，必须以 `runtime_mode_violation:*` blocker 失败。
+- P11 real mode 不再用官方 maze 作为任何输入；official maze 只能留在 simulation/Foxglove review 语义里。
+- P11 首版 real mode 的目标是边界隔离和真实 source claim 审计；完整真实 flight stabilization gate 后续基于 real-preflight topic contract 扩展。

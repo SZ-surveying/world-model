@@ -11,6 +11,18 @@ TaskType = type[OrchestrationTask]
 class TaskRegistry:
     _tasks: ClassVar[dict[str, TaskType]] = {}
     _default_modules_loaded: ClassVar[bool] = False
+    _public_task_names: ClassVar[frozenset[str]] = frozenset(
+        {
+            "build",
+            "doctor",
+            "hover",
+            "exploration-doctor",
+            "exploration",
+            "real-preflight-doctor",
+            "scan-robustness-doctor",
+            "scan-robustness",
+        }
+    )
 
     @classmethod
     def register(cls, task_cls: TaskType) -> TaskType:
@@ -29,6 +41,9 @@ class TaskRegistry:
     def create(cls, name: str) -> OrchestrationTask:
         cls._ensure_default_modules_loaded()
         normalized = cls._normalize_name(name)
+        if normalized not in cls._public_task_names:
+            available = ", ".join(cls.names()) or "<none>"
+            raise ValueError(f"unknown orchestration task '{name}'. Available tasks: {available}")
         try:
             task_cls = cls._tasks[normalized]
         except KeyError as exc:
@@ -39,7 +54,7 @@ class TaskRegistry:
     @classmethod
     def names(cls) -> tuple[str, ...]:
         cls._ensure_default_modules_loaded()
-        return tuple(sorted(cls._tasks))
+        return tuple(sorted(name for name in cls._tasks if name in cls._public_task_names))
 
     @classmethod
     def _ensure_default_modules_loaded(cls) -> None:
@@ -49,22 +64,10 @@ class TaskRegistry:
         for module_name in (
             "src.tasks.build",
             "src.tasks.doctor",
-            "src.tasks.acceptance",
-            "src.tasks.hover",
-            "src.tasks.hover_diagnostic",
-            "src.tasks.hover_slam_diagnostic",
-            "src.tasks.official_baseline",
-            "src.tasks.official_maze_x2",
-            "src.tasks.rangefinder_imu",
-            "src.tasks.slam_backend",
-            "src.tasks.fcu_controller",
-            "src.tasks.frame_contract",
-            "src.tasks.slam_hover",
-            "src.tasks.motion_gate",
-            "src.tasks.exploration_gate",
-            "src.tasks.scan_integrity_gate",
-            "src.tasks.scan_stabilization_gate",
-            "src.tasks.airframe_disturbance_gate",
+            "src.tasks.built_in.hover",
+            "src.tasks.built_in.exploration",
+            "src.tasks.built_in.real_preflight",
+            "src.tasks.built_in.scan_robustness",
         ):
             import_module(module_name)
 

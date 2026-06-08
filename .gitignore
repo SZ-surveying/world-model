@@ -11,8 +11,10 @@ wheels/
 
 .env
 
+core
 .codex
 .sim_ros2_overlay/
 .vscode/
 
+artifacts/
 scripts/command/logs
