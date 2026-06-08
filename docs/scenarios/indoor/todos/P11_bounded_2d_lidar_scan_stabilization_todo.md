@@ -132,6 +132,7 @@ P11 要在 P10 scan integrity gate 已完成后，基于 P9 representative repla
 - [x] summary 记录 `motion_profile=p9_representative_replay`。
 - [x] summary 记录 `baseline_mode=p10_drop_only`。
 - [x] baseline same-run drop-only estimate artifact 存在。
+- [x] 文档说明 same-run estimate 不是独立 A/B，baseline availability 可能被低估。
 - [x] baseline SLAM/ExternalNav/FCU health 可评价。
 - [x] 如果误用 P8 slow profile，blocker 包含 `motion_profile_not_p9_representative_replay`。
 
@@ -156,9 +157,10 @@ P11 要在 P10 scan integrity gate 已完成后，基于 P9 representative repla
 - [x] `scan_stabilization_claim=evaluated`。
 - [x] candidate artifact 存在。
 - [x] candidate `/scan` rate 满足 `min_stabilized_scan_rate_hz`。
-- [ ] 如果 tilt 分布进入 compensation zone，`compensated_scan_count > 0`。
+- [x] 如果 live tilt 分布进入 compensation zone，`compensated_scan_count > 0`；否则 P11.7 fault injection 必须证明 compensation path 可触发。
 - [x] 如果未进入 compensation zone，summary 明确 `compensation_not_triggered_reason`。
 - [x] `false_wall_risk_ok=true`。
+- [x] 定义 `false_wall_risk_ok` 首版计算：`floor_hit_risk_beam_ratio <= max_floor_hit_risk_beam_ratio`，并结合 floor-hit/hard-tilt/SLAM health。
 - [x] SLAM/ExternalNav/FCU health 不退化。
 
 ## P11.6 baseline vs candidate 对比
@@ -172,6 +174,7 @@ P11 要在 P10 scan integrity gate 已完成后，基于 P9 representative repla
 - [x] 计算 `scan_availability_improved`。
 - [x] 计算 `slam_health_regressed`。
 - [x] 计算 `map_artifact_risk_ok`。
+- [x] 文档说明 `map_artifact_risk_ok` 首版是 false-wall/floor-hit/SLAM health 代理，不是完整 map 差分。
 - [x] 如果 scan 数量增加但假墙风险上升，gate fail。
 - [x] 如果 candidate 比 baseline 退化，gate fail 或明确 blocker。
 

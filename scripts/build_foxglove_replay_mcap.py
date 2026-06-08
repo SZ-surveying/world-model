@@ -79,6 +79,7 @@ def main() -> int:
         summary = build_replay(
             run_dir=run_dir,
             maze_path=Path(args.maze).expanduser(),
+            topic_profile_path=Path(args.profile).expanduser(),
             resolution_m=args.resolution,
             margin_m=args.margin,
             bbox_override=parse_bbox(args.bbox) if args.bbox else None,
@@ -96,6 +97,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a Foxglove-lite replay MCAP with the official maze overlay.")
     parser.add_argument("run", nargs="?", help="Run id like 20260607_185314, or a run artifact directory. Defaults to latest run.")
     parser.add_argument("--maze", default=str(DEFAULT_MAZE), help="Path to official ardupilot_gz maze.sdf")
+    parser.add_argument("--profile", default=str(FOXGLOVE_LITE_PROFILE), help="Foxglove-lite topic profile")
     parser.add_argument("--resolution", type=float, default=DEFAULT_RESOLUTION_M, help="Official maze overlay resolution in meters")
     parser.add_argument("--margin", type=float, default=DEFAULT_MARGIN_M, help="Auto crop margin in meters")
     parser.add_argument("--bbox", help="Explicit crop bbox as xmin,ymin,xmax,ymax in map frame")
@@ -138,6 +140,7 @@ def build_replay(
     *,
     run_dir: Path,
     maze_path: Path,
+    topic_profile_path: Path = FOXGLOVE_LITE_PROFILE,
     resolution_m: float = DEFAULT_RESOLUTION_M,
     margin_m: float = DEFAULT_MARGIN_M,
     bbox_override: BBox | None = None,
@@ -147,7 +150,7 @@ def build_replay(
     raw_mcap = run_dir / RAW_MCAP_RELATIVE
     output_mcap = run_dir / FOXGLOVE_MCAP_RELATIVE
     p8_summary_path = run_dir / "summary.json"
-    topic_profile = load_lite_topic_profile()
+    topic_profile = load_lite_topic_profile(topic_profile_path)
     blockers: list[str] = []
     if not p8_summary_path.is_file():
         blockers.append("P8 summary missing")

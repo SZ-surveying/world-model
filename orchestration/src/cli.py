@@ -6,6 +6,7 @@ import typer
 from rich.console import Console
 
 from src.tasks.acceptance import AcceptanceTask
+from src.tasks.airframe_disturbance_gate import AirframeDisturbanceGateAcceptanceTask, AirframeDisturbanceGateDoctorTask
 from src.tasks.build import BuildTask, ImageKind
 from src.tasks.doctor import DoctorTask
 from src.tasks.exploration_gate import ExplorationGateAcceptanceTask, ExplorationGateDoctorTask
@@ -371,6 +372,49 @@ def scan_stabilization_gate_acceptance_command(
 ) -> None:
     task = cast(ScanStabilizationGateAcceptanceTask, TaskRegistry.create("scan-stabilization-gate-acceptance"))
     raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+
+
+@app.command("airframe-disturbance-gate-doctor")
+def airframe_disturbance_gate_doctor_command(
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+) -> None:
+    task = cast(AirframeDisturbanceGateDoctorTask, TaskRegistry.create("airframe-disturbance-gate-doctor"))
+    raise typer.Exit(task.run(config_path=config, console=console))
+
+
+@app.command("airframe-disturbance-gate-acceptance")
+def airframe_disturbance_gate_acceptance_command(
+    duration_sec: Annotated[
+        float,
+        typer.Argument(help="P12 airframe disturbance profile sweep duration budget in seconds"),
+    ] = 240.0,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", help="NavLab TOML profile path"),
+    ] = None,
+    live: Annotated[
+        bool,
+        typer.Option("--live", help="Run the disturbed P9 replay through the P11 stabilization gate"),
+    ] = False,
+    live_profiles: Annotated[
+        str,
+        typer.Option("--live-profiles", help="Comma-separated P12 profiles to run through full live P9 replay"),
+    ] = "",
+) -> None:
+    task = cast(AirframeDisturbanceGateAcceptanceTask, TaskRegistry.create("airframe-disturbance-gate-acceptance"))
+    profiles = tuple(item.strip() for item in live_profiles.split(",") if item.strip())
+    raise typer.Exit(
+        task.run(
+            config_path=config,
+            duration_sec=duration_sec,
+            live_replay=live,
+            live_profiles=profiles,
+            console=console,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -101,6 +101,7 @@ P11_REQUIRED_SCAN_STABILIZATION_KEYS = (
     "min_lidar_height_m",
     "min_downward_ray_z",
     "max_scan_attitude_time_offset_ms",
+    "max_attitude_source_age_ms",
     "min_attitude_rate_hz",
     "min_stabilized_scan_rate_hz",
     "publish_debug_scan",
@@ -195,6 +196,8 @@ def _validate_p11_config(config: RunConfig) -> list[str]:
             blockers.append(f"scan_stabilization_config_invalid: {name} must be in [0, 1]")
     if p11.max_vertical_projection_error_m <= 0.0:
         blockers.append("scan_stabilization_config_invalid: max_vertical_projection_error_m must be positive")
+    if p11.max_attitude_source_age_ms <= 0.0:
+        blockers.append("scan_stabilization_config_invalid: max_attitude_source_age_ms must be positive")
     if gate.replay_readiness_timeout_sec <= 0.0:
         blockers.append("scan_stabilization_config_invalid: replay_readiness_timeout_sec must be positive")
     if gate.controller_summary_timeout_sec <= 0.0:

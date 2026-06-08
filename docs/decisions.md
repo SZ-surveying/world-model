@@ -306,7 +306,7 @@ Decision: define P11 as a bounded 2D lidar scan stabilization gate based on the 
 
 Basis: P10 proved that hard tilted scans can be dropped safely, but higher-speed representative replay can reduce SLAM scan availability if P10 remains purely drop-only.
 
-Reason: the next risk is medium roll/pitch during faster motion, not a new exploration strategy. P11 should compare a P10 drop-only baseline against a bounded 2D projection candidate under the P9 replay motion profile, keep all pass/compensate/drop thresholds configurable, and preserve the P10 rule that hard tilt and floor-hit risk are rejected instead of being projected into fake walls. Broader exploration strategy optimization moves to P12+ after the 2D scan input contract is stable.
+Reason: the next risk is medium roll/pitch during faster motion, not a new exploration strategy. P11 should compare a P10 drop-only baseline against a bounded 2D projection candidate under the P9 replay motion profile, keep all pass/compensate/drop thresholds configurable, and preserve the P10 rule that hard tilt and floor-hit risk are rejected instead of being projected into fake walls. Broader exploration strategy optimization moves after P12 airframe disturbance robustness, once the scan input contract is stable under realistic motor/ESC/vibration profiles.
 
 ## 2026-06-08: P11 keeps live replay conservative when tilt stays below passthrough
 
@@ -323,3 +323,35 @@ Decision: give P11 representative replay an explicit `replay_readiness_timeout_s
 Basis: failed P11 artifact `artifacts/ros/navlab_companion_sitl_gazebo/20260608_135843/summary.json` had healthy scan stabilization topics but failed because the P8 replay probe timed out before map/controller readiness fully settled, while `controller_runtime_summary.json` appeared later in the same artifact.
 
 Reason: P11 is testing bounded scan stabilization under the P9 representative replay profile, not the minimum P8 slow exploration profile. The scan chain can be healthy while the replay layer needs a longer readiness window for Cartographer map publication and FCU hold-ready completion. Making these waits explicit config fields avoids hiding the timing dependency in code and prevents a late controller summary from being misreported as missing.
+
+## 2026-06-08: P12 focuses on airframe disturbance scan robustness
+
+Decision: define P12 as the motor bias / ESC lag / thrust multiplier / vibration robustness gate for body-fixed 2D lidar scan stabilization, not as an active frontier exploration phase.
+
+Basis: P10/P11 proved scan integrity and bounded 2D stabilization under the current simulated attitude envelope, but the simulated airframe is still too ideal compared with a real drone whose motors, props and ESCs are not perfectly matched.
+
+Reason: before making exploration more aggressive, the system must prove that P11 horizontal recovery remains safe when realistic disturbance sources create sustained roll/pitch bias, response lag, dynamic overshoot and IMU vibration/noise. P12 should run clean and disturbed P9 representative replay profiles, keep all disturbance parameters configurable, compare scan/SLAM/ExternalNav/FCU/map health against clean baseline, and make hard disturbance fail clearly instead of silently polluting SLAM. Active frontier exploration moves after this robustness envelope is known.
+
+## 2026-06-08: P12 uses plugin-level ESC first-order lag
+
+Decision: implement P12 ESC lag as an ArduPilot Gazebo plugin extension instead of the earlier PID/frequency proxy. The official-baseline image now applies `patches/ardupilot_gazebo_esc_lag.patch`, each `<control>` may declare `<escTimeConstantMs>`, and P12 SDF overlays write per-motor ESC time constants directly.
+
+Basis: the proxy approach was useful for the first deterministic profile sweep, but it did not actually model command response delay. The user explicitly required real plugin-level first-order lag before treating P12 as complete.
+
+Reason: P12 is the last scan/airframe robustness gate before real-drone trials. A real first-order command filter keeps the disturbance at the motor-control boundary, preserves per-motor thrust multiplier semantics, avoids pretending `p_gain` is ESC physics, and lets `mild_bias`, `esc_lag`, and `vibration` live P9 replays exercise the same stabilized `/scan` contract under more realistic attitude dynamics.
+
+## 2026-06-08: P10/P11/P12 review follow-up tightens scan robustness contracts
+
+Decision: add explicit attitude-source age gates for P10/P11, document P11 live compensation limits, and make P12 ESC patch reproducibility and map-risk scope explicit.
+
+Basis: review found that scan-attitude timestamp offset is not enough to detect a silent attitude source, P11 same-run baseline is not a true A/B flight, and P12's `escTimeConstantMs` plugin patch is an external dependency.
+
+Reason: stale attitude, biased baseline estimates, and patch drift are all failure modes that can look like healthy topic flow. P10/P11 now expose `max_attitude_source_age_ms=250.0`; P11 docs state current P9 live replay may not trigger compensation unless P12 disturbance profiles push tilt above passthrough; P12 docs record `ardupilot_gazebo` baseline commit `cc0290d964dfa373531963a8fc39093a0836af0a` and downgrade `map_artifact_score` to optional/future rather than a soft hard-gate placeholder.
+
+## 2026-06-08: P12 gates FCU mode during disturbed replay
+
+Decision: require each P12 live disturbed replay to prove FCU mode stays `GUIDED` throughout the configured disturbance window by reading `/ap/v1/status.mode` from the raw MCAP and comparing it to `required_fcu_mode_number=4`.
+
+Basis: P12 can otherwise pass scan/SLAM health even if a disturbance profile pushes ArduPilot into RTL/LAND/failsafe and the replay keeps publishing stale or degraded data.
+
+Reason: the mode gate uses `/navlab/exploration/status` first-to-last samples as the conservative P9 replay disturbance window, so pre-replay bootstrap is excluded but the active exploration/motion period is covered. `/ap/v1/status` and the window topic are required in the P12 raw rosbag profile; missing status data, invalid `mode_number`, or any non-GUIDED sample now produces an explicit blocker instead of being hidden inside generic FCU health.

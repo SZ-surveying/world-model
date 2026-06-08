@@ -324,6 +324,7 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.scan_integrity_gate.status_topic == "/navlab/scan_integrity/status"
     assert config.scan_integrity_gate.attitude_source_topic == "/imu"
     assert config.scan_integrity_gate.attitude_source_type == "imu"
+    assert config.scan_integrity_gate.max_attitude_source_age_ms == 250.0
     assert config.scan_integrity_gate.hard_tilt_deg == 6.0
     assert config.scan_integrity_gate.uses_gazebo_truth_as_input is False
     assert config.scan_integrity_gate.scan_integrity_claim == "evaluated"
@@ -335,6 +336,7 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.scan_stabilization.passthrough_tilt_deg == 3.0
     assert config.scan_stabilization.compensation_tilt_deg == 8.0
     assert config.scan_stabilization.hard_drop_tilt_deg == 10.0
+    assert config.scan_stabilization.max_attitude_source_age_ms == 250.0
     assert config.scan_stabilization.uses_gazebo_truth_as_input is False
     assert config.scan_stabilization_gate.rosbag_profile == "profiles/navlab-scan-stabilization-gate-rosbag-topics.txt"
     assert config.scan_stabilization_gate.motion_profile == "p9_representative_replay"
@@ -1588,6 +1590,8 @@ def test_p11_blockers_detect_candidate_scan_availability_regression() -> None:
 def test_orchestration_task_registry_contains_navlab_workflows() -> None:
     assert TaskRegistry.names() == (
         "acceptance",
+        "airframe-disturbance-gate-acceptance",
+        "airframe-disturbance-gate-doctor",
         "build",
         "doctor",
         "exploration-gate-acceptance",

@@ -10,6 +10,7 @@ from pathlib import Path
 from navlab.common.logging import configure_sim_logging, logger
 from navlab.common.process_manager import ProcessManager
 from navlab.gazebo_sensor.config import (
+    AirframeDisturbanceRuntimeConfig,
     DownRangefinderRuntimeConfig,
     ScanIntegrityRuntimeConfig,
     ScanStabilizationRuntimeConfig,
@@ -42,6 +43,7 @@ class X2SensorLaunchConfig:
     down_rangefinder_frame_id: str
     scan_integrity_enabled: bool
     scan_stabilization_enabled: bool
+    airframe_disturbance_enabled: bool
 
     @classmethod
     def from_config(cls) -> X2SensorLaunchConfig:
@@ -49,6 +51,7 @@ class X2SensorLaunchConfig:
         down_rangefinder = DownRangefinderRuntimeConfig.load()
         scan_integrity = ScanIntegrityRuntimeConfig.load()
         scan_stabilization = ScanStabilizationRuntimeConfig.load()
+        airframe_disturbance = AirframeDisturbanceRuntimeConfig.load()
         return cls(
             scan_source=runtime.scan_source,
             profile_path=runtime.profile,
@@ -71,6 +74,7 @@ class X2SensorLaunchConfig:
             down_rangefinder_frame_id=down_rangefinder.frame_id,
             scan_integrity_enabled=scan_integrity.enabled,
             scan_stabilization_enabled=scan_stabilization.enabled,
+            airframe_disturbance_enabled=airframe_disturbance.enabled,
         )
 
 
@@ -157,6 +161,14 @@ def build_scan_stabilization_filter_command() -> list[str]:
     ]
 
 
+def build_airframe_disturbance_runtime_command() -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "navlab.gazebo_sensor.airframe_disturbance_runtime",
+    ]
+
+
 def wait_for_virtual_serial_link(path: Path, *, timeout_sec: float = VIRTUAL_SERIAL_STARTUP_TIMEOUT_SEC) -> None:
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
@@ -199,6 +211,11 @@ class X2SensorRuntime:
             self._manager.start_subprocess(
                 "down_rangefinder_sender",
                 build_down_rangefinder_sender_command(),
+            )
+        if self._config.airframe_disturbance_enabled:
+            self._manager.start_subprocess(
+                "airframe_disturbance_runtime",
+                build_airframe_disturbance_runtime_command(),
             )
         if self._config.scan_source != "x2_virtual_serial":
             logger.info("scan_source={} starts only the ideal scan bridge", self._config.scan_source)

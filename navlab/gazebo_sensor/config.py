@@ -65,6 +65,7 @@ DEFAULT_SCAN_INTEGRITY_HARD_TILT_DEG = 6.0
 DEFAULT_SCAN_INTEGRITY_MAX_DROPPED_SCAN_RATIO = 0.05
 DEFAULT_SCAN_INTEGRITY_MAX_CLIPPED_BEAM_RATIO = 0.20
 DEFAULT_SCAN_INTEGRITY_MAX_SCAN_ATTITUDE_OFFSET_MS = 50.0
+DEFAULT_SCAN_INTEGRITY_MAX_ATTITUDE_SOURCE_AGE_MS = 250.0
 DEFAULT_SCAN_INTEGRITY_MIN_ATTITUDE_RATE_HZ = 20.0
 DEFAULT_SCAN_INTEGRITY_FLOOR_HIT_GUARD_RANGE_M = 8.0
 DEFAULT_SCAN_INTEGRITY_MIN_LIDAR_HEIGHT_M = 0.25
@@ -90,8 +91,30 @@ DEFAULT_SCAN_STABILIZATION_MAX_REJECTED_BEAM_RATIO = 0.35
 DEFAULT_SCAN_STABILIZATION_MIN_RETAINED_BEAM_RATIO = 0.55
 DEFAULT_SCAN_STABILIZATION_MAX_FLOOR_HIT_RISK_RATIO = 0.05
 DEFAULT_SCAN_STABILIZATION_MAX_SCAN_ATTITUDE_OFFSET_MS = 50.0
+DEFAULT_SCAN_STABILIZATION_MAX_ATTITUDE_SOURCE_AGE_MS = 250.0
 DEFAULT_SCAN_STABILIZATION_MIN_ATTITUDE_RATE_HZ = 20.0
 DEFAULT_SCAN_STABILIZATION_MIN_STABILIZED_SCAN_RATE_HZ = 5.0
+
+DEFAULT_AIRFRAME_DISTURBANCE_ENABLED = False
+DEFAULT_AIRFRAME_DISTURBANCE_PROFILE = "clean"
+DEFAULT_AIRFRAME_DISTURBANCE_INJECTION_LAYER = "gazebo_motor_model"
+DEFAULT_AIRFRAME_DISTURBANCE_SEED = "12012"
+DEFAULT_AIRFRAME_DISTURBANCE_MOTOR_COUNT = "4"
+DEFAULT_AIRFRAME_DISTURBANCE_THRUST_MULTIPLIERS = "1.0,1.0,1.0,1.0"
+DEFAULT_AIRFRAME_DISTURBANCE_ESC_LAG_MS = "0.0,0.0,0.0,0.0"
+DEFAULT_AIRFRAME_DISTURBANCE_ESC_LAG_MODEL = "first_order"
+DEFAULT_AIRFRAME_DISTURBANCE_THRUST_NOISE_STD = 0.0
+DEFAULT_AIRFRAME_DISTURBANCE_THRUST_NOISE_CORRELATION_MS = 0.0
+DEFAULT_AIRFRAME_DISTURBANCE_MOTOR_JITTER_HZ = 0.0
+DEFAULT_AIRFRAME_DISTURBANCE_IMU_VIBRATION_ENABLED = False
+DEFAULT_AIRFRAME_DISTURBANCE_IMU_INPUT_TOPIC = "/navlab/imu/raw"
+DEFAULT_AIRFRAME_DISTURBANCE_IMU_OUTPUT_TOPIC = "/imu"
+DEFAULT_AIRFRAME_DISTURBANCE_IMU_GYRO_NOISE_STD_DPS = 0.0
+DEFAULT_AIRFRAME_DISTURBANCE_IMU_ACCEL_NOISE_STD_MPS2 = 0.0
+DEFAULT_AIRFRAME_DISTURBANCE_IMU_VIBRATION_FREQ_HZ = 0.0
+DEFAULT_AIRFRAME_DISTURBANCE_IMU_VIBRATION_ROLL_PITCH_AMP_DEG = 0.0
+DEFAULT_AIRFRAME_DISTURBANCE_STATUS_TOPIC = "/navlab/airframe_disturbance/status"
+DEFAULT_AIRFRAME_DISTURBANCE_EVENTS_TOPIC = "/navlab/airframe_disturbance/events"
 
 
 @dataclass(slots=True)
@@ -263,6 +286,7 @@ class ScanIntegrityConfig:
     max_dropped_scan_ratio: FloatWithSource
     max_clipped_beam_ratio: FloatWithSource
     max_scan_attitude_time_offset_ms: FloatWithSource
+    max_attitude_source_age_ms: FloatWithSource
     min_attitude_rate_hz: FloatWithSource
     floor_hit_guard_range_m: FloatWithSource
     min_lidar_height_m: FloatWithSource
@@ -287,6 +311,7 @@ class ScanIntegrityRuntimeConfig:
     max_dropped_scan_ratio: float
     max_clipped_beam_ratio: float
     max_scan_attitude_time_offset_ms: float
+    max_attitude_source_age_ms: float
     min_attitude_rate_hz: float
     floor_hit_guard_range_m: float
     min_lidar_height_m: float
@@ -312,6 +337,7 @@ class ScanIntegrityRuntimeConfig:
             max_dropped_scan_ratio=config.max_dropped_scan_ratio.value,
             max_clipped_beam_ratio=config.max_clipped_beam_ratio.value,
             max_scan_attitude_time_offset_ms=config.max_scan_attitude_time_offset_ms.value,
+            max_attitude_source_age_ms=config.max_attitude_source_age_ms.value,
             min_attitude_rate_hz=config.min_attitude_rate_hz.value,
             floor_hit_guard_range_m=config.floor_hit_guard_range_m.value,
             min_lidar_height_m=config.min_lidar_height_m.value,
@@ -345,6 +371,7 @@ class ScanStabilizationConfig:
     min_lidar_height_m: FloatWithSource
     min_downward_ray_z: FloatWithSource
     max_scan_attitude_time_offset_ms: FloatWithSource
+    max_attitude_source_age_ms: FloatWithSource
     min_attitude_rate_hz: FloatWithSource
     min_stabilized_scan_rate_hz: FloatWithSource
     publish_debug_scan: BoolWithSource
@@ -376,6 +403,7 @@ class ScanStabilizationRuntimeConfig:
     min_lidar_height_m: float
     min_downward_ray_z: float
     max_scan_attitude_time_offset_ms: float
+    max_attitude_source_age_ms: float
     min_attitude_rate_hz: float
     min_stabilized_scan_rate_hz: float
     publish_debug_scan: bool
@@ -408,6 +436,7 @@ class ScanStabilizationRuntimeConfig:
             min_lidar_height_m=config.min_lidar_height_m.value,
             min_downward_ray_z=config.min_downward_ray_z.value,
             max_scan_attitude_time_offset_ms=config.max_scan_attitude_time_offset_ms.value,
+            max_attitude_source_age_ms=config.max_attitude_source_age_ms.value,
             min_attitude_rate_hz=config.min_attitude_rate_hz.value,
             min_stabilized_scan_rate_hz=config.min_stabilized_scan_rate_hz.value,
             publish_debug_scan=config.publish_debug_scan.value,
@@ -428,12 +457,88 @@ class ScanStabilizationRuntimeConfig:
                 blockers.append(f"scan_stabilization_config_invalid: {name} must be in [0, 1]")
         if self.max_vertical_projection_error_m <= 0.0:
             blockers.append("scan_stabilization_config_invalid: max_vertical_projection_error_m must be positive")
+        if self.max_attitude_source_age_ms <= 0.0:
+            blockers.append("scan_stabilization_config_invalid: max_attitude_source_age_ms must be positive")
         if self.input_scan_topic == self.output_scan_topic:
             blockers.append("scan_stabilization_config_invalid: input and output scan topics must differ")
         return blockers
 
     def to_summary(self) -> dict[str, object]:
         return {key: getattr(self, key) for key in self.__dataclass_fields__}
+
+
+@dataclass(slots=True)
+class AirframeDisturbanceConfig:
+    enabled: BoolWithSource
+    profile: ValueWithSource
+    injection_layer: ValueWithSource
+    seed: ValueWithSource
+    motor_count: ValueWithSource
+    thrust_multipliers: ValueWithSource
+    esc_lag_ms: ValueWithSource
+    esc_lag_model: ValueWithSource
+    thrust_noise_std: FloatWithSource
+    thrust_noise_correlation_ms: FloatWithSource
+    motor_jitter_hz: FloatWithSource
+    imu_vibration_enabled: BoolWithSource
+    imu_input_topic: ValueWithSource
+    imu_output_topic: ValueWithSource
+    imu_gyro_noise_std_dps: FloatWithSource
+    imu_accel_noise_std_mps2: FloatWithSource
+    imu_vibration_freq_hz: FloatWithSource
+    imu_vibration_roll_pitch_amp_deg: FloatWithSource
+    status_topic: ValueWithSource
+    events_topic: ValueWithSource
+
+
+@dataclass(frozen=True, slots=True)
+class AirframeDisturbanceRuntimeConfig:
+    enabled: bool
+    profile: str
+    injection_layer: str
+    seed: int
+    motor_count: int
+    thrust_multipliers: tuple[float, ...]
+    esc_lag_ms: tuple[float, ...]
+    esc_lag_model: str
+    thrust_noise_std: float
+    thrust_noise_correlation_ms: float
+    motor_jitter_hz: float
+    imu_vibration_enabled: bool
+    imu_input_topic: str
+    imu_output_topic: str
+    imu_gyro_noise_std_dps: float
+    imu_accel_noise_std_mps2: float
+    imu_vibration_freq_hz: float
+    imu_vibration_roll_pitch_amp_deg: float
+    status_topic: str
+    events_topic: str
+
+    @classmethod
+    def load(cls) -> AirframeDisturbanceRuntimeConfig:
+        config = load_airframe_disturbance_config()
+        return cls(
+            enabled=config.enabled.value,
+            profile=config.profile.value,
+            injection_layer=config.injection_layer.value,
+            seed=_required_int(config.seed.value, key="seed"),
+            motor_count=_required_int(config.motor_count.value, key="motor_count"),
+            thrust_multipliers=_float_tuple(config.thrust_multipliers.value, key="thrust_multipliers"),
+            esc_lag_ms=_float_tuple(config.esc_lag_ms.value, key="esc_lag_ms"),
+            esc_lag_model=config.esc_lag_model.value,
+            thrust_noise_std=config.thrust_noise_std.value,
+            thrust_noise_correlation_ms=config.thrust_noise_correlation_ms.value,
+            motor_jitter_hz=config.motor_jitter_hz.value,
+            imu_vibration_enabled=config.imu_vibration_enabled.value,
+            imu_input_topic=config.imu_input_topic.value,
+            imu_output_topic=config.imu_output_topic.value,
+            imu_gyro_noise_std_dps=config.imu_gyro_noise_std_dps.value,
+            imu_accel_noise_std_mps2=config.imu_accel_noise_std_mps2.value,
+            imu_vibration_freq_hz=config.imu_vibration_freq_hz.value,
+            imu_vibration_roll_pitch_amp_deg=config.imu_vibration_roll_pitch_amp_deg.value,
+            status_topic=config.status_topic.value,
+            events_topic=config.events_topic.value,
+        )
 
 
 def load_x2_protocol_config(path: str | Path | None = None) -> X2ProtocolConfig:
@@ -578,6 +683,11 @@ def load_scan_integrity_config(path: str | Path | None = None) -> ScanIntegrityC
             "max_scan_attitude_time_offset_ms",
             DEFAULT_SCAN_INTEGRITY_MAX_SCAN_ATTITUDE_OFFSET_MS,
         ),
+        max_attitude_source_age_ms=resolve_float_value(
+            raw_integrity,
+            "max_attitude_source_age_ms",
+            DEFAULT_SCAN_INTEGRITY_MAX_ATTITUDE_SOURCE_AGE_MS,
+        ),
         min_attitude_rate_hz=resolve_float_value(
             raw_integrity, "min_attitude_rate_hz", DEFAULT_SCAN_INTEGRITY_MIN_ATTITUDE_RATE_HZ
         ),
@@ -682,6 +792,11 @@ def load_scan_stabilization_config(path: str | Path | None = None) -> ScanStabil
             "max_scan_attitude_time_offset_ms",
             DEFAULT_SCAN_STABILIZATION_MAX_SCAN_ATTITUDE_OFFSET_MS,
         ),
+        max_attitude_source_age_ms=resolve_float_value(
+            raw_stabilization,
+            "max_attitude_source_age_ms",
+            DEFAULT_SCAN_STABILIZATION_MAX_ATTITUDE_SOURCE_AGE_MS,
+        ),
         min_attitude_rate_hz=resolve_float_value(
             raw_stabilization,
             "min_attitude_rate_hz",
@@ -693,6 +808,102 @@ def load_scan_stabilization_config(path: str | Path | None = None) -> ScanStabil
             DEFAULT_SCAN_STABILIZATION_MIN_STABILIZED_SCAN_RATE_HZ,
         ),
         publish_debug_scan=resolve_bool_value(raw_stabilization, "publish_debug_scan", False),
+    )
+
+
+def load_airframe_disturbance_config(path: str | Path | None = None) -> AirframeDisturbanceConfig:
+    config_file, config = load_navlab_config(path)
+    raw_gazebo_sensor = section(config, "gazebo_sensor", path=config_file)
+    raw_disturbance = section(raw_gazebo_sensor, "airframe_disturbance", path=config_file, default={})
+    return AirframeDisturbanceConfig(
+        enabled=resolve_bool_value(
+            raw_disturbance,
+            "enabled",
+            DEFAULT_AIRFRAME_DISTURBANCE_ENABLED,
+        ),
+        profile=resolve_str_value(raw_disturbance, "profile", DEFAULT_AIRFRAME_DISTURBANCE_PROFILE),
+        injection_layer=resolve_str_value(
+            raw_disturbance,
+            "injection_layer",
+            DEFAULT_AIRFRAME_DISTURBANCE_INJECTION_LAYER,
+        ),
+        seed=resolve_str_value(raw_disturbance, "seed", DEFAULT_AIRFRAME_DISTURBANCE_SEED),
+        motor_count=resolve_str_value(raw_disturbance, "motor_count", DEFAULT_AIRFRAME_DISTURBANCE_MOTOR_COUNT),
+        thrust_multipliers=resolve_str_value(
+            raw_disturbance,
+            "thrust_multipliers",
+            DEFAULT_AIRFRAME_DISTURBANCE_THRUST_MULTIPLIERS,
+        ),
+        esc_lag_ms=resolve_str_value(
+            raw_disturbance,
+            "esc_lag_ms",
+            DEFAULT_AIRFRAME_DISTURBANCE_ESC_LAG_MS,
+        ),
+        esc_lag_model=resolve_str_value(
+            raw_disturbance,
+            "esc_lag_model",
+            DEFAULT_AIRFRAME_DISTURBANCE_ESC_LAG_MODEL,
+        ),
+        thrust_noise_std=resolve_float_value(
+            raw_disturbance,
+            "thrust_noise_std",
+            DEFAULT_AIRFRAME_DISTURBANCE_THRUST_NOISE_STD,
+        ),
+        thrust_noise_correlation_ms=resolve_float_value(
+            raw_disturbance,
+            "thrust_noise_correlation_ms",
+            DEFAULT_AIRFRAME_DISTURBANCE_THRUST_NOISE_CORRELATION_MS,
+        ),
+        motor_jitter_hz=resolve_float_value(
+            raw_disturbance,
+            "motor_jitter_hz",
+            DEFAULT_AIRFRAME_DISTURBANCE_MOTOR_JITTER_HZ,
+        ),
+        imu_vibration_enabled=resolve_bool_value(
+            raw_disturbance,
+            "imu_vibration_enabled",
+            DEFAULT_AIRFRAME_DISTURBANCE_IMU_VIBRATION_ENABLED,
+        ),
+        imu_input_topic=resolve_str_value(
+            raw_disturbance,
+            "imu_input_topic",
+            DEFAULT_AIRFRAME_DISTURBANCE_IMU_INPUT_TOPIC,
+        ),
+        imu_output_topic=resolve_str_value(
+            raw_disturbance,
+            "imu_output_topic",
+            DEFAULT_AIRFRAME_DISTURBANCE_IMU_OUTPUT_TOPIC,
+        ),
+        imu_gyro_noise_std_dps=resolve_float_value(
+            raw_disturbance,
+            "imu_gyro_noise_std_dps",
+            DEFAULT_AIRFRAME_DISTURBANCE_IMU_GYRO_NOISE_STD_DPS,
+        ),
+        imu_accel_noise_std_mps2=resolve_float_value(
+            raw_disturbance,
+            "imu_accel_noise_std_mps2",
+            DEFAULT_AIRFRAME_DISTURBANCE_IMU_ACCEL_NOISE_STD_MPS2,
+        ),
+        imu_vibration_freq_hz=resolve_float_value(
+            raw_disturbance,
+            "imu_vibration_freq_hz",
+            DEFAULT_AIRFRAME_DISTURBANCE_IMU_VIBRATION_FREQ_HZ,
+        ),
+        imu_vibration_roll_pitch_amp_deg=resolve_float_value(
+            raw_disturbance,
+            "imu_vibration_roll_pitch_amp_deg",
+            DEFAULT_AIRFRAME_DISTURBANCE_IMU_VIBRATION_ROLL_PITCH_AMP_DEG,
+        ),
+        status_topic=resolve_str_value(
+            raw_disturbance,
+            "status_topic",
+            DEFAULT_AIRFRAME_DISTURBANCE_STATUS_TOPIC,
+        ),
+        events_topic=resolve_str_value(
+            raw_disturbance,
+            "events_topic",
+            DEFAULT_AIRFRAME_DISTURBANCE_EVENTS_TOPIC,
+        ),
     )
 
 
@@ -710,3 +921,10 @@ def _required_int(value: str, *, key: str) -> int:
         return int(value)
     except ValueError as exc:
         raise ValueError(f"Invalid value for '{key}': expected an integer") from exc
+
+
+def _float_tuple(value: str, *, key: str) -> tuple[float, ...]:
+    try:
+        return tuple(float(item.strip()) for item in value.split(",") if item.strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid value for '{key}': expected comma-separated floats") from exc

@@ -41,6 +41,7 @@ def _runtime_config() -> X2SensorLaunchConfig:
         down_rangefinder_frame_id="rangefinder_down_frame",
         scan_integrity_enabled=False,
         scan_stabilization_enabled=False,
+        airframe_disturbance_enabled=False,
     )
 
 

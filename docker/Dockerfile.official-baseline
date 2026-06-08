@@ -92,6 +92,11 @@ RUN --mount=type=cache,target=/root/.cache/git,sharing=locked \
       --branch "${MICRO_XRCE_DDS_GEN_REF}" \
       https://github.com/ardupilot/Micro-XRCE-DDS-Gen.git Micro-XRCE-DDS-Gen
 
+COPY patches/ardupilot_gazebo_esc_lag.patch /tmp/navlab_ardupilot_gazebo_esc_lag.patch
+
+RUN cd ardupilot_gazebo && \
+    patch -p1 < /tmp/navlab_ardupilot_gazebo_esc_lag.patch
+
 RUN --mount=type=cache,target=/root/.gradle,sharing=locked,id=official-baseline-gradle-java17 \
     cd Micro-XRCE-DDS-Gen && \
     ./gradlew --no-daemon assemble && \

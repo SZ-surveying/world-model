@@ -1,0 +1,81 @@
+--- a/src/ArduPilotPlugin.cc
++++ b/src/ArduPilotPlugin.cc
+@@ -24,6 +24,7 @@
+ 
+ #include <algorithm>
+ #include <chrono>
++#include <cmath>
+ #include <functional>
+ #include <memory>
+ #include <mutex>
+@@ -153,6 +154,18 @@
+   public: double samplingRate;
+   public: gz::math::OnePole<double> filter;
+ 
++  /// \brief Optional first-order ESC / motor response time constant.
++  public: double escTimeConstantMs = 0.0;
++
++  /// \brief Filtered normalized command state for ESC lag simulation.
++  public: double escFilteredRawCmd = 0.0;
++
++  /// \brief Whether the ESC lag filter has been initialized.
++  public: bool escFilterInitialized = false;
++
++  /// \brief Last wall-clock update for the ESC lag filter.
++  public: std::chrono::steady_clock::time_point escLastUpdateTime;
++
+   public: static double kDefaultRotorVelocitySlowdownSim;
+   public: static double kDefaultFrequencyCutoff;
+   public: static double kDefaultSamplingRate;
+@@ -746,6 +759,13 @@
+     // initialize filter to zero value
+     control.filter.Set(0.0);
+ 
++    // Optional first-order ESC lag in milliseconds. Keep legacy models at
++    // passthrough unless the SDF explicitly opts in.
++    control.escTimeConstantMs =
++          controlSDF->Get("escTimeConstantMs", control.escTimeConstantMs).first;
++    control.escTimeConstantMs =
++          controlSDF->Get("esc_time_constant_ms", control.escTimeConstantMs).first;
++
+     // note to use this filter, do
+     // stateFiltered = filter.Process(stateRaw);
+ 
+@@ -1660,6 +1680,8 @@
+                 {
+                   this->dataPtr->controls[i].outputReady = false;
+                   this->dataPtr->controls[i].cmd = 0.0;
++                  this->dataPtr->controls[i].escFilteredRawCmd = 0.0;
++                  this->dataPtr->controls[i].escFilterInitialized = false;
+ #if 0
+                   gzdbg << "apply input chan["
+                       << this->dataPtr->controls[i].channel
+@@ -1676,6 +1698,28 @@
+                   // bound incoming cmd between 0 and 1
+                   double raw_cmd = (pwm - pwm_min)/(pwm_max - pwm_min);
+                   raw_cmd = gz::math::clamp(raw_cmd, 0.0, 1.0);
++
++                  if (this->dataPtr->controls[i].escTimeConstantMs > 0.0)
++                  {
++                    const auto now = std::chrono::steady_clock::now();
++                    if (!this->dataPtr->controls[i].escFilterInitialized)
++                    {
++                      this->dataPtr->controls[i].escFilteredRawCmd = 0.0;
++                      this->dataPtr->controls[i].escLastUpdateTime = now;
++                      this->dataPtr->controls[i].escFilterInitialized = true;
++                    }
++                    const std::chrono::duration<double> elapsed =
++                        now - this->dataPtr->controls[i].escLastUpdateTime;
++                    this->dataPtr->controls[i].escLastUpdateTime = now;
++                    const double tau =
++                        std::max(1.0e-6, this->dataPtr->controls[i].escTimeConstantMs / 1000.0);
++                    const double alpha =
++                        gz::math::clamp(1.0 - std::exp(-elapsed.count() / tau), 0.0, 1.0);
++                    this->dataPtr->controls[i].escFilteredRawCmd +=
++                        alpha * (raw_cmd - this->dataPtr->controls[i].escFilteredRawCmd);
++                    raw_cmd = this->dataPtr->controls[i].escFilteredRawCmd;
++                  }
++
+                   this->dataPtr->controls[i].cmd =
+                       multiplier * (raw_cmd + offset);
+ #if 0

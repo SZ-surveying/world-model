@@ -64,6 +64,7 @@ class TaskRegistry:
             "src.tasks.exploration_gate",
             "src.tasks.scan_integrity_gate",
             "src.tasks.scan_stabilization_gate",
+            "src.tasks.airframe_disturbance_gate",
         ):
             import_module(module_name)
 

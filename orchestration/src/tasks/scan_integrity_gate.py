@@ -141,6 +141,7 @@ def _write_p10_sensor_config(config: RunConfig, path: Path, *, vendor_profile: P
                 "max_dropped_scan_ratio": p10.max_dropped_scan_ratio,
                 "max_clipped_beam_ratio": p10.max_clipped_beam_ratio,
                 "max_scan_attitude_time_offset_ms": p10.max_scan_attitude_time_offset_ms,
+                "max_attitude_source_age_ms": p10.max_attitude_source_age_ms,
                 "min_attitude_rate_hz": p10.min_attitude_rate_hz,
                 "floor_hit_guard_range_m": p10.floor_hit_guard_range_m,
                 "min_lidar_height_m": p10.min_lidar_height_m,
@@ -372,6 +373,8 @@ def _build_p10_doctor_summary(config: RunConfig, *, runtime_config: Path, includ
         blockers.append("P10 validated scan topic must match SLAM scan topic")
     if p10.raw_scan_topic == p10.validated_scan_topic or p10.normalized_scan_topic == p10.validated_scan_topic:
         blockers.append("P10 raw/normalized scan topics must not publish directly to /scan")
+    if p10.max_attitude_source_age_ms <= 0.0:
+        blockers.append("scan_integrity_config_invalid: max_attitude_source_age_ms must be positive")
     if p10.attitude_source_topic in {"/odometry", config.orchestration.slam_backend.truth_diagnostic_topic} or p10.attitude_source_topic.startswith("/gazebo"):
         blockers.append("P10 attitude source must not be Gazebo truth")
     if p10.scan_integrity_claim != "evaluated":

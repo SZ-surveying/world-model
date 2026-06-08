@@ -18,7 +18,7 @@ P10 要在进入真机试飞前，证明机体固连 2D lidar 在 roll/pitch 扰
 - [x] 新增 P10 TODO 文档。
 - [x] 在 `docs/README.md` 中加入 P10 design / TODO 入口。
 - [x] 在 master roadmap 中把 P10 定义为机体固连 lidar 姿态补偿与 scan integrity gate。
-- [x] 文档明确 P11 先做 2D scan 稳定化，原先的探索策略优化顺延到 P12+。
+- [x] 文档明确 P11 先做 2D scan 稳定化，P12 做 motor bias / ESC lag / vibration 鲁棒性仿真，探索策略优化后移。
 - [x] 文档明确 P10 不使用 Gazebo truth 作为 scan 修正输入。
 - [x] 文档明确 P10 首版优先 filter/clip/drop，不做假水平投影补偿。
 
@@ -56,6 +56,7 @@ P10 要在进入真机试飞前，证明机体固连 2D lidar 在 roll/pitch 扰
 - [x] 增加姿态源 allowlist 检查。
 - [x] 增加姿态源 rate 检查。
 - [x] 增加 attitude timestamp freshness 检查。
+- [x] 增加 `max_attitude_source_age_ms`，姿态源沉默超时 blocker 为 `attitude_source_age_too_high`。
 - [x] 多个姿态源同时配置时必须 fail，不能自动猜。
 - [x] 姿态源缺失时必须 fail，不能 fallback 到 unchecked `/scan`。
 
@@ -100,7 +101,7 @@ P10 要在进入真机试飞前，证明机体固连 2D lidar 在 roll/pitch 扰
 
 验收：
 
-- [x] 正常姿态下 floor-hit risk 接近 0 或低于阈值。
+- [x] 正常姿态下 `floor_hit_risk_beam_ratio <= max_floor_hit_risk_beam_ratio`。
 - [x] 下俯 fault injection 时 floor-hit risk 上升。
 - [x] 下俯超过阈值时 scan 被 clip/drop，而不是静默进入 SLAM。
 - [x] summary 包含 floor-hit risk 指标。
@@ -131,10 +132,12 @@ P10 要在进入真机试飞前，证明机体固连 2D lidar 在 roll/pitch 扰
 - [x] 支持 mild roll/pitch bias case。
 - [x] 支持 hard roll/pitch bias case。
 - [x] mild case 应触发 accept/warn，不应崩溃。
+- [x] mild case 的 `dropped_scan_ratio <= max_dropped_scan_ratio`。
 - [x] hard case 应触发 drop/blocked。
 - [x] fault injection 事件写入 summary。
 - [x] 如果 fault injection 没运行，P10 blocker 包含 `fault_injection_not_run`。
 - [x] 如果 hard tilt 没被拒绝，P10 blocker 包含 `hard_tilt_not_rejected`。
+- [x] hard bias removed 后 state 在恢复窗口内回到 `accept`。
 
 验收：
 
@@ -142,6 +145,7 @@ P10 要在进入真机试飞前，证明机体固连 2D lidar 在 roll/pitch 扰
 - [x] summary 记录 `fault_injection_ok=true`。
 - [x] hard tilt case 没有 unchecked scan 进入 `/scan`。
 - [x] fault-injection MCAP 或 replay evidence 可复查。
+- [x] bias injected -> hard drop -> bias removed -> state returns to accept。
 
 ## P10.7 Summary 和 blocker
 
@@ -214,6 +218,7 @@ P10 要在进入真机试飞前，证明机体固连 2D lidar 在 roll/pitch 扰
 - [x] attitude time sync 单元测试覆盖 fresh/stale/out-of-order。
 - [x] summary parser 单元测试覆盖 status JSON 聚合。
 - [x] topic owner 检查测试覆盖 raw `/scan` 被错误发布的情况。
+- [x] filter 未运行时，raw scan 不能错误发布到 `/scan`。
 - [x] fault injection profile 测试覆盖 hard tilt 必须被拒绝。
 - [x] docs 中的 P10 TODO 不含已经过期的 P8/P9 命令。
 
@@ -268,7 +273,7 @@ P10 全部完成必须满足：
 ### 2026-06-08 P10 文档初始化
 
 - 范围：新增 P10 设计文档和 TODO 文档，更新 README 与 master roadmap。
-- 结果：P10 被定义为机体固连 lidar 姿态补偿与 scan integrity gate；P11 先做 2D scan 稳定化，原先探索策略优化顺延到 P12+。
+- 结果：P10 被定义为机体固连 lidar 姿态补偿与 scan integrity gate；P11 先做 2D scan 稳定化，P12 做 motor bias / ESC lag / vibration 鲁棒性仿真。
 - 验证：已运行 `rg` 检查 P10/P0-P10 索引关键字；已运行 `git diff --check`，通过。
 - 备注：P10.0 文档和边界已完成；后续从 P10.1 topic contract、P10.2 姿态源 selector 和 P10.3 scan integrity filter 开始实现。
 

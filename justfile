@@ -51,3 +51,11 @@ navlab-scan-stabilization-gate-doctor *args='':
 # Run P11 bounded 2D lidar scan stabilization acceptance with P9 replay motion.
 navlab-scan-stabilization-gate-acceptance duration_sec='240' *args='':
     {{orchestration_cmd}} scan-stabilization-gate-acceptance {{duration_sec}} {{args}}
+
+# Check P12 airframe disturbance scan robustness gate prerequisites.
+navlab-airframe-disturbance-gate-doctor *args='':
+    {{orchestration_cmd}} airframe-disturbance-gate-doctor {{args}}
+
+# Run P12 airframe disturbance profile-sweep acceptance.
+navlab-airframe-disturbance-gate-acceptance duration_sec='240' *args='':
+    {{orchestration_cmd}} airframe-disturbance-gate-acceptance {{duration_sec}} {{args}}

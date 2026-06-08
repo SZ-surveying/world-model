@@ -407,6 +407,7 @@ class ScanIntegrityGateConfig:
     max_dropped_scan_ratio: float
     max_clipped_beam_ratio: float
     max_scan_attitude_time_offset_ms: float
+    max_attitude_source_age_ms: float
     min_attitude_rate_hz: float
     floor_hit_guard_range_m: float
     min_lidar_height_m: float
@@ -450,6 +451,7 @@ class ScanStabilizationConfig:
     min_lidar_height_m: float
     min_downward_ray_z: float
     max_scan_attitude_time_offset_ms: float
+    max_attitude_source_age_ms: float
     min_attitude_rate_hz: float
     min_stabilized_scan_rate_hz: float
     publish_debug_scan: bool
@@ -478,6 +480,64 @@ class ScanStabilizationGateConfig:
     scan_stabilization_claim: str
     replay_readiness_timeout_sec: float
     controller_summary_timeout_sec: float
+
+
+@dataclass(frozen=True, slots=True)
+class AirframeDisturbanceConfig:
+    enabled: bool
+    profile: str
+    injection_layer: str
+    seed: int
+    motor_count: int
+    thrust_multipliers: tuple[float, ...]
+    max_abs_thrust_multiplier_delta: float
+    esc_lag_ms: tuple[float, ...]
+    esc_lag_model: str
+    max_esc_lag_ms: float
+    thrust_noise_std: float
+    thrust_noise_correlation_ms: float
+    motor_jitter_hz: float
+    imu_vibration_enabled: bool
+    imu_input_topic: str
+    imu_output_topic: str
+    imu_gyro_noise_std_dps: float
+    imu_accel_noise_std_mps2: float
+    imu_vibration_freq_hz: float
+    imu_vibration_roll_pitch_amp_deg: float
+    status_topic: str
+    events_topic: str
+
+
+@dataclass(frozen=True, slots=True)
+class AirframeDisturbanceGateConfig:
+    rosbag_profile: str
+    motion_profile: str
+    scan_contract: str
+    profile_set: tuple[str, ...]
+    required_profiles: tuple[str, ...]
+    fault_profiles: tuple[str, ...]
+    allow_hard_profile_fail: bool
+    max_abs_roll_deg: float
+    max_abs_pitch_deg: float
+    max_rms_roll_deg: float
+    max_rms_pitch_deg: float
+    max_attitude_rate_dps: float
+    max_scan_drop_ratio: float
+    max_scan_compensated_ratio: float
+    max_floor_hit_rejected_ratio: float
+    min_stabilized_scan_rate_hz: float
+    min_slam_odom_rate_hz: float
+    max_map_artifact_score: float
+    max_external_nav_dropout_ratio: float
+    uses_official_maze_as_input: bool
+    official_maze_layer_role: str
+    fcu_status_topic: str
+    fcu_status_mode_field: str
+    fcu_mode_window_topic: str
+    required_fcu_mode_name: str
+    required_fcu_mode_number: int
+    airframe_disturbance_claim: str
+    horizontal_recovery_claim: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,6 +574,8 @@ class OrchestrationConfig:
     scan_integrity_gate: ScanIntegrityGateConfig
     scan_stabilization: ScanStabilizationConfig
     scan_stabilization_gate: ScanStabilizationGateConfig
+    airframe_disturbance: AirframeDisturbanceConfig
+    airframe_disturbance_gate: AirframeDisturbanceGateConfig
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -538,6 +600,8 @@ class OrchestrationConfig:
         scan_integrity_gate = _section(data, "scan_integrity_gate")
         scan_stabilization = _section(data, "scan_stabilization")
         scan_stabilization_gate = _section(data, "scan_stabilization_gate")
+        airframe_disturbance = _section(data, "airframe_disturbance")
+        airframe_disturbance_gate = _section(data, "airframe_disturbance_gate")
         foxglove_upload = _section(data, "foxglove_upload")
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
@@ -1177,6 +1241,10 @@ class OrchestrationConfig:
                     scan_integrity_gate.get("max_scan_attitude_time_offset_ms"),
                     50.0,
                 ),
+                max_attitude_source_age_ms=_as_float(
+                    scan_integrity_gate.get("max_attitude_source_age_ms"),
+                    250.0,
+                ),
                 min_attitude_rate_hz=_as_float(scan_integrity_gate.get("min_attitude_rate_hz"), 20.0),
                 floor_hit_guard_range_m=_as_float(scan_integrity_gate.get("floor_hit_guard_range_m"), 8.0),
                 min_lidar_height_m=_as_float(scan_integrity_gate.get("min_lidar_height_m"), 0.25),
@@ -1236,6 +1304,10 @@ class OrchestrationConfig:
                     scan_stabilization.get("max_scan_attitude_time_offset_ms"),
                     50.0,
                 ),
+                max_attitude_source_age_ms=_as_float(
+                    scan_stabilization.get("max_attitude_source_age_ms"),
+                    250.0,
+                ),
                 min_attitude_rate_hz=_as_float(scan_stabilization.get("min_attitude_rate_hz"), 20.0),
                 min_stabilized_scan_rate_hz=_as_float(
                     scan_stabilization.get("min_stabilized_scan_rate_hz"),
@@ -1291,6 +1363,122 @@ class OrchestrationConfig:
                 controller_summary_timeout_sec=_as_float(
                     scan_stabilization_gate.get("controller_summary_timeout_sec"),
                     45.0,
+                ),
+            ),
+            airframe_disturbance=AirframeDisturbanceConfig(
+                enabled=_as_bool(airframe_disturbance.get("enabled"), True),
+                profile=_as_str(airframe_disturbance.get("profile"), "nominal_realistic"),
+                injection_layer=_as_str(airframe_disturbance.get("injection_layer"), "gazebo_motor_model"),
+                seed=int(_as_float(airframe_disturbance.get("seed"), 12012.0)),
+                motor_count=int(_as_float(airframe_disturbance.get("motor_count"), 4.0)),
+                thrust_multipliers=_as_float_tuple(
+                    airframe_disturbance.get("thrust_multipliers"),
+                    (0.97, 1.03, 1.0, 0.98),
+                ),
+                max_abs_thrust_multiplier_delta=_as_float(
+                    airframe_disturbance.get("max_abs_thrust_multiplier_delta"),
+                    0.20,
+                ),
+                esc_lag_ms=_as_float_tuple(
+                    airframe_disturbance.get("esc_lag_ms"),
+                    (20.0, 35.0, 25.0, 45.0),
+                ),
+                esc_lag_model=_as_str(airframe_disturbance.get("esc_lag_model"), "first_order"),
+                max_esc_lag_ms=_as_float(airframe_disturbance.get("max_esc_lag_ms"), 120.0),
+                thrust_noise_std=_as_float(airframe_disturbance.get("thrust_noise_std"), 0.015),
+                thrust_noise_correlation_ms=_as_float(
+                    airframe_disturbance.get("thrust_noise_correlation_ms"),
+                    80.0,
+                ),
+                motor_jitter_hz=_as_float(airframe_disturbance.get("motor_jitter_hz"), 35.0),
+                imu_vibration_enabled=_as_bool(airframe_disturbance.get("imu_vibration_enabled"), True),
+                imu_input_topic=_as_str(airframe_disturbance.get("imu_input_topic"), "/navlab/imu/raw"),
+                imu_output_topic=_as_str(airframe_disturbance.get("imu_output_topic"), "/imu"),
+                imu_gyro_noise_std_dps=_as_float(airframe_disturbance.get("imu_gyro_noise_std_dps"), 0.8),
+                imu_accel_noise_std_mps2=_as_float(airframe_disturbance.get("imu_accel_noise_std_mps2"), 0.15),
+                imu_vibration_freq_hz=_as_float(airframe_disturbance.get("imu_vibration_freq_hz"), 80.0),
+                imu_vibration_roll_pitch_amp_deg=_as_float(
+                    airframe_disturbance.get("imu_vibration_roll_pitch_amp_deg"),
+                    0.4,
+                ),
+                status_topic=_as_str(
+                    airframe_disturbance.get("status_topic"),
+                    "/navlab/airframe_disturbance/status",
+                ),
+                events_topic=_as_str(
+                    airframe_disturbance.get("events_topic"),
+                    "/navlab/airframe_disturbance/events",
+                ),
+            ),
+            airframe_disturbance_gate=AirframeDisturbanceGateConfig(
+                rosbag_profile=_as_str(
+                    airframe_disturbance_gate.get("rosbag_profile"),
+                    "profiles/navlab-airframe-disturbance-gate-rosbag-topics.txt",
+                ),
+                motion_profile=_as_str(airframe_disturbance_gate.get("motion_profile"), "p9_representative_replay"),
+                scan_contract=_as_str(airframe_disturbance_gate.get("scan_contract"), "p11_stabilized_scan"),
+                profile_set=_as_str_tuple(
+                    airframe_disturbance_gate.get("profile_set"),
+                    ("clean", "mild_bias", "nominal_realistic", "hard_bias", "esc_lag", "vibration"),
+                ),
+                required_profiles=_as_str_tuple(
+                    airframe_disturbance_gate.get("required_profiles"),
+                    ("clean", "mild_bias", "nominal_realistic", "esc_lag", "vibration"),
+                ),
+                fault_profiles=_as_str_tuple(
+                    airframe_disturbance_gate.get("fault_profiles"),
+                    ("hard_bias", "invalid_config"),
+                ),
+                allow_hard_profile_fail=_as_bool(airframe_disturbance_gate.get("allow_hard_profile_fail"), True),
+                max_abs_roll_deg=_as_float(airframe_disturbance_gate.get("max_abs_roll_deg"), 8.0),
+                max_abs_pitch_deg=_as_float(airframe_disturbance_gate.get("max_abs_pitch_deg"), 8.0),
+                max_rms_roll_deg=_as_float(airframe_disturbance_gate.get("max_rms_roll_deg"), 3.0),
+                max_rms_pitch_deg=_as_float(airframe_disturbance_gate.get("max_rms_pitch_deg"), 3.0),
+                max_attitude_rate_dps=_as_float(airframe_disturbance_gate.get("max_attitude_rate_dps"), 120.0),
+                max_scan_drop_ratio=_as_float(airframe_disturbance_gate.get("max_scan_drop_ratio"), 0.20),
+                max_scan_compensated_ratio=_as_float(
+                    airframe_disturbance_gate.get("max_scan_compensated_ratio"),
+                    0.80,
+                ),
+                max_floor_hit_rejected_ratio=_as_float(
+                    airframe_disturbance_gate.get("max_floor_hit_rejected_ratio"),
+                    0.05,
+                ),
+                min_stabilized_scan_rate_hz=_as_float(
+                    airframe_disturbance_gate.get("min_stabilized_scan_rate_hz"),
+                    5.0,
+                ),
+                min_slam_odom_rate_hz=_as_float(airframe_disturbance_gate.get("min_slam_odom_rate_hz"), 10.0),
+                max_map_artifact_score=_as_float(airframe_disturbance_gate.get("max_map_artifact_score"), 0.15),
+                max_external_nav_dropout_ratio=_as_float(
+                    airframe_disturbance_gate.get("max_external_nav_dropout_ratio"),
+                    0.05,
+                ),
+                uses_official_maze_as_input=_as_bool(
+                    airframe_disturbance_gate.get("uses_official_maze_as_input"),
+                    False,
+                ),
+                official_maze_layer_role=_as_str(
+                    airframe_disturbance_gate.get("official_maze_layer_role"),
+                    "visualization_only",
+                ),
+                fcu_status_topic=_as_str(airframe_disturbance_gate.get("fcu_status_topic"), "/ap/v1/status"),
+                fcu_status_mode_field=_as_str(airframe_disturbance_gate.get("fcu_status_mode_field"), "mode"),
+                fcu_mode_window_topic=_as_str(
+                    airframe_disturbance_gate.get("fcu_mode_window_topic"),
+                    "/navlab/exploration/status",
+                ),
+                required_fcu_mode_name=_as_str(airframe_disturbance_gate.get("required_fcu_mode_name"), "GUIDED"),
+                required_fcu_mode_number=int(
+                    _as_float(airframe_disturbance_gate.get("required_fcu_mode_number"), 4.0)
+                ),
+                airframe_disturbance_claim=_as_str(
+                    airframe_disturbance_gate.get("airframe_disturbance_claim"),
+                    "evaluated",
+                ),
+                horizontal_recovery_claim=_as_str(
+                    airframe_disturbance_gate.get("horizontal_recovery_claim"),
+                    "evaluated",
                 ),
             ),
             foxglove_upload=FoxgloveUploadConfig(
@@ -1408,6 +1596,10 @@ class RunConfig:
     def scan_stabilization_gate_rosbag_profile(self) -> str:
         return self.orchestration.scan_stabilization_gate.rosbag_profile
 
+    @property
+    def airframe_disturbance_gate_rosbag_profile(self) -> str:
+        return self.orchestration.airframe_disturbance_gate.rosbag_profile
+
     @classmethod
     def from_config(
         cls,
@@ -1453,6 +1645,20 @@ def _as_float(value: Any, default: float) -> float:
     if value is None:
         return default
     return float(value)
+
+
+def _as_float_tuple(value: Any, default: tuple[float, ...] = ()) -> tuple[float, ...]:
+    if value is None:
+        return default
+    if isinstance(value, int | float):
+        return (float(value),)
+    if isinstance(value, str):
+        if not value.strip():
+            return default
+        return tuple(float(item.strip()) for item in value.split(",") if item.strip())
+    if isinstance(value, list | tuple):
+        return tuple(float(item) for item in value)
+    raise TypeError(f"expected float list, got {type(value).__name__}")
 
 
 def _as_args(value: Any) -> tuple[str, ...]:

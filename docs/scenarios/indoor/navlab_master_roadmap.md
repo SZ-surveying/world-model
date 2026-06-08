@@ -64,6 +64,7 @@ Gazebo 物理世界
 | P9 | 官方 maze 底图叠加与 Foxglove-lite 回放 | 官方 maze 1:1 底图、SLAM 叠加、裁剪和轻量 MCAP 上传 | `ardupilot_gz` maze.sdf + Foxglove | `todos/P9_official_maze_overlay_replay_todo.md` |
 | P10 | 机体固连 lidar 姿态补偿与 scan integrity gate | `/scan` 变成 attitude-validated scan，坏姿态 scan 不静默进入 SLAM | IMU/FCU attitude + X2 lidar + P9 overlay | `todos/P10_body_fixed_lidar_scan_integrity_todo.md` |
 | P11 | 有界 2D lidar 姿态稳定化 | 基于 P9 representative replay，对中等倾角 scan 做有界补偿且不引入假墙 | P9 replay + P10 integrity + 2D lidar projection | `todos/P11_bounded_2d_lidar_scan_stabilization_todo.md` |
+| P12 | 机体扰动下的 scan 水平复原鲁棒性 | motor bias / ESC lag / thrust multiplier / vibration 仿真，验证 P11 水平复原仍安全 | P11 scan stabilization + airframe disturbance profiles + P9 replay | `todos/P12_airframe_disturbance_scan_robustness_todo.md` |
 
 ## 4. Phase 详细定义
 
@@ -408,7 +409,7 @@ TODO：
 - 不使用 Gazebo truth pose/attitude 作为 scan 修正输入。
 - 不把官方 maze 底图作为 SLAM、planning 或控制输入。
 - 不做把坏 scan 投影成水平障碍的假补偿。
-- 不追求更大探索覆盖；P11 先解决中等倾角下的 2D scan 稳定化，探索策略优化顺延到 P12+。
+- 不追求更大探索覆盖；P11 先解决中等倾角下的 2D scan 稳定化，P12 继续验证 motor/ESC/vibration 扰动下的 scan 水平复原鲁棒性，探索策略优化后移到 P13。
 
 完成标准：
 
@@ -447,8 +448,8 @@ TODO：
 - 不把地面、天花板或垂直误差过大的 beam 伪造成墙。
 - 不使用 Gazebo truth pose/attitude 做补偿。
 - 不把官方 maze 底图作为补偿、SLAM、planning 或控制输入。
-- 不改探索策略本身；更激进的 exploration strategy 优化顺延到 P12+。
-- 不建模 motor bias / ESC lag；这进入后续鲁棒性 phase。
+- 不改探索策略本身；P12 先建模 motor bias / ESC lag / vibration，探索策略优化后移到 P13。
+- 不建模 motor bias / ESC lag；这进入 P12 鲁棒性 phase。
 
 完成标准：
 
@@ -468,6 +469,44 @@ TODO：
 TODO：
 
 - `docs/scenarios/indoor/todos/P11_bounded_2d_lidar_scan_stabilization_todo.md`
+
+### P12：机体扰动下的 2D lidar / SLAM 水平复原鲁棒性
+
+目标：
+
+- 在 P11 已经提供 bounded 2D scan stabilization 后，补上真机前的机体扰动仿真 gap。
+- 在仿真中显式加入 motor thrust multiplier / motor bias / ESC lag / thrust noise / IMU vibration profile。
+- 使用 P9 representative replay motion profile 验证更真实姿态扰动来源下的 P10/P11 scan 链路。
+- 对比 clean baseline 和 mild/nominal/esc_lag/vibration disturbed profiles。
+- 验证 P11 水平复原不会把地面、过大垂直误差或 hard tilt scan 投影成假墙。
+- 记录 roll/pitch/RMS/yaw-rate/attitude-rate、scan availability、drop/compensate/floor-hit、SLAM/ExternalNav/FCU/map risk。
+
+非目标：
+
+- 不做 active frontier exploration strategy；探索策略优化后移到 P13 或之后。
+- 不追求完整 maze 覆盖率。
+- 不引入 3D lidar 或 PointCloud pipeline。
+- 不使用 Gazebo truth pose/attitude 作为 scan 补偿、SLAM 或控制输入。
+- 不把 official maze overlay 作为算法输入；overlay 仅用于 review-only artifact。
+- 不放松 P10/P11 hard tilt、floor-hit、no-truth、unique-owner 安全边界。
+
+完成标准：
+
+- P12 主验收明确 `scan_contract=p11_stabilized_scan` 和 `motion_profile=p9_representative_replay`。
+- clean baseline ok。
+- `mild_bias`、`nominal_realistic`、`esc_lag`、`vibration` required profiles 全部 evaluated。
+- `hard_bias` 和 `invalid_config` fault profiles 全部 evaluated，危险扰动必须明确 fail/block。
+- 所有 motor/ESC/noise/vibration profile 和 gate 阈值来自配置并写入 summary。
+- `/scan` publisher 唯一，SLAM 不消费 raw scan，`owner.unique=true`，`set_pose_count=0`。
+- summary 明确 `airframe_disturbance_claim=evaluated`、`horizontal_recovery_claim=evaluated`、`uses_gazebo_truth_as_input=false`、`uses_official_maze_as_input=false`。
+
+设计文档：
+
+- `docs/scenarios/indoor/navlab_p12_airframe_disturbance_scan_robustness_design.md`
+
+TODO：
+
+- `docs/scenarios/indoor/todos/P12_airframe_disturbance_scan_robustness_todo.md`
 
 ## 5. 全局不可违反规则
 

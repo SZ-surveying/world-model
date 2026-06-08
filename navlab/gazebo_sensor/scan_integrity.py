@@ -271,9 +271,17 @@ def run() -> int:
             self._record_attitude(roll_deg=roll, pitch_deg=pitch, yaw_deg=yaw, stamp_sec=self._stamp_sec(message.header.stamp))
 
         def _attitude_rate(self) -> float:
+            now = time.monotonic()
+            cutoff = now - 5.0
+            self._attitude_times = [item for item in self._attitude_times if item >= cutoff]
             if len(self._attitude_times) < 2:
                 return 0.0
             return (len(self._attitude_times) - 1) / max(self._attitude_times[-1] - self._attitude_times[0], 0.001)
+
+        def _attitude_source_age_ms(self) -> float | None:
+            if self._attitude is None:
+                return None
+            return max(0.0, (time.monotonic() - float(self._attitude.get("monotonic") or 0.0)) * 1000.0)
 
         def _publish_status(self, payload: dict[str, Any]) -> None:
             self._status_publisher.publish(self._json_msg(payload))
@@ -316,6 +324,7 @@ def run() -> int:
                 "pitch_deg": pitch,
                 "tilt_deg": tilt,
                 "scan_attitude_time_offset_ms": time_offset_ms,
+                "attitude_source_age_ms": self._attitude_source_age_ms(),
                 "input_scan_stamp": self._stamp_sec(message.header.stamp),
                 "attitude_stamp": attitude.get("stamp_sec"),
                 "base_scan_static_tf_ok": self._base_scan_tf_ok,
@@ -345,6 +354,9 @@ def run() -> int:
                 blockers.append("missing_attitude_source")
             if self._range_height_m is None:
                 blockers.append("missing_lidar_height")
+            attitude_age_ms = self._attitude_source_age_ms()
+            if attitude_age_ms is not None and attitude_age_ms > config.max_attitude_source_age_ms:
+                blockers.append("attitude_source_age_too_high")
             if self._attitude_rate() < config.min_attitude_rate_hz and self._count > 5:
                 blockers.append("attitude_rate_too_low")
             if blockers:

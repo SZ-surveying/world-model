@@ -70,7 +70,7 @@ P11 不包含：
 - 不把所有 tilted scan 都投影成水平障碍。
 - 不放松 P10 hard tilt drop。
 - 不改探索策略本身；P11 评估 scan 输入稳定化，不评估新的 frontier/Nav2 策略。
-- 不建模 motor bias / ESC lag；这应进入后续鲁棒性 phase。
+- 不建模 motor bias / ESC lag；这进入 P12 机体扰动鲁棒性 phase。
 
 ## 4. 关键设计决定
 
@@ -295,6 +295,8 @@ max_compensated_tilt_deg
 floor_hit_rejected_count
 false_wall_risk_ok
 ```
+
+false-wall risk 的首版计算是保守布尔值：`false_wall_risk_ok = floor_hit_risk_beam_ratio <= max_floor_hit_risk_beam_ratio`，并结合 `floor_hit_rejected_count`、`hard_tilt_dropped`、`map_artifact_risk_ok` 和 SLAM health 做 gate。它不是完整 map artifact detector；如果后续 compensation 大量触发，应升级为 map/overlay 差分或连通分量分析。
 
 P11 不是单纯追求“scan 越多越好”。如果补偿后出现假墙风险、floor-hit 被投影成障碍、SLAM odom 退化，即使 scan 数量增加也不能通过。
 
@@ -654,11 +656,11 @@ P11 不说明：
 - 2D projection 在所有真实环境都物理正确。
 - 飞机可以频繁大角度高速机动。
 - 电机/ESC/桨叶偏置已经建模。
-- 探索策略已经最优或能覆盖完整 maze。
+- 主动 frontier 探索策略已经最优或能覆盖完整 maze。
 - 3D 障碍、透明/反光材质、动态物体已经解决。
 
 后续建议：
 
-- P12：motor bias / ESC lag / thrust multiplier 鲁棒性仿真，验证更真实的姿态扰动来源。
-- P13：恢复更激进的 exploration strategy 优化，让探索走得更远、更稳。
-- P14：真机 tethered indoor preflight，先在保护/限位下验证 hover + scan integrity + stabilization。
+- P12：motor bias / ESC lag / thrust multiplier / vibration 鲁棒性仿真，验证更真实的姿态扰动来源下 P11 水平复原仍安全。
+- P13：恢复 active frontier exploration strategy 优化，让探索走得更远、更稳。
+- P14：真机 tethered indoor preflight，先在保护/限位下验证 hover + scan integrity + stabilization，再考虑 active frontier。
