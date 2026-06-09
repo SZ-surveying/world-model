@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import sys
+from io import StringIO
 from pathlib import Path
 
 import pytest
 from python_on_whales.exceptions import DockerException
+from rich.console import Console
 from src.config import RunConfig
 from src.project_config import RuntimeConfig, load_orchestration_runtime_backend_config
 from src.runtime import (
@@ -465,11 +467,11 @@ require_explicit_services = false
         host._start_official_baseline_container(config)
 
 
-def test_real_preflight_summary_checks_required_and_forbidden_topics(
+def test_real_preflight_summary_does_not_gate_on_ros_topics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from src.tasks.real_preflight import _build_real_preflight_summary
+    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
 
     config_file = tmp_path / "real.toml"
     config_file.write_text(
@@ -479,7 +481,7 @@ require_explicit_services = false
 
 [orchestration.runtime.real.sources]
 required_real_topics = ["/scan", "/tf"]
-forbidden_simulation_input_topics = ["/gazebo/*"]
+forbidden_simulation_input_topics = ["/gazebo/*", "/sim/x2/status"]
 """.strip(),
         encoding="utf-8",
     )
@@ -494,13 +496,357 @@ forbidden_simulation_input_topics = ["/gazebo/*"]
 
     summary = _build_real_preflight_summary(
         config,
-        topics=("/scan", "/gazebo/default/world_stats"),
-        topic_probe_error=None,
+        serial_mavlink_probe=SerialMavlinkProbe(
+            summary={"enabled": False, "heartbeat_seen": False},
+            blockers=(),
+        ),
+        dependency_probe=DependencyProbe(
+            summary={
+                "required_command_groups": [{"found": True}],
+                "required_ros_packages": {},
+                "required_python_modules": {},
+            },
+            blockers=(),
+        ),
+    )
+
+    assert summary["ok"] is True
+    assert summary["blockers"] == []
+    assert "required_real_topics" not in summary["real_preflight"]
+    assert "forbidden_simulation_input_topics" not in summary["real_preflight"]
+
+
+def test_real_preflight_summary_blocks_non_process_real_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
+
+    config_file = tmp_path / "simulation.toml"
+    config_file.write_text(
+        """
+[orchestration.runtime.process]
+require_explicit_services = false
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "docker")
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "simulation")
+    config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
+
+    summary = _build_real_preflight_summary(
+        config,
+        serial_mavlink_probe=SerialMavlinkProbe(summary={"enabled": False, "heartbeat_seen": False}, blockers=()),
+        dependency_probe=DependencyProbe(
+            summary={
+                "required_command_groups": [{"found": True}],
+                "required_ros_packages": {},
+                "required_python_modules": {},
+            },
+            blockers=(),
+        ),
     )
 
     assert summary["ok"] is False
-    assert "required_real_topic_missing:/tf" in summary["blockers"]
-    assert "forbidden_simulation_topic_present:/gazebo/default/world_stats" in summary["blockers"]
+    assert "runtime_backend_must_be_process:docker" in summary["blockers"]
+    assert "runtime_mode_must_be_real:simulation" in summary["blockers"]
+
+
+def test_real_preflight_loads_serial_mavlink_task_config() -> None:
+    config = RunConfig.from_config(
+        config_path="orchestration/config.real.toml",
+        task_name="real-preflight-doctor",
+        run_id="20260609_000000",
+    )
+
+    serial_mavlink = config.orchestration.real_preflight.serial_mavlink
+    assert config.orchestration.real_preflight.valid_for_sec == 300.0
+    assert serial_mavlink.enabled is True
+    assert serial_mavlink.port == "/dev/ttyACM0"
+    assert serial_mavlink.baud == 115200
+    assert serial_mavlink.required_messages == ("HEARTBEAT", "SYS_STATUS", "ATTITUDE")
+    assert "DISTANCE_SENSOR" in serial_mavlink.optional_messages
+    dependencies = config.orchestration.real_preflight.dependencies
+    assert dependencies.required_command_groups == (("mavlink-routerd", "mavlink-router"), ("ros2",))
+    assert "mavros" in dependencies.required_ros_packages
+    assert "navlab_slam_bringup" in dependencies.required_ros_packages
+    assert dependencies.required_python_modules == ("navlab.companion.cli", "navlab.slam.cli")
+
+
+def test_real_preflight_dependency_probe_checks_host_real_hover_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.config import RealPreflightDependencyConfig
+    from src.tasks import real_preflight
+
+    def fake_which(command: str) -> str | None:
+        if command == "mavlink-routerd":
+            return "/usr/bin/mavlink-routerd"
+        return None
+
+    monkeypatch.setattr(real_preflight.shutil, "which", fake_which)
+    settings = RealPreflightDependencyConfig(
+        required_command_groups=(("mavlink-routerd", "mavlink-router"), ("ros2",)),
+        required_ros_packages=("mavros", "navlab_slam_bringup"),
+        required_python_modules=("navlab.companion.cli", "navlab.slam.cli"),
+        required_process_services=("companion", "slam"),
+    )
+
+    probe = real_preflight._probe_real_preflight_dependencies(settings, process_service_names=("companion",))
+
+    assert probe.summary["required_command_groups"][0]["found"] is True
+    assert probe.summary["required_command_groups"][1]["found"] is False
+    assert probe.summary["required_python_modules"]["navlab.companion.cli"] is True
+    assert probe.summary["required_ros_packages"]["mavros"]["error"] == "ros2_not_found"
+    assert "required_command_missing:ros2" in probe.blockers
+    assert "required_process_service_missing:slam" in probe.blockers
+
+
+def test_real_preflight_serial_probe_blocks_missing_port(tmp_path: Path) -> None:
+    from src.tasks.real_preflight import _probe_serial_mavlink
+
+    config_file = tmp_path / "real.toml"
+    config_file.write_text(
+        """
+[orchestration.runtime.process]
+require_explicit_services = false
+
+[serial_mavlink]
+enabled = true
+port = "/tmp/navlab_missing_fcu_serial"
+baud = 115200
+""".strip(),
+        encoding="utf-8",
+    )
+    config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
+
+    result = _probe_serial_mavlink(config.orchestration.real_preflight.serial_mavlink)
+
+    assert result.summary["enabled"] is True
+    assert result.summary["serial_open_ok"] is False
+    assert result.blockers == ("serial_port_missing:/tmp/navlab_missing_fcu_serial",)
+
+
+def test_real_preflight_serial_probe_rejects_network_endpoint(tmp_path: Path) -> None:
+    from src.tasks.real_preflight import _probe_serial_mavlink
+
+    config_file = tmp_path / "real.toml"
+    config_file.write_text(
+        """
+[orchestration.runtime.process]
+require_explicit_services = false
+
+[serial_mavlink]
+enabled = true
+port = "udp:127.0.0.1:14550"
+baud = 115200
+""".strip(),
+        encoding="utf-8",
+    )
+    config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
+
+    result = _probe_serial_mavlink(config.orchestration.real_preflight.serial_mavlink)
+
+    assert result.summary["enabled"] is True
+    assert result.blockers == ("serial_mavlink_endpoint_not_serial:udp:127.0.0.1:14550",)
+
+
+def test_real_preflight_blocks_serial_probe_without_topic_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
+
+    config_file = tmp_path / "real.toml"
+    config_file.write_text(
+        """
+[orchestration.runtime.process]
+require_explicit_services = false
+
+[orchestration.runtime.real.sources]
+required_real_topics = ["/scan", "/ap/v1/status", "/ap/v1/pose/filtered"]
+forbidden_simulation_input_topics = ["/gazebo/*"]
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
+    config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
+
+    summary = _build_real_preflight_summary(
+        config,
+        serial_mavlink_probe=SerialMavlinkProbe(
+            summary={"enabled": True, "heartbeat_seen": False},
+            blockers=("serial_mavlink_heartbeat_missing",),
+        ),
+        dependency_probe=DependencyProbe(
+            summary={
+                "required_command_groups": [{"found": True}],
+                "required_ros_packages": {},
+                "required_python_modules": {},
+            },
+            blockers=(),
+        ),
+    )
+
+    assert summary["ok"] is False
+    assert "serial_mavlink_heartbeat_missing" in summary["blockers"]
+    assert "fcu_topic_not_backed_by_serial_mavlink" not in summary["blockers"]
+
+
+def test_real_preflight_summary_schema_for_successful_serial_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
+
+    config_file = tmp_path / "real.toml"
+    config_file.write_text(
+        """
+[orchestration.runtime.process]
+require_explicit_services = false
+
+[orchestration.runtime.real.sources]
+required_real_topics = ["/scan", "/tf"]
+forbidden_simulation_input_topics = ["/gazebo/*"]
+
+[real_preflight]
+valid_for_sec = 120
+
+[fcu_controller]
+takeoff_alt_m = 0.4
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
+    config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
+
+    serial_summary = {
+        "enabled": True,
+        "port": "/dev/ttyACM0",
+        "baud": 115200,
+        "serial_open_ok": True,
+        "heartbeat_seen": True,
+        "system_id": 1,
+        "component_id": 1,
+        "autopilot": "MAV_AUTOPILOT_ARDUPILOTMEGA",
+        "vehicle_type": "MAV_TYPE_QUADROTOR",
+        "armed": False,
+        "mode": "STABILIZE",
+        "message_counts": {"HEARTBEAT": 1, "SYS_STATUS": 1, "ATTITUDE": 3},
+    }
+    summary = _build_real_preflight_summary(
+        config,
+        serial_mavlink_probe=SerialMavlinkProbe(summary=serial_summary, blockers=()),
+        dependency_probe=DependencyProbe(
+            summary={
+                "required_command_groups": [{"found": True}, {"found": True}],
+                "required_ros_packages": {"mavros": {"present": True}},
+                "required_python_modules": {"navlab.companion.cli": True, "navlab.slam.cli": True},
+            },
+            blockers=(),
+        ),
+    )
+
+    assert summary["ok"] is True
+    assert summary["preflight_claim"] == "evaluated"
+    assert summary["flight_claim"] == "not_evaluated"
+    assert summary["landing_claim"] == "not_evaluated"
+    assert summary["valid_for_sec"] == 120.0
+    assert summary["real_preflight"]["serial_mavlink"]["heartbeat_seen"] is True
+
+
+def test_real_preflight_console_summary_prints_operator_keys(tmp_path: Path) -> None:
+    from src.tasks.real_preflight import _print_real_preflight_console_summary
+
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    summary = {
+        "runtime_backend": "process",
+        "runtime_mode": "real",
+        "blockers": ["serial_mavlink_heartbeat_missing"],
+        "real_preflight": {
+            "dependencies": {
+                "required_command_groups": [{"found": True}, {"found": False}],
+                "required_ros_packages": {"mavros": {"present": False}},
+                "required_python_modules": {"navlab.companion.cli": True, "navlab.slam.cli": True},
+            },
+            "serial_mavlink": {
+                "port": "/dev/ttyACM0",
+                "baud": 115200,
+                "serial_open_ok": True,
+                "heartbeat_seen": False,
+                "system_id": 1,
+                "component_id": 1,
+                "autopilot": "MAV_AUTOPILOT_ARDUPILOTMEGA",
+                "mode": "STABILIZE",
+                "armed": False,
+            },
+        },
+    }
+
+    _print_real_preflight_console_summary(console, summary=summary, summary_path=tmp_path / "summary.json")
+
+    text = output.getvalue()
+    assert "Real Preflight Doctor" in text
+    assert "Runtime" in text
+    assert "process+real" in text
+    assert "Serial" in text
+    assert "/dev/ttyACM0 @ 115200" in text
+    assert "heartbeat=False" in text
+    assert "system=1, component=1" in text
+    assert "Deps" in text
+    assert "cmd=1/2" in text
+    assert "ros=0/1" in text
+    assert "py=2/2" in text
+    assert "Blockers" in text
+    assert "serial_mavlink_heartbeat_missing" in text
+    assert str(tmp_path / "summary.json") in text
+
+
+def test_real_preflight_summary_does_not_gate_on_source_claims(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
+
+    config_file = tmp_path / "real.toml"
+    config_file.write_text(
+        """
+[orchestration.runtime.process]
+require_explicit_services = false
+
+[orchestration.runtime.real.sources]
+scan_source_claim = "real_lidar_driver"
+scan_source_topic = "/lidar"
+fcu_source_claim = "simulation_sitl_dds"
+required_real_topics = ["/lidar"]
+forbidden_simulation_input_topics = ["/gazebo/*"]
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
+    config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
+
+    summary = _build_real_preflight_summary(
+        config,
+        serial_mavlink_probe=SerialMavlinkProbe(
+            summary={"enabled": False, "heartbeat_seen": False},
+            blockers=(),
+        ),
+        dependency_probe=DependencyProbe(
+            summary={
+                "required_command_groups": [{"found": True}],
+                "required_ros_packages": {},
+                "required_python_modules": {},
+            },
+            blockers=(),
+        ),
+    )
+
+    assert summary["ok"] is True
+    assert summary["blockers"] == []
+    assert "source_claims" not in summary
 
 
 def test_process_backend_merges_explicit_env(tmp_path: Path) -> None:

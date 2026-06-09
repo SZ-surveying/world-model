@@ -1658,20 +1658,20 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         "build",
         "doctor",
         "exploration",
-        "exploration-doctor",
         "hover",
-        "real-preflight-doctor",
         "scan-robustness",
-        "scan-robustness-doctor",
     )
     assert TaskRegistry.create("build").description
     assert TaskRegistry.create("doctor").description
-    assert TaskRegistry.create("exploration-doctor").description
     assert TaskRegistry.create("exploration").description
     assert TaskRegistry.create("hover").description
-    assert TaskRegistry.create("real-preflight-doctor").description
-    assert TaskRegistry.create("scan-robustness-doctor").description
     assert TaskRegistry.create("scan-robustness").description
+    with pytest.raises(ValueError, match="unknown orchestration task 'hover-doctor'"):
+        TaskRegistry.create("hover-doctor")
+    with pytest.raises(ValueError, match="unknown orchestration task 'exploration-doctor'"):
+        TaskRegistry.create("exploration-doctor")
+    with pytest.raises(ValueError, match="unknown orchestration task 'scan-robustness-doctor'"):
+        TaskRegistry.create("scan-robustness-doctor")
     with pytest.raises(ValueError, match="unknown orchestration task 'scan-stabilization-gate-acceptance'"):
         TaskRegistry.create("scan-stabilization-gate-acceptance")
 

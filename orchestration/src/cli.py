@@ -1,20 +1,19 @@
 from __future__ import annotations
 
+import os
 from typing import Annotated, cast
 
 import typer
 from rich.console import Console
 
 from src.tasks.build import BuildTask, ImageKind
-from src.tasks.built_in.exploration import BuiltInExplorationDoctorTask, BuiltInExplorationTask
-from src.tasks.built_in.scan_robustness import BuiltInScanRobustnessDoctorTask, BuiltInScanRobustnessTask
 from src.tasks.doctor import DoctorTask
-from src.tasks.hover import HoverAcceptanceTask
-from src.tasks.real_preflight import RealPreflightDoctorTask
 from src.tasks.registry import TaskRegistry
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
+
+RUN_TASKS = ("hover", "exploration", "scan-robustness")
 
 
 @app.command("build")
@@ -33,21 +32,29 @@ def image_build_command(
 
 
 @app.command("doctor")
-def companion_doctor_command(
+def runtime_doctor_command(
     orchestration_config: Annotated[
         str | None,
         typer.Option("--orchestration-config", "--config", help="NavLab orchestration TOML path"),
+    ] = None,
+    task_config: Annotated[
+        str | None,
+        typer.Option("--task-config", help="Real preflight task TOML path when backend/mode is process+real"),
     ] = None,
 ) -> None:
     task = cast(DoctorTask, TaskRegistry.create("doctor"))
-    raise typer.Exit(task.run(config_path=orchestration_config, console=console))
+    raise typer.Exit(task.run(config_path=orchestration_config, task_config_path=task_config, console=console))
 
 
-@app.command("hover")
-def hover_acceptance_command(
+@app.command("run")
+def run_task_command(
+    task_name: Annotated[
+        str,
+        typer.Argument(help="Built-in task to run: hover, exploration, or scan-robustness"),
+    ],
     duration_sec: Annotated[
         float | None,
-        typer.Option("--duration-sec", help="Hover acceptance duration in seconds"),
+        typer.Option("--duration-sec", help="Task duration budget in seconds"),
     ] = None,
     orchestration_config: Annotated[
         str | None,
@@ -55,105 +62,14 @@ def hover_acceptance_command(
     ] = None,
     task_config: Annotated[
         str | None,
-        typer.Option("--task-config", help="Hover task TOML path"),
+        typer.Option("--task-config", help="Built-in task TOML path"),
     ] = None,
     simulation_profile: Annotated[
         str | None,
         typer.Option(
             "--simulation-profile",
-            help="Gazebo/SITL Stage 1 profile: ideal or mild_disturbance",
+            help="Gazebo/SITL Stage 1 profile for hover/exploration: ideal or mild_disturbance",
         ),
-    ] = None,
-) -> None:
-    task = cast(HoverAcceptanceTask, TaskRegistry.create("hover"))
-    raise typer.Exit(
-        task.run(
-            config_path=orchestration_config,
-            task_config_path=task_config,
-            duration_sec=duration_sec,
-            simulation_profile=simulation_profile,
-            console=console,
-        )
-    )
-
-
-@app.command("exploration-doctor")
-def exploration_doctor_command(
-    orchestration_config: Annotated[
-        str | None,
-        typer.Option("--orchestration-config", "--config", help="NavLab orchestration TOML path"),
-    ] = None,
-    task_config: Annotated[
-        str | None,
-        typer.Option("--task-config", help="P8 task TOML path"),
-    ] = None,
-) -> None:
-    task = cast(BuiltInExplorationDoctorTask, TaskRegistry.create("exploration-doctor"))
-    raise typer.Exit(task.run(config_path=orchestration_config, task_config_path=task_config, console=console))
-
-
-@app.command("exploration")
-def exploration_command(
-    duration_sec: Annotated[
-        float | None,
-        typer.Option("--duration-sec", help="Built-in P8 movement/exploration duration in seconds"),
-    ] = None,
-    orchestration_config: Annotated[
-        str | None,
-        typer.Option("--orchestration-config", "--config", help="NavLab orchestration TOML path"),
-    ] = None,
-    task_config: Annotated[
-        str | None,
-        typer.Option("--task-config", help="P8 task TOML path"),
-    ] = None,
-    simulation_profile: Annotated[
-        str | None,
-        typer.Option(
-            "--simulation-profile",
-            help="Gazebo/SITL Stage 1 profile: ideal or mild_disturbance",
-        ),
-    ] = None,
-) -> None:
-    task = cast(BuiltInExplorationTask, TaskRegistry.create("exploration"))
-    raise typer.Exit(
-        task.run(
-            config_path=orchestration_config,
-            task_config_path=task_config,
-            duration_sec=duration_sec,
-            simulation_profile=simulation_profile,
-            console=console,
-        )
-    )
-
-
-@app.command("scan-robustness-doctor")
-def scan_robustness_doctor_command(
-    orchestration_config: Annotated[
-        str | None,
-        typer.Option("--orchestration-config", "--config", help="NavLab orchestration TOML path"),
-    ] = None,
-    task_config: Annotated[
-        str | None,
-        typer.Option("--task-config", help="P12 task TOML path"),
-    ] = None,
-) -> None:
-    task = cast(BuiltInScanRobustnessDoctorTask, TaskRegistry.create("scan-robustness-doctor"))
-    raise typer.Exit(task.run(config_path=orchestration_config, task_config_path=task_config, console=console))
-
-
-@app.command("scan-robustness")
-def scan_robustness_command(
-    duration_sec: Annotated[
-        float | None,
-        typer.Option("--duration-sec", help="Built-in tilted-scan robustness duration budget in seconds"),
-    ] = None,
-    orchestration_config: Annotated[
-        str | None,
-        typer.Option("--orchestration-config", "--config", help="NavLab orchestration TOML path"),
-    ] = None,
-    task_config: Annotated[
-        str | None,
-        typer.Option("--task-config", help="P12 task TOML path"),
     ] = None,
     live: Annotated[
         bool | None,
@@ -167,34 +83,65 @@ def scan_robustness_command(
         typer.Option("--live-profiles", help="Comma-separated disturbance profiles for live replay"),
     ] = None,
 ) -> None:
-    task = cast(BuiltInScanRobustnessTask, TaskRegistry.create("scan-robustness"))
-    profiles = None if live_profiles is None else tuple(item.strip() for item in live_profiles.split(",") if item.strip())
+    normalized = task_name.strip()
+    if normalized not in RUN_TASKS:
+        supported = ", ".join(RUN_TASKS)
+        console.print(f"[red]Unknown built-in task:[/red] {task_name}. Supported tasks: {supported}")
+        raise typer.Exit(2)
+
+    backend_mode = _runtime_backend_mode_from_env()
+    if backend_mode == ("process", "real"):
+        doctor = cast(DoctorTask, TaskRegistry.create("doctor"))
+        rc = doctor.run(config_path=orchestration_config, task_config_path=task_config, console=console)
+        if rc != 0:
+            raise typer.Exit(rc)
+        console.print(
+            "[red]Real task run is blocked after preflight:[/red] "
+            "real prepare / task doctor / flight wrapper is not implemented yet."
+        )
+        raise typer.Exit(20)
+    if backend_mode != ("docker", "simulation"):
+        console.print("[red]Unsupported runtime run combination:[/red] " f"{backend_mode[0]}+{backend_mode[1]}")
+        raise typer.Exit(20)
+
+    if normalized == "scan-robustness":
+        profiles = (
+            None if live_profiles is None else tuple(item.strip() for item in live_profiles.split(",") if item.strip())
+        )
+        if simulation_profile is not None:
+            console.print("[red]--simulation-profile is only valid for hover and exploration[/red]")
+            raise typer.Exit(2)
+        task = TaskRegistry.create(normalized)
+        raise typer.Exit(
+            task.run(
+                config_path=orchestration_config,
+                task_config_path=task_config,
+                duration_sec=duration_sec,
+                live_replay=live,
+                live_profiles=profiles,
+                console=console,
+            )
+        )
+
+    if live is not None or live_profiles is not None:
+        console.print("[red]--live and --live-profiles are only valid for scan-robustness[/red]")
+        raise typer.Exit(2)
+
+    task = TaskRegistry.create(normalized)
     raise typer.Exit(
         task.run(
             config_path=orchestration_config,
             task_config_path=task_config,
             duration_sec=duration_sec,
-            live_replay=live,
-            live_profiles=profiles,
+            simulation_profile=simulation_profile,
             console=console,
         )
     )
 
 
-@app.command("real-preflight-doctor")
-def real_preflight_doctor_command(
-    orchestration_config: Annotated[
-        str | None,
-        typer.Option("--orchestration-config", "--config", help="NavLab orchestration TOML path"),
-    ] = None,
-    task_config: Annotated[
-        str | None,
-        typer.Option("--task-config", help="Real preflight task TOML path"),
-    ] = None,
-) -> None:
-    task = cast(RealPreflightDoctorTask, TaskRegistry.create("real-preflight-doctor"))
-    raise typer.Exit(task.run(config_path=orchestration_config, task_config_path=task_config, console=console))
+def _runtime_backend_mode_from_env() -> tuple[str, str]:
+    from src.project_config import DEFAULT_RUNTIME_BACKEND, DEFAULT_RUNTIME_MODE
 
-
-if __name__ == "__main__":
-    app()
+    backend = os.environ.get("NAVLAB_RUNTIME_BACKEND", DEFAULT_RUNTIME_BACKEND).strip().lower()
+    mode = os.environ.get("NAVLAB_RUNTIME_MODE", DEFAULT_RUNTIME_MODE).strip().lower()
+    return backend, mode

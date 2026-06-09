@@ -240,6 +240,43 @@ def _write_hover_runtime_diff(config: RunConfig, *, latest_failed_artifact: str 
 
 @TaskRegistry.register
 @dataclass(frozen=True, slots=True)
+class HoverDoctorTask(OrchestrationTask):
+    TASK_NAME: ClassVar[str] = "hover-doctor"
+    TASK_DESCRIPTION: ClassVar[str] = "Check built-in hover prerequisites."
+
+    def run(
+        self,
+        *,
+        config_path: str | Path | None = None,
+        task_config_path: str | Path | None = None,
+        console: Console | None = None,
+    ) -> int:
+        console = console or Console()
+        config = RunConfig.from_config(config_path=config_path, task_name="hover", task_config_path=task_config_path)
+        artifact_dir = Path(f"artifacts/ros/navlab_hover_doctor/{config.run_id}")
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        config = RunConfig.from_config(
+            config_path=config_path,
+            task_name="hover",
+            task_config_path=task_config_path,
+            run_id=config.run_id,
+            artifact_dir=artifact_dir,
+        )
+        runtime_config = artifact_dir / "hover_slam_hover_runtime.toml"
+        _write_p6_runtime_config(config, runtime_config)
+        console.print("[bold cyan]Checking built-in hover prerequisites[/bold cyan]")
+        summary = _build_p6_doctor_summary(config, runtime_config=runtime_config, include_dependencies=False)
+        summary["config_sources"] = config.config_sources_summary()
+        _write_json(artifact_dir / "summary.json", summary)
+        rc = 0 if summary["ok"] else 20
+        color = "green" if summary["ok"] else "red"
+        console.print(f"[{color}]Hover doctor rc={rc}[/{color}]")
+        console.print(f"[bold]Summary:[/bold] {artifact_dir / 'summary.json'}")
+        return rc
+
+
+@TaskRegistry.register
+@dataclass(frozen=True, slots=True)
 class HoverAcceptanceTask(OrchestrationTask):
     TASK_NAME: ClassVar[str] = "hover"
     TASK_DESCRIPTION: ClassVar[str] = "Run NavLab P12-aligned FCU/SLAM hover + land acceptance."

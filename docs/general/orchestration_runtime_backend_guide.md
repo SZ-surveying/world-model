@@ -21,26 +21,27 @@
 默认：
 
 ```bash
-uv run --project orchestration python orchestration/main.py scan-robustness-doctor
+uv run --project orchestration python orchestration/main.py run scan-robustness
 ```
 
 等价于：
 
 ```bash
-NAVLAB_RUNTIME_BACKEND=docker uv run --project orchestration python orchestration/main.py scan-robustness-doctor
+NAVLAB_RUNTIME_BACKEND=docker NAVLAB_RUNTIME_MODE=simulation \
+uv run --project orchestration python orchestration/main.py run scan-robustness
 ```
 
 显式 process real：
 
 ```bash
-NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real uv run --project orchestration python orchestration/main.py real-preflight-doctor
+NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real uv run --project orchestration python orchestration/main.py doctor
 ```
 
 process backend 要求 `[orchestration.runtime.process.services]` 显式配置服务命令。没有配置时必须 fail，不允许自动 fallback 到 Docker。
 
 ## 配置位置
 
-主配置在 `orchestration/config.toml`：
+主配置按 runtime mode 拆分：
 
 ```toml
 [orchestration.runtime]

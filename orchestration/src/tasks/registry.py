@@ -16,10 +16,7 @@ class TaskRegistry:
             "build",
             "doctor",
             "hover",
-            "exploration-doctor",
             "exploration",
-            "real-preflight-doctor",
-            "scan-robustness-doctor",
             "scan-robustness",
         }
     )

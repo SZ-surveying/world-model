@@ -394,7 +394,7 @@ Decision: expose only built-in orchestration tasks for hover, P8 movement/explor
 
 Basis: codebase research showed `orchestration/src/tasks` had grown to many phase-specific CLI entries and about 13k lines, with P9/P10/P11/P12 now converging on one tilted-scan robustness concern under explicit runtime mode.
 
-Reason: real/sim is now a runtime mode concern, so individual historical phase commands should not be the operator-facing API. The stable task surface is `hover`, `exploration`, `real-preflight-doctor`, and `scan-robustness`; P9 replay, P10 integrity, P11 stabilization, and P12 disturbance behavior are folded under scan robustness. The old modules remain importable during this transition because P8 and P12 still share helper functions, but `TaskRegistry` and the CLI no longer expose them as runnable top-level tasks.
+Reason: real/sim is now a runtime mode concern, so individual historical phase commands should not be the operator-facing API. The stable task surface is `build`, `doctor`, and `run <task>` for `hover`, `exploration`, and `scan-robustness`; P9 replay, P10 integrity, P11 stabilization, and P12 disturbance behavior are folded under scan robustness. The old modules remain importable during this transition because P8 and P12 still share helper functions, but `TaskRegistry` and the CLI no longer expose historical P-stage tasks or per-task doctor entries as public runnable tasks.
 
 ## 2026-06-08: Legacy P-stage task helpers move out of the task root
 
@@ -459,3 +459,19 @@ Decision: derive the default orchestration config from `NAVLAB_RUNTIME_MODE` (`c
 Basis: the real/simulation boundary must be visible at command time, while hover/P8/P12 task parameters need to evolve independently without turning one root `config.toml` into an unreadable mixed system/task file.
 
 Reason: TOML should not silently turn a run into real flight or switch the backend. Runtime backend/mode are therefore environment-or-default only, with valid combinations still limited to `docker+simulation` and `process+real`. Built-in task invocation now resolves `CLI option > task config > hard-code default`, and task config overlays internal sections such as FCU, landing, exploration, and disturbance thresholds. The legacy root `orchestration/config.toml` has been deleted; default execution no longer uses `NAVLAB_ORCHESTRATION_CONFIG` or any legacy root config.
+
+## 2026-06-09: Real preflight uses serial MAVLink as FCU primary evidence
+
+Decision: make `process+real` preflight check the configured FCU serial MAVLink port with `pyserial` and `pymavlink`, while the console prints a Rich panel/table operator summary and the full JSON summary remains the audit artifact.
+
+Basis: the real vehicle reads FCU data from a physical MAVLink serial link, not SITL TCP/UDP or simulated serial, and the operator needs key readiness facts visible in the terminal before any real flight entry.
+
+Reason: ROS `/ap/*` topics can prove the graph surface exists, but they are not sufficient evidence that the real FCU serial boundary is healthy and they belong to later prepare/task-doctor phases. The preflight doctor now records only runtime boundary, dependency checks, serial open state, heartbeat, system/component ids, autopilot, mode, armed state, required MAVLink message counts, and non-flight claims. TCP/UDP MAVLink endpoints are rejected as serial evidence, and blocked runs show the important facts in the console instead of forcing the operator to inspect JSON first.
+
+## 2026-06-09: Operator CLI uses build, doctor, and one run wrapper
+
+Decision: remove public per-task subcommands from `orchestration/src/cli.py` and expose only `build`, `doctor`, and `run <task>`.
+
+Basis: codebase research and operator-entry cleanup for real/simulation runtime mode.
+
+Reason: the former per-task doctor subcommands made the real path ambiguous because the operator could confuse task-specific internal checks with the real preflight/prepare/run wrapper. The unified wrapper now reads `NAVLAB_RUNTIME_BACKEND` and `NAVLAB_RUNTIME_MODE`; in `docker+simulation` it dispatches the built-in simulation task, while in `process+real` it first runs the runtime doctor and then blocks until real prepare/task doctor/flight phases are implemented. The public task registry mirrors that surface by hiding per-task doctor entries.

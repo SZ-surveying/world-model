@@ -1,21 +1,37 @@
 from __future__ import annotations
 
-import fnmatch
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
 from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
-from src import host
-from src.config import RunConfig
+from src.config import RealPreflightDependencyConfig, RunConfig, SerialMavlinkConfig
 from src.project_config import RuntimeConfig as ProjectRuntimeConfig
 from src.project_config import load_orchestration_runtime_backend_config, load_runtime_config
 from src.tasks.base import OrchestrationTask
 from src.tasks.registry import TaskRegistry
+
+
+@dataclass(frozen=True, slots=True)
+class SerialMavlinkProbe:
+    summary: dict[str, Any]
+    blockers: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DependencyProbe:
+    summary: dict[str, Any]
+    blockers: tuple[str, ...]
 
 
 def _load_runtime_selection(config: RunConfig):
@@ -35,10 +51,18 @@ def _load_runtime_selection(config: RunConfig):
 def _build_real_preflight_summary(
     config: RunConfig,
     *,
-    topics: tuple[str, ...] | None,
-    topic_probe_error: str | None,
+    serial_mavlink_probe: SerialMavlinkProbe | None = None,
+    dependency_probe: DependencyProbe | None = None,
 ) -> dict[str, Any]:
     blockers: list[str] = []
+    if serial_mavlink_probe is None:
+        serial_mavlink_probe = _probe_serial_mavlink(config.orchestration.real_preflight.serial_mavlink)
+    if dependency_probe is None:
+        dependency_probe = _probe_real_preflight_dependencies(
+            config.orchestration.real_preflight.dependencies,
+            process_service_names=(),
+        )
+    checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     try:
         selected = _load_runtime_selection(config)
     except Exception as exc:
@@ -48,6 +72,15 @@ def _build_real_preflight_summary(
             "blockers": [f"runtime_config_invalid:{exc}"],
             "runtime_backend": "unknown",
             "runtime_mode": "unknown",
+            "preflight_claim": "evaluated",
+            "flight_claim": "not_evaluated",
+            "landing_claim": "not_evaluated",
+            "checked_at": checked_at,
+            "valid_for_sec": config.orchestration.real_preflight.valid_for_sec,
+            "real_preflight": {
+                "serial_mavlink": serial_mavlink_probe.summary,
+                "dependencies": dependency_probe.summary,
+            },
         }
 
     if selected.backend.value != "process":
@@ -55,21 +88,13 @@ def _build_real_preflight_summary(
     if selected.mode.value != "real":
         blockers.append(f"runtime_mode_must_be_real:{selected.mode.value}")
 
-    required_topics = selected.real_sources.required_real_topics
-    forbidden_topics = selected.real_sources.forbidden_simulation_input_topics
-    if topics is None:
-        blockers.append(f"real_topic_probe_failed:{topic_probe_error or 'unknown'}")
-        seen_topics: tuple[str, ...] = ()
-    else:
-        seen_topics = topics
-        missing = [topic for topic in required_topics if topic not in seen_topics]
-        blockers.extend(f"required_real_topic_missing:{topic}" for topic in missing)
-        forbidden_seen = [
-            topic
-            for topic in seen_topics
-            if any(fnmatch.fnmatch(topic, pattern) for pattern in forbidden_topics)
-        ]
-        blockers.extend(f"forbidden_simulation_topic_present:{topic}" for topic in forbidden_seen)
+    if not dependency_probe.summary.get("configured_process_services") and selected.process.services:
+        dependency_probe = _probe_real_preflight_dependencies(
+            config.orchestration.real_preflight.dependencies,
+            process_service_names=tuple(selected.process.services),
+        )
+    blockers.extend(dependency_probe.blockers)
+    blockers.extend(serial_mavlink_probe.blockers)
 
     return {
         "ok": not blockers,
@@ -77,42 +102,266 @@ def _build_real_preflight_summary(
         "blockers": blockers,
         "runtime_backend": selected.backend.value,
         "runtime_mode": selected.mode.value,
-        "runtime_backend_summary": host._runtime_backend_summary(config),
-        "source_claims": host._runtime_source_claims(config),
+        "preflight_claim": "evaluated",
+        "flight_claim": "not_evaluated",
+        "landing_claim": "not_evaluated",
+        "checked_at": checked_at,
+        "valid_for_sec": config.orchestration.real_preflight.valid_for_sec,
         "real_preflight": {
-            "required_real_topics": list(required_topics),
-            "forbidden_simulation_input_topics": list(forbidden_topics),
-            "topic_probe_error": topic_probe_error or "",
-            "topic_count": len(seen_topics),
+            "serial_mavlink": serial_mavlink_probe.summary,
+            "dependencies": dependency_probe.summary,
         },
     }
 
 
-def _collect_ros2_topics(*, timeout_sec: float = 8.0) -> tuple[tuple[str, ...] | None, str | None]:
-    if shutil.which("ros2") is None:
-        return None, "ros2_not_found"
-    env = os.environ.copy()
-    try:
-        result = subprocess.run(
-            ["ros2", "topic", "list"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-            env=env,
+def _probe_real_preflight_dependencies(
+    settings: RealPreflightDependencyConfig,
+    *,
+    process_service_names: tuple[str, ...],
+) -> DependencyProbe:
+    blockers: list[str] = []
+    command_groups: list[dict[str, Any]] = []
+    for group in settings.required_command_groups:
+        found = next((command for command in group if shutil.which(command)), "")
+        command_groups.append(
+            {
+                "candidates": list(group),
+                "found": bool(found),
+                "selected": found,
+                "path": shutil.which(found) if found else "",
+            }
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return None, str(exc)
-    if result.returncode != 0:
-        return None, (result.stderr or result.stdout or f"rc={result.returncode}").strip()
-    topics = tuple(line.strip() for line in result.stdout.splitlines() if line.strip())
-    return topics, None
+        if not found:
+            blockers.append(f"required_command_missing:{'|'.join(group)}")
+
+    python_modules: dict[str, bool] = {}
+    for module in settings.required_python_modules:
+        present = importlib.util.find_spec(module) is not None
+        python_modules[module] = present
+        if not present:
+            blockers.append(f"required_python_module_missing:{module}")
+
+    ros_packages: dict[str, dict[str, Any]] = {}
+    ros2 = shutil.which("ros2")
+    if settings.required_ros_packages and not ros2:
+        blockers.append("required_command_missing:ros2")
+        for package in settings.required_ros_packages:
+            ros_packages[package] = {"present": False, "error": "ros2_not_found"}
+    else:
+        for package in settings.required_ros_packages:
+            try:
+                result = subprocess.run(
+                    ["ros2", "pkg", "prefix", package],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=4.0,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                ros_packages[package] = {"present": False, "error": str(exc)}
+                blockers.append(f"required_ros_package_probe_failed:{package}")
+                continue
+            present = result.returncode == 0 and bool(result.stdout.strip())
+            ros_packages[package] = {
+                "present": present,
+                "prefix": result.stdout.strip(),
+                "error": "" if present else (result.stderr or result.stdout or f"rc={result.returncode}").strip(),
+            }
+            if not present:
+                blockers.append(f"required_ros_package_missing:{package}")
+
+    configured_services = sorted(process_service_names)
+    service_set = set(process_service_names)
+    required_services: dict[str, bool] = {}
+    for service in settings.required_process_services:
+        present = service in service_set
+        required_services[service] = present
+        if not present:
+            blockers.append(f"required_process_service_missing:{service}")
+
+    return DependencyProbe(
+        summary={
+            "required_command_groups": command_groups,
+            "required_python_modules": python_modules,
+            "required_ros_packages": ros_packages,
+            "required_process_services": required_services,
+            "configured_process_services": configured_services,
+        },
+        blockers=tuple(dict.fromkeys(blockers)),
+    )
+
+
+def _probe_serial_mavlink(settings: SerialMavlinkConfig) -> SerialMavlinkProbe:
+    summary: dict[str, Any] = {
+        "enabled": settings.enabled,
+        "port": settings.port,
+        "baud": settings.baud,
+        "serial_open_ok": False,
+        "heartbeat_seen": False,
+        "system_id": None,
+        "component_id": None,
+        "autopilot": "",
+        "vehicle_type": "",
+        "armed": None,
+        "mode": "",
+        "message_counts": {},
+        "required_messages": list(settings.required_messages),
+        "optional_messages": list(settings.optional_messages),
+    }
+    blockers: list[str] = []
+    if not settings.enabled:
+        summary["skipped"] = "serial_mavlink disabled"
+        return SerialMavlinkProbe(summary=summary, blockers=())
+
+    port = settings.port.strip()
+    if _looks_like_network_mavlink_endpoint(port):
+        blockers.append(f"serial_mavlink_endpoint_not_serial:{port}")
+        return SerialMavlinkProbe(summary=summary, blockers=tuple(blockers))
+
+    path = Path(port)
+    if not path.exists():
+        blockers.append(f"serial_port_missing:{port}")
+        return SerialMavlinkProbe(summary=summary, blockers=tuple(blockers))
+    if not os.access(path, os.R_OK | os.W_OK):
+        blockers.append(f"serial_port_permission_denied:{port}")
+        return SerialMavlinkProbe(summary=summary, blockers=tuple(blockers))
+
+    try:
+        import serial
+    except ImportError:
+        blockers.append("serial_dependency_missing:pyserial")
+        return SerialMavlinkProbe(summary=summary, blockers=tuple(blockers))
+    try:
+        from pymavlink import mavutil
+    except ImportError:
+        blockers.append("serial_dependency_missing:pymavlink")
+        return SerialMavlinkProbe(summary=summary, blockers=tuple(blockers))
+
+    started = time.monotonic()
+    try:
+        with serial.Serial(  # type: ignore[attr-defined]
+            port=port,
+            baudrate=settings.baud,
+            timeout=min(settings.connection_timeout_sec, 1.0),
+            write_timeout=min(settings.connection_timeout_sec, 1.0),
+        ):
+            summary["serial_open_ok"] = True
+            summary["serial_open_elapsed_sec"] = round(time.monotonic() - started, 3)
+    except Exception as exc:  # pragma: no cover - exercised through unit-level injected probe.
+        blockers.append(f"serial_open_failed:{exc}")
+        return SerialMavlinkProbe(summary=summary, blockers=tuple(blockers))
+
+    master = None
+    try:
+        master = mavutil.mavlink_connection(
+            port,
+            baud=settings.baud,
+            autoreconnect=False,
+            source_system=255,
+            source_component=0,
+        )
+        heartbeat = master.wait_heartbeat(timeout=settings.heartbeat_timeout_sec)
+        if heartbeat is None:
+            if settings.require_autopilot_heartbeat:
+                blockers.append("serial_mavlink_heartbeat_missing")
+            return SerialMavlinkProbe(summary=summary, blockers=tuple(blockers))
+
+        message_counts: dict[str, int] = {"HEARTBEAT": 1}
+        summary["heartbeat_seen"] = True
+        summary["system_id"] = int(getattr(heartbeat, "get_srcSystem", lambda: 0)())
+        summary["component_id"] = int(getattr(heartbeat, "get_srcComponent", lambda: 0)())
+        autopilot_value = int(getattr(heartbeat, "autopilot", 0))
+        vehicle_type_value = int(getattr(heartbeat, "type", 0))
+        summary["autopilot"] = _mavlink_enum_name(mavutil, "MAV_AUTOPILOT", autopilot_value)
+        summary["vehicle_type"] = _mavlink_enum_name(mavutil, "MAV_TYPE", vehicle_type_value)
+        summary["armed"] = bool(
+            int(getattr(heartbeat, "base_mode", 0))
+            & int(getattr(mavutil.mavlink, "MAV_MODE_FLAG_SAFETY_ARMED", 128))
+        )
+        summary["mode"] = _heartbeat_mode_name(mavutil, heartbeat)
+
+        autopilot_normalized = _normalize_mavlink_enum_name(str(summary["autopilot"]), prefix="MAV_AUTOPILOT_")
+        expected_autopilot = _normalize_mavlink_enum_name(settings.expected_autopilot, prefix="MAV_AUTOPILOT_")
+        invalid_autopilot = _normalize_mavlink_enum_name("MAV_AUTOPILOT_INVALID", prefix="MAV_AUTOPILOT_")
+        if autopilot_normalized == invalid_autopilot or (
+            expected_autopilot and autopilot_normalized != expected_autopilot
+        ):
+            blockers.append("serial_mavlink_autopilot_invalid")
+        if settings.require_not_armed and summary["armed"]:
+            blockers.append("serial_mavlink_unexpected_armed")
+        if settings.require_mode_observed and not summary["mode"]:
+            blockers.append("serial_mavlink_mode_missing")
+
+        deadline = time.monotonic() + settings.telemetry_window_sec
+        wanted_messages = set(settings.required_messages) | set(settings.optional_messages)
+        while time.monotonic() < deadline:
+            msg = master.recv_match(blocking=True, timeout=max(0.0, min(0.5, deadline - time.monotonic())))
+            if msg is None:
+                continue
+            msg_type = str(msg.get_type()).upper()
+            if msg_type == "BAD_DATA":
+                continue
+            if msg_type in wanted_messages:
+                message_counts[msg_type] = message_counts.get(msg_type, 0) + 1
+            if all(message_counts.get(required, 0) > 0 for required in settings.required_messages):
+                break
+
+        if settings.require_system_status and message_counts.get("SYS_STATUS", 0) == 0:
+            blockers.append("serial_mavlink_required_message_missing:SYS_STATUS")
+        for required in settings.required_messages:
+            if message_counts.get(required, 0) == 0:
+                blocker = f"serial_mavlink_required_message_missing:{required}"
+                if blocker not in blockers:
+                    blockers.append(blocker)
+        summary["message_counts"] = message_counts
+    except Exception as exc:  # pragma: no cover - hardware-specific failure surface.
+        blockers.append(f"serial_mavlink_probe_failed:{exc}")
+    finally:
+        if master is not None:
+            try:
+                master.close()
+            except Exception:
+                pass
+
+    return SerialMavlinkProbe(summary=summary, blockers=tuple(blockers))
+
+
+def _looks_like_network_mavlink_endpoint(value: str) -> bool:
+    lowered = value.lower()
+    return lowered.startswith(("tcp:", "udp:", "udpin:", "udpout:", "tcpin:", "tcpout:"))
+
+
+def _mavlink_enum_name(mavutil: Any, enum_name: str, value: int) -> str:
+    enum = getattr(mavutil.mavlink, "enums", {}).get(enum_name, {})
+    item = enum.get(value)
+    if item is None:
+        return str(value)
+    return str(getattr(item, "name", value))
+
+
+def _normalize_mavlink_enum_name(value: str, *, prefix: str) -> str:
+    normalized = value.strip().upper()
+    if normalized.startswith(prefix):
+        normalized = normalized[len(prefix) :]
+    return normalized.replace("_", "").replace("-", "").lower()
+
+
+def _heartbeat_mode_name(mavutil: Any, heartbeat: Any) -> str:
+    for helper in ("mode_string_v10", "mode_string_v09"):
+        fn = getattr(mavutil, helper, None)
+        if fn is None:
+            continue
+        try:
+            return str(fn(heartbeat))
+        except Exception:
+            continue
+    return ""
 
 
 @TaskRegistry.register
 class RealPreflightDoctorTask(OrchestrationTask):
     TASK_NAME: ClassVar[str] = "real-preflight-doctor"
-    TASK_DESCRIPTION: ClassVar[str] = "Check process+real runtime topic and source preflight contract."
+    TASK_DESCRIPTION: ClassVar[str] = "Check process+real runtime dependency and serial MAVLink preflight contract."
 
     def run(
         self,
@@ -136,12 +385,83 @@ class RealPreflightDoctorTask(OrchestrationTask):
             artifact_dir=artifact_dir,
         )
         console.print("Checking real runtime preflight contract")
-        topics, topic_error = _collect_ros2_topics()
-        summary = _build_real_preflight_summary(config, topics=topics, topic_probe_error=topic_error)
+        serial_probe = _probe_serial_mavlink(config.orchestration.real_preflight.serial_mavlink)
+        summary = _build_real_preflight_summary(
+            config,
+            serial_mavlink_probe=serial_probe,
+        )
         summary["config_sources"] = config.config_sources_summary()
         artifact_dir.mkdir(parents=True, exist_ok=True)
         (artifact_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
         color = "green" if summary["ok"] else "red"
         console.print(f"[{color}]Real preflight doctor rc={0 if summary['ok'] else 20}[/{color}]")
-        console.print(f"Summary: {artifact_dir / 'summary.json'}")
+        _print_real_preflight_console_summary(console, summary=summary, summary_path=artifact_dir / "summary.json")
         return 0 if summary["ok"] else 20
+
+
+def _print_real_preflight_console_summary(
+    console: Console,
+    *,
+    summary: dict[str, Any],
+    summary_path: Path,
+) -> None:
+    real_preflight = summary.get("real_preflight", {})
+    serial_mavlink = real_preflight.get("serial_mavlink", {})
+    dependencies = real_preflight.get("dependencies", {})
+    runtime_backend = summary.get("runtime_backend", "unknown")
+    runtime_mode = summary.get("runtime_mode", "unknown")
+    status = "OK" if summary.get("ok") else "BLOCKED"
+    border_style = "green" if summary.get("ok") else "red"
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold")
+    table.add_column()
+    table.add_row("Status", status)
+    table.add_row("Runtime", f"{runtime_backend}+{runtime_mode}")
+    table.add_row("Serial", f"{serial_mavlink.get('port', '')} @ {serial_mavlink.get('baud', '')}")
+    table.add_row(
+        "Serial state",
+        f"open={serial_mavlink.get('serial_open_ok')}, heartbeat={serial_mavlink.get('heartbeat_seen')}",
+    )
+    table.add_row(
+        "FCU",
+        (
+            f"system={serial_mavlink.get('system_id')}, "
+            f"component={serial_mavlink.get('component_id')}, "
+            f"autopilot={serial_mavlink.get('autopilot') or 'unknown'}"
+        ),
+    )
+    table.add_row("Mode", f"{serial_mavlink.get('mode') or 'unknown'}, armed={serial_mavlink.get('armed')}")
+    table.add_row(
+        "Deps",
+        (
+            f"cmd={_dependency_group_state(dependencies.get('required_command_groups', []))}, "
+            f"ros={_dependency_map_state(dependencies.get('required_ros_packages', {}))}, "
+            f"py={_dependency_map_state(dependencies.get('required_python_modules', {}))}"
+        ),
+    )
+    table.add_row("Summary", str(summary_path))
+    console.print(Panel(table, title="Real Preflight Doctor", border_style=border_style))
+
+    blockers = [str(item) for item in summary.get("blockers", [])]
+    if blockers:
+        blocker_table = Table.grid()
+        blocker_table.add_column()
+        for blocker in blockers[:8]:
+            blocker_table.add_row(f"- {blocker}")
+        if len(blockers) > 8:
+            blocker_table.add_row(f"- ... {len(blockers) - 8} more")
+        console.print(Panel(blocker_table, title="Blockers", border_style="red"))
+
+
+def _dependency_group_state(groups: list[dict[str, Any]]) -> str:
+    if not groups:
+        return "none"
+    present = sum(1 for item in groups if item.get("found"))
+    return f"{present}/{len(groups)}"
+
+
+def _dependency_map_state(items: dict[str, Any]) -> str:
+    if not items:
+        return "none"
+    present = sum(1 for value in items.values() if value is True or (isinstance(value, dict) and value.get("present")))
+    return f"{present}/{len(items)}"

@@ -82,6 +82,38 @@ class FoxgloveUploadConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SerialMavlinkConfig:
+    enabled: bool
+    port: str
+    baud: int
+    connection_timeout_sec: float
+    heartbeat_timeout_sec: float
+    telemetry_window_sec: float
+    require_autopilot_heartbeat: bool
+    require_system_status: bool
+    require_not_armed: bool
+    require_mode_observed: bool
+    expected_autopilot: str
+    required_messages: tuple[str, ...]
+    optional_messages: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RealPreflightConfig:
+    valid_for_sec: float
+    serial_mavlink: SerialMavlinkConfig
+    dependencies: RealPreflightDependencyConfig
+
+
+@dataclass(frozen=True, slots=True)
+class RealPreflightDependencyConfig:
+    required_command_groups: tuple[tuple[str, ...], ...]
+    required_ros_packages: tuple[str, ...]
+    required_python_modules: tuple[str, ...]
+    required_process_services: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SlamContainerConfig:
     autostart: bool
     image: str
@@ -650,6 +682,7 @@ class OrchestrationConfig:
     airframe_disturbance: AirframeDisturbanceConfig
     airframe_disturbance_gate: AirframeDisturbanceGateConfig
     landing: LandingConfig
+    real_preflight: RealPreflightConfig
     foxglove_upload: FoxgloveUploadConfig
     orchestration_config_source: str = "mode default"
     task_name: str | None = None
@@ -691,7 +724,11 @@ class OrchestrationConfig:
         airframe_disturbance = _section(data, "airframe_disturbance")
         airframe_disturbance_gate = _section(data, "airframe_disturbance_gate")
         landing = _section(data, "landing")
+        real_preflight = _section(data, "real_preflight")
+        serial_mavlink = _section(data, "serial_mavlink")
+        real_preflight_dependencies = _section(real_preflight, "dependencies")
         foxglove_upload = _section(data, "foxglove_upload")
+        task = _optional_task_table(data, task_path)
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
             path=config_path,
@@ -1590,6 +1627,78 @@ class OrchestrationConfig:
                 require_motors_safe=_as_bool(landing.get("require_motors_safe"), True),
                 uses_gazebo_truth_as_input=_as_bool(landing.get("uses_gazebo_truth_as_input"), False),
             ),
+            real_preflight=RealPreflightConfig(
+                valid_for_sec=_as_float(
+                    real_preflight.get("valid_for_sec", task.get("valid_for_sec")),
+                    300.0,
+                ),
+                serial_mavlink=SerialMavlinkConfig(
+                    enabled=_as_bool(serial_mavlink.get("enabled"), False),
+                    port=_as_str(serial_mavlink.get("port"), "/dev/ttyACM0"),
+                    baud=int(_as_float(serial_mavlink.get("baud"), 115200.0)),
+                    connection_timeout_sec=_as_float(serial_mavlink.get("connection_timeout_sec"), 3.0),
+                    heartbeat_timeout_sec=_as_float(serial_mavlink.get("heartbeat_timeout_sec"), 5.0),
+                    telemetry_window_sec=_as_float(serial_mavlink.get("telemetry_window_sec"), 8.0),
+                    require_autopilot_heartbeat=_as_bool(
+                        serial_mavlink.get("require_autopilot_heartbeat"),
+                        True,
+                    ),
+                    require_system_status=_as_bool(serial_mavlink.get("require_system_status"), True),
+                    require_not_armed=_as_bool(serial_mavlink.get("require_not_armed"), True),
+                    require_mode_observed=_as_bool(serial_mavlink.get("require_mode_observed"), True),
+                    expected_autopilot=_as_str(serial_mavlink.get("expected_autopilot"), "ardupilotmega"),
+                    required_messages=tuple(
+                        item.upper()
+                        for item in _as_str_tuple(
+                            serial_mavlink.get("required_messages"),
+                            ("HEARTBEAT", "SYS_STATUS", "ATTITUDE"),
+                        )
+                    ),
+                    optional_messages=tuple(
+                        item.upper()
+                        for item in _as_str_tuple(
+                            serial_mavlink.get("optional_messages"),
+                            (
+                                "LOCAL_POSITION_NED",
+                                "GLOBAL_POSITION_INT",
+                                "RANGEFINDER",
+                                "DISTANCE_SENSOR",
+                                "HIGHRES_IMU",
+                                "RAW_IMU",
+                                "SCALED_IMU",
+                            ),
+                        )
+                    ),
+                ),
+                dependencies=RealPreflightDependencyConfig(
+                    required_command_groups=_as_str_group_tuple(
+                        real_preflight_dependencies.get("required_command_groups"),
+                        (
+                            ("mavlink-routerd", "mavlink-router"),
+                            ("ros2",),
+                        ),
+                    ),
+                    required_ros_packages=_as_str_tuple(
+                        real_preflight_dependencies.get("required_ros_packages"),
+                        (
+                            "mavros",
+                            "mavros_msgs",
+                            "navlab_slam_bringup",
+                            "navlab_cartographer_adapter",
+                            "navlab_external_nav_bridge",
+                            "navlab_slam_imu_bridge",
+                        ),
+                    ),
+                    required_python_modules=_as_str_tuple(
+                        real_preflight_dependencies.get("required_python_modules"),
+                        ("navlab.companion.cli", "navlab.slam.cli"),
+                    ),
+                    required_process_services=_as_str_tuple(
+                        real_preflight_dependencies.get("required_process_services"),
+                        (),
+                    ),
+                ),
+            ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
                 api_url=_as_str(foxglove_upload.get("api_url"), "https://api.foxglove.dev/v1"),
@@ -1993,6 +2102,26 @@ def _as_str_tuple(value: Any, default: tuple[str, ...] = ()) -> tuple[str, ...]:
     if isinstance(value, list | tuple):
         return tuple(str(item) for item in value)
     raise TypeError(f"expected string list, got {type(value).__name__}")
+
+
+def _as_str_group_tuple(value: Any, default: tuple[tuple[str, ...], ...] = ()) -> tuple[tuple[str, ...], ...]:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return ((value,),)
+    if isinstance(value, list | tuple):
+        groups: list[tuple[str, ...]] = []
+        for item in value:
+            if isinstance(item, str):
+                groups.append((item,))
+            elif isinstance(item, list | tuple):
+                group = tuple(str(group_item) for group_item in item if str(group_item))
+                if group:
+                    groups.append(group)
+            else:
+                raise TypeError(f"expected string command group, got {type(item).__name__}")
+        return tuple(groups)
+    raise TypeError(f"expected string group list, got {type(value).__name__}")
 
 
 def _section(data: dict[str, Any], *keys: str) -> dict[str, Any]:

@@ -6,15 +6,19 @@
 Gazebo/SITL Stage 1 验收。它们会启动 official baseline、Gazebo/SITL、
 gazebo-sensor、X2 virtual serial、SDF overlay 等仿真组件。
 
-真机起飞前不能复用这些仿真入口来“顺便检查一下”。真实机器的前置检查必须
-走独立的 real preflight doctor：
+真机起飞前不能复用这些仿真入口来“顺便检查一下”。真实机器的对外入口必须是
+统一 wrapper。wrapper 根据 `NAVLAB_RUNTIME_BACKEND` 和 `NAVLAB_RUNTIME_MODE`
+选择 real 或 simulation 路径，不再通过 `--stage` 这类 CLI 参数切换阶段：
 
 ```text
-real-preflight-doctor
+run <task> with NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real
+  -> real preflight doctor phase
   -> checks process + real runtime boundary
-  -> checks real ROS / FCU / sensor topics
-  -> checks simulation sources are absent
+  -> checks real FCU serial device and MAVLink-router/MAVROS dependencies
   -> writes preflight summary
+  -> real prepare / bringup phase
+  -> task doctor phase
+  -> companion / task run phase
   -> does not arm, take off, land, or publish movement setpoints
 ```
 
@@ -22,7 +26,10 @@ real-preflight-doctor
 
 ```text
 Stage 1 Gazebo/SITL acceptance passed
-  -> real-preflight-doctor passed
+  -> run <task> wrapper
+     -> real preflight doctor phase passed
+     -> real prepare / bringup phase passed
+     -> task doctor phase passed
   -> operator safety confirmation
   -> real hover / P8 / P12 flight task
   -> landing summary
@@ -40,20 +47,18 @@ just navlab-hover
 
 真机 preflight doctor 要回答一个问题：
 
-> 当前系统是否真的处在 `process + real` 边界内，并且真实 FCU、真实传感器、
-> 真实 SLAM 和真实 landing 所需 topic 已经可观测，足以允许后续真机 flight
-> task 进入 arm/takeoff 阶段？
+> 当前系统是否真的处在 `process + real` 边界内，并且真实 FCU 串口 MAVLink
+> 与真机基础依赖存在，足以允许 wrapper 进入 real prepare / bringup 阶段？
 
 它的目标不是证明 hover 已经完成，也不是证明 landing 已经完成。它只证明：
 
 - 当前 runtime backend 是 `process`。
 - 当前 runtime mode 是 `real`。
-- Gazebo/SITL/official baseline/gazebo-sensor 没有被当作输入。
-- `/scan` 来自真实 lidar driver 或真实 scan validation/stabilization pipeline。
-- FCU 状态和 filtered pose 来自真实飞控链路。
-- SLAM odom 来自真实 SLAM。
-- 真机任务需要的基础 topic 存在且新鲜。
-- summary 能作为后续真机 flight task 的入口证据。
+- FCU 串口设备、权限和 baud 配置正确。
+- `mavlink-router`、MAVROS、SLAM、companion Python 入口等真机依赖存在。
+- pymavlink 能在短窗口内从真实串口看到 autopilot HEARTBEAT 和 required MAVLink
+  messages。
+- summary 能作为后续 real prepare phase 的入口证据。
 
 ## 3. 不做什么
 
@@ -68,12 +73,21 @@ real preflight doctor 必须保持非执行性：
 - 不启动 SITL。
 - 不启动 official baseline。
 - 不启动 gazebo-sensor。
+- 不启动 `mavlink-router`、MAVROS、SLAM 或 companion；这些由 real prepare /
+  task prepare 阶段负责。
 - 不生成或加载 SDF / motor disturbance overlay。
-- 不使用 `/scan_ideal`、`/sim/x2/status`、`/rangefinder/down/scan_ideal`。
+- 不检查 `/scan`、`/slam/odom`、MAVROS topic freshness 或 companion readiness。
 - 不把仿真 Stage 1 artifact 当成真机数据源。
+- 不把 TCP/UDP SITL endpoint 当成真实 FCU 证据。
 
 doctor 通过只表示“允许进入下一层真机飞行入口检查”，不表示飞机已经可以无条件
 自动起飞。
+
+真机启动分层设计见
+`docs/scenarios/indoor/navlab_real_prepare_and_task_doctor_design.md`。preflight
+doctor 只做非执行性检查；real prepare 才启动辅助进程；task doctor 再检查
+companion 和具体任务 readiness。这些都是 wrapper 内部 phase，不是单独的
+operator CLI。
 
 ## 4. 入口关系
 
@@ -83,43 +97,88 @@ Stage 1 仍由 Gazebo/SITL built-in task 负责：
 
 | task | Stage 1 command | 结果 |
 |---|---|---|
-| hover | `just navlab-hover ... --simulation-profile ideal` 和 `mild_disturbance` | 证明仿真起飞、悬停、原地降落 |
-| P8 exploration | `just navlab-exploration ... --simulation-profile ideal` 和 `mild_disturbance` | 证明仿真移动、返航、降落 |
-| P12 scan robustness | `just navlab-scan-robustness ...` | 证明仿真扰动/scan 鲁棒性和原地降落 |
+| hover | `just navlab-run hover ... --simulation-profile ideal` 和 `mild_disturbance` | 证明仿真起飞、悬停、原地降落 |
+| P8 exploration | `just navlab-run exploration ... --simulation-profile ideal` 和 `mild_disturbance` | 证明仿真移动、返航、降落 |
+| P12 scan robustness | `just navlab-run scan-robustness ...` | 证明仿真扰动/scan 鲁棒性和原地降落 |
 
 Stage 1 允许使用 Gazebo/SITL 生成可复现实验数据，但仍不能把 Gazebo truth
 作为控制、SLAM、ExternalNav 或 landing 的输入。
 
-### 4.2 Real Preflight Doctor
+### 4.2 Real Wrapper Entry
 
-每一次真机飞行尝试之前都必须重新运行：
+每一次真机飞行尝试都必须通过同一个 wrapper 入口运行。runtime backend/mode 从
+环境变量读取：
 
 ```bash
 NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real \
-just navlab-real-preflight-doctor --config orchestration/config.real.toml
+just navlab-run hover
 ```
 
-doctor 输出 `summary.json`。后续真机 flight task 必须读取或引用这个 summary，
+对应 orchestration 形态建议是：
+
+```text
+run hover
+run exploration
+run scan-robustness
+```
+
+不再暴露独立的 `doctor`、`prepare`、`hover doctor --stage real` 或
+`hover run --stage real` operator 命令。wrapper 内部会写出 preflight summary，
 并检查：
 
 - `ok == true`
 - `runtime_backend == "process"`
 - `runtime_mode == "real"`
-- 没有 required real topic missing blocker
-- 没有 forbidden simulation topic blocker
+- required command / ROS package / Python module dependency checks 通过
+- serial MAVLink probe 通过
 - preflight summary 的时间没有超过配置的有效窗口
 
-### 4.3 Real Flight Task
+### 4.3 Real Prepare / Bringup Phase
 
-后续应新增或迁移真机 flight entry，例如：
+preflight phase 通过后，wrapper 必须先进入 real prepare / bringup phase。
+prepare 负责启动非 companion 的辅助进程，例如：
 
 ```text
-hover-real
-exploration-real
-scan-robustness-real
+mavlink-router
+MAVROS / FCU ROS bridge
+real lidar driver
+SLAM runtime
+optional rangefinder bridge
 ```
 
-这些 entry 只能在 real preflight doctor 通过后执行。它们负责：
+prepare 不能启动 Gazebo/SITL，也不能执行 arm/takeoff/land。它应写出 prepare
+summary，记录启动了哪些 host process、mavlink-router 使用的串口、MAVROS
+连接的本机 endpoint，以及 `/scan`、FCU topic、`/slam/odom` 是否开始可观测。
+
+### 4.4 Task Doctor Phase
+
+prepare phase 通过后，wrapper 必须运行 task doctor phase。task doctor 使用统一
+helper 检查 companion 启动前置 topic：
+
+```text
+/scan
+/tf
+/tf_static
+FCU status / pose / velocity topic
+MAVROS state 或等价 FCU bridge state
+/slam/odom
+/navlab/slam/status
+```
+
+只有这些上游 topic ready 后，才能启动 companion 并进入 task run。
+
+### 4.5 Real Flight Task Phase
+
+后续 wrapper 应支持以下 task：
+
+```text
+hover
+exploration
+scan-robustness
+```
+
+task phase 只能在 real preflight、real prepare 和 task doctor 全部通过后执行。
+它负责：
 
 - 读取真机专用配置，例如 `takeoff_alt_m`。
 - 获取 operator safety confirmation。
@@ -132,7 +191,65 @@ real flight task 不能重新启动仿真传感器，也不能 fallback 到 `jus
 
 ## 5. 真实数据源 contract
 
-real preflight doctor 至少检查以下 required real topics：
+### 5.1 FCU 串口、MAVLink Router 和 MAVROS contract
+
+真机 FCU 的 primary evidence 应来自真实串口 MAVLink，而不是 SITL endpoint。
+运行时串口应由 `mavlink-router` 独占，再分发给 MAVROS、pymavlink probe、GCS
+或日志工具。MAVROS 负责把 MAVLink 转成 ROS graph 中易检查的 FCU topic。
+
+real preflight doctor 必须支持配置串口和依赖检查：
+
+```toml
+[serial_mavlink]
+enabled = true
+port = "/dev/ttyACM0"
+baud = 115200
+connection_timeout_sec = 3.0
+heartbeat_timeout_sec = 5.0
+telemetry_window_sec = 8.0
+require_autopilot_heartbeat = true
+require_system_status = true
+require_not_armed = true
+require_mode_observed = true
+expected_autopilot = "ardupilotmega"
+required_messages = ["HEARTBEAT", "SYS_STATUS", "ATTITUDE"]
+optional_messages = ["LOCAL_POSITION_NED", "GLOBAL_POSITION_INT", "RANGEFINDER", "DISTANCE_SENSOR", "HIGHRES_IMU", "RAW_IMU", "SCALED_IMU"]
+
+[real_preflight.dependencies]
+required_command_groups = [
+  ["mavlink-routerd", "mavlink-router"],
+  ["ros2"]
+]
+required_ros_packages = ["mavros", "mavros_msgs", "navlab_slam_bringup"]
+required_python_modules = ["navlab.companion.cli", "navlab.slam.cli"]
+```
+
+preflight doctor 负责证明物理串口和依赖边界：
+
+- serial device path 存在，例如 `/dev/ttyACM0`、`/dev/ttyUSB0` 或 udev symlink。
+- 当前用户有读写权限。
+- baudrate 配置存在。
+- `mavlink-routerd` 或 `mavlink-router` 可执行。
+- MAVROS package 可用。
+- SLAM 和 companion host runtime 入口可用。
+
+preflight doctor 可以短暂打开串口或使用 pymavlink probe 验证 HEARTBEAT，但必须
+立即关闭。长期运行的串口所有权属于 real prepare 启动的 `mavlink-router`。
+
+prepare 通过后，FCU 证据应优先来自：
+
+- `mavlink-router` process summary：真实 serial path、baud、本机 endpoint。
+- MAVROS state / IMU / pose topic。
+- pymavlink 通过本机 router endpoint 观察到的 HEARTBEAT。
+
+这一步不能通过 SITL router endpoint 替代。`tcp://127.0.0.1:5760` 或
+`udp://127.0.0.1:14550` 只有在 prepare summary 能追溯到真实串口时，才可作为
+真机 MAVLink evidence。
+
+### 5.2 ROS topic contract belongs to prepare / task doctor
+
+real preflight doctor 不检查 ROS topic readiness。以下 topic contract 属于
+`real prepare` 和 `task doctor`：
 
 ```text
 /scan
@@ -141,11 +258,6 @@ real preflight doctor 至少检查以下 required real topics：
 /slam/odom
 /ap/v1/status
 /ap/v1/pose/filtered
-```
-
-后续真机 flight task 还应额外要求：
-
-```text
 /ap/v1/twist/filtered
 /imu
 /rangefinder/down/range
@@ -156,7 +268,8 @@ real preflight doctor 至少检查以下 required real topics：
 ```
 
 其中 `/rangefinder/down/range` 可以来自真实下视测距或 FCU telemetry bridge。
-如果真实 FCU 已经内部消费下视测距，但 ROS 侧暂时没有直接 topic，summary 必须
+如果真实 FCU 已经内部消费下视测距，但 ROS 侧暂时没有直接 topic，prepare 或
+task doctor summary 必须
 明确写出：
 
 ```json
@@ -169,9 +282,21 @@ real preflight doctor 至少检查以下 required real topics：
 
 不能因为 ROS topic 缺失就用仿真 `/rangefinder/down/scan_ideal` 代替。
 
+如果 real path 使用 MAVROS，prepare 或 task doctor summary 应记录 topic alias，例如：
+
+```json
+{
+  "fcu_ros_bridge": "mavros",
+  "mavros_state_topic": "/mavros/state",
+  "pose_topic": "/mavros/local_position/pose",
+  "imu_topic": "/mavros/imu/data"
+}
+```
+
 ## 6. Forbidden Simulation Inputs
 
-real mode 下出现以下 topic 或 source claim 必须 block：
+Forbidden simulation input gate 属于 prepare / task doctor / task run 阶段，不属于
+real preflight doctor。real mode 下出现以下 topic 或 source claim 必须 block：
 
 ```text
 /gazebo/*
@@ -186,14 +311,14 @@ official maze input claim
 ```
 
 注意：真实 lidar driver 也可能使用 `/lidar` 作为原始 topic。因此 forbidden
-规则不能只靠名字硬编码，必须结合 source claim 判断。推荐真机链路把 SLAM 唯一
-输入稳定在 `/scan`，并在 summary 里记录：
+规则不能只靠名字硬编码，必须结合 source claim 判断。推荐 prepare / task doctor
+把 SLAM 唯一输入稳定在 `/scan`，并在 summary 里记录：
 
 ```json
 {
   "source_claims": {
     "scan": "real_lidar_driver_or_real_scan_stabilization",
-    "fcu": "real_ardupilot_dds_or_real_mavlink_bridge",
+    "fcu": "real_serial_mavlink_or_ardupilot_dds_bridge",
     "imu": "real_fcu_or_sensor",
     "rangefinder": "real_down_rangefinder_or_fcu_internal",
     "slam": "real_slam"
@@ -226,11 +351,12 @@ task 应在 summary 中记录：
 
 ```bash
 NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real \
-uv run --project orchestration python orchestration/main.py hover-real \
+uv run --project orchestration python orchestration/main.py run hover \
   --config orchestration/config.real.toml
 ```
 
-`hover-real` 只有在 real preflight doctor 通过后才允许存在。
+`run hover` wrapper 只有在 real preflight、real prepare 和 task doctor phase 全部
+通过后，才允许进入 arm/takeoff。
 
 ## 8. Summary Schema
 
@@ -246,22 +372,65 @@ real preflight doctor summary 建议包含：
   "preflight_claim": "evaluated",
   "flight_claim": "not_evaluated",
   "landing_claim": "not_evaluated",
-  "source_claims": {
-    "scan": "real_lidar_driver",
-    "fcu": "real_ardupilot_dds",
-    "imu": "real_fcu_or_sensor",
-    "rangefinder": "real_or_not_required",
-    "slam": "real_slam"
-  },
+  "checked_at": "2026-06-09T00:00:00Z",
+  "valid_for_sec": 120,
   "real_preflight": {
-    "required_real_topics": ["/scan", "/tf", "/tf_static", "/slam/odom", "/ap/v1/status", "/ap/v1/pose/filtered"],
-    "forbidden_simulation_input_topics": ["/gazebo/*", "/scan_ideal", "/sim/x2/status", "/rangefinder/down/scan_ideal"],
-    "topic_count": 0,
-    "checked_at": "2026-06-09T00:00:00Z",
-    "valid_for_sec": 120
+    "dependencies": {
+      "required_command_groups": [
+        {
+          "candidates": ["mavlink-routerd", "mavlink-router"],
+          "found": true,
+          "selected": "mavlink-routerd"
+        },
+        {
+          "candidates": ["ros2"],
+          "found": true,
+          "selected": "ros2"
+        }
+      ],
+      "required_ros_packages": {
+        "mavros": {"present": true},
+        "mavros_msgs": {"present": true},
+        "navlab_slam_bringup": {"present": true}
+      },
+      "required_python_modules": {
+        "navlab.companion.cli": true,
+        "navlab.slam.cli": true
+      }
+    },
+    "serial_mavlink": {
+      "enabled": true,
+      "port": "/dev/ttyACM0",
+      "baud": 115200,
+      "serial_open_ok": true,
+      "heartbeat_seen": true,
+      "system_id": 1,
+      "component_id": 1,
+      "autopilot": "ardupilotmega",
+      "vehicle_type": "quadrotor",
+      "armed": false,
+      "mode": "STABILIZE",
+      "message_counts": {
+        "HEARTBEAT": 3,
+        "SYS_STATUS": 2,
+        "ATTITUDE": 20,
+        "DISTANCE_SENSOR": 8
+      }
+    }
   }
 }
 ```
+
+控制台输出不能只给 summary path。每次运行必须用显著的 panel/table 输出操作者
+最需要立即判断的信息：
+
+- `Status`: `OK` 或 `BLOCKED`。
+- `Runtime`: backend + mode。
+- `Serial MAVLink`: port、baud、serial open、heartbeat。
+- `Deps`: `mavlink-router`、`ros2`、MAVROS、SLAM、companion 依赖概览。
+- `FCU`: system/component id、autopilot、mode、armed。
+- `Blockers`: 前若干个稳定 blocker 字符串。
+- `Summary`: 完整 JSON artifact path。
 
 real flight summary 应引用 preflight summary：
 
@@ -272,6 +441,14 @@ real flight summary 应引用 preflight summary：
     "ok": true,
     "artifact": "artifacts/ros/navlab_real_preflight_doctor/<run_id>/summary.json",
     "age_sec_at_takeoff": 42.0
+  },
+  "real_prepare": {
+    "ok": true,
+    "artifact": "artifacts/ros/navlab_real_prepare/<run_id>/summary.json"
+  },
+  "task_doctor": {
+    "ok": true,
+    "artifact": "artifacts/ros/navlab_hover_real_doctor/<run_id>/summary.json"
   },
   "real_landing_claim": "evaluated"
 }
@@ -287,8 +464,20 @@ real_preflight_failed
 real_preflight_expired
 runtime_backend_must_be_process:<actual>
 runtime_mode_must_be_real:<actual>
-required_real_topic_missing:<topic>
-forbidden_simulation_topic_present:<topic>
+serial_port_missing:<path>
+serial_port_permission_denied:<path>
+serial_open_failed:<reason>
+serial_mavlink_heartbeat_missing
+serial_mavlink_autopilot_invalid
+serial_mavlink_required_message_missing:<message>
+serial_mavlink_unexpected_armed
+required_command_missing:<command-or-group>
+required_ros_package_missing:<package>
+required_python_module_missing:<module>
+real_prepare_missing
+real_prepare_failed
+task_doctor_missing
+task_doctor_failed
 simulation_stage_not_passed
 manual_takeover_not_confirmed
 kill_switch_not_confirmed
@@ -302,8 +491,9 @@ takeoff_altitude_not_configured
 本设计完成后，系统边界应当清楚：
 
 - `just navlab-hover` 只代表 Gazebo/SITL Stage 1 hover，不代表真机 hover。
-- 每次真机飞行前必须先跑 `real-preflight-doctor`。
+- 每次真机飞行前必须先跑 `NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real ... doctor`。
+- wrapper 内部必须在 preflight 通过后进入 real prepare / bringup，再进入 task doctor。
 - real preflight doctor 不触发电机或飞行动作。
-- 真机 flight task 必须引用最新通过的 preflight summary。
+- 真机 flight task 必须引用最新通过的 preflight、prepare 和 task doctor summary。
 - real mode 下不能使用模拟串口、Gazebo lidar、SITL、SDF overlay 或仿真 rangefinder。
 - 起飞高度由真机 flight task 的配置读取，不由 doctor 执行。

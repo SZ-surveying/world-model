@@ -1,5 +1,5 @@
 from __future__ import annotations
 
-from src.tasks.hover import HoverAcceptanceTask
+from src.tasks.hover import HoverAcceptanceTask, HoverDoctorTask
 
-__all__ = ["HoverAcceptanceTask"]
+__all__ = ["HoverAcceptanceTask", "HoverDoctorTask"]

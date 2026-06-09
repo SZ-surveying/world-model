@@ -1,5 +1,50 @@
 [task]
 duration_sec = 45.0
 
+[real_preflight]
+valid_for_sec = 300.0
+
+[real_preflight.dependencies]
+required_command_groups = [
+    ["mavlink-routerd", "mavlink-router"],
+    ["ros2"],
+]
+required_ros_packages = [
+    "mavros",
+    "mavros_msgs",
+    "navlab_slam_bringup",
+    "navlab_cartographer_adapter",
+    "navlab_external_nav_bridge",
+    "navlab_slam_imu_bridge",
+]
+required_python_modules = [
+    "navlab.companion.cli",
+    "navlab.slam.cli",
+]
+required_process_services = []
+
+[serial_mavlink]
+enabled = true
+port = "/dev/ttyACM0"
+baud = 115200
+connection_timeout_sec = 3.0
+heartbeat_timeout_sec = 5.0
+telemetry_window_sec = 8.0
+require_autopilot_heartbeat = true
+require_system_status = true
+require_not_armed = true
+require_mode_observed = true
+expected_autopilot = "ardupilotmega"
+required_messages = ["HEARTBEAT", "SYS_STATUS", "ATTITUDE"]
+optional_messages = [
+    "LOCAL_POSITION_NED",
+    "GLOBAL_POSITION_INT",
+    "RANGEFINDER",
+    "DISTANCE_SENSOR",
+    "HIGHRES_IMU",
+    "RAW_IMU",
+    "SCALED_IMU",
+]
+
 [landing]
 default_policy = "land_in_place"

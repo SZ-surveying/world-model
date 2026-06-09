@@ -69,7 +69,7 @@ NAVLAB_ORCHESTRATION_CONFIG
 
 ```bash
 NAVLAB_RUNTIME_BACKEND=docker NAVLAB_RUNTIME_MODE=simulation \
-uv run --project orchestration python orchestration/main.py hover \
+uv run --project orchestration python orchestration/main.py run hover \
   --task-config orchestration/configs/hover.toml
 ```
 
@@ -77,7 +77,7 @@ uv run --project orchestration python orchestration/main.py hover \
 
 ```bash
 NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real \
-uv run --project orchestration python orchestration/main.py real-preflight-doctor \
+uv run --project orchestration python orchestration/main.py doctor \
   --task-config orchestration/configs/real_preflight.toml
 ```
 
@@ -94,7 +94,7 @@ task 默认配置根据 task name 选择：
 hover                 -> orchestration/configs/hover.toml
 exploration           -> orchestration/configs/exploration.toml
 scan-robustness       -> orchestration/configs/scan_robustness.toml
-real-preflight-doctor -> orchestration/configs/real_preflight.toml
+doctor with process+real -> orchestration/configs/real_preflight.toml
 ```
 
 ## 文件结构
@@ -152,12 +152,12 @@ fail_on_mode_violation = true
 [orchestration.runtime.process]
 workspace_host_path = "."
 log_dir = "artifacts/runtime_logs"
-require_explicit_services = true
+require_explicit_services = false
 
 [orchestration.runtime.real.sources]
 scan_source_claim = "real_lidar_driver"
 scan_source_topic = "/scan"
-fcu_source_claim = "real_ardupilot_dds"
+fcu_source_claim = "real_serial_mavlink_or_ardupilot_dds_bridge"
 imu_source_claim = "real_fcu_or_sensor"
 rangefinder_source_claim = "real_or_not_required"
 slam_source_claim = "real_slam"
@@ -272,6 +272,18 @@ max_landing_duration_sec = 35.0
 [task]
 duration_sec = 45.0
 
+[serial_mavlink]
+enabled = true
+port = "/dev/ttyACM0"
+baud = 115200
+connection_timeout_sec = 3.0
+heartbeat_timeout_sec = 5.0
+telemetry_window_sec = 8.0
+require_autopilot_heartbeat = true
+require_system_status = true
+require_not_armed = true
+required_messages = ["HEARTBEAT", "SYS_STATUS", "ATTITUDE"]
+
 [landing]
 default_policy = "land_in_place"
 ```
@@ -284,7 +296,7 @@ movement 或 landing intent 参数。
 CLI 入口应从：
 
 ```bash
-uv run --project orchestration python orchestration/main.py hover \
+uv run --project orchestration python orchestration/main.py run hover \
   --duration-sec 90 \
   --simulation-profile ideal \
   --orchestration-config orchestration/config.simulation.toml \
@@ -294,14 +306,14 @@ uv run --project orchestration python orchestration/main.py hover \
 迁移为：
 
 ```bash
-uv run --project orchestration python orchestration/main.py hover \
+uv run --project orchestration python orchestration/main.py run hover \
   --task-config orchestration/configs/hover.toml
 ```
 
 可选覆盖 task invocation params：
 
 ```bash
-uv run --project orchestration python orchestration/main.py hover \
+uv run --project orchestration python orchestration/main.py run hover \
   --task-config orchestration/configs/hover.toml \
   --duration-sec 120 \
   --simulation-profile mild_disturbance

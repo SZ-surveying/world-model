@@ -189,7 +189,7 @@ forbidden_sim_topics:
 scan_source_claim = "real_lidar_driver"
 scan_source_topic = "/scan"
 imu_source_claim = "real_fcu_or_sensor"
-fcu_source_claim = "real_ardupilot_dds"
+fcu_source_claim = "real_serial_mavlink_or_ardupilot_dds_bridge"
 ```
 
 ## Gate 分层设计
@@ -263,7 +263,7 @@ real-preflight-doctor
     "fail_on_mode_violation": true
   },
   "source_claims": {
-    "fcu": "real_ardupilot_dds",
+    "fcu": "real_serial_mavlink_or_ardupilot_dds_bridge",
     "scan": "real_lidar_driver",
     "imu": "real_fcu_or_sensor",
     "rangefinder": "real_or_not_required",

@@ -11,29 +11,21 @@ default:
 
 # Orchestration tasks
 
-# Run built-in hover acceptance.
-navlab-hover duration_sec='90' *args='':
-    {{orchestration_cmd}} hover --duration-sec {{duration_sec}} {{args}}
+# Build orchestration runtime images.
+navlab-build kind='all' *args='':
+    {{orchestration_cmd}} build {{kind}} {{args}}
 
-# Check built-in P8 movement/exploration prerequisites.
-navlab-exploration-doctor *args='':
-    {{orchestration_cmd}} exploration-doctor {{args}}
+# Check the active runtime. Set NAVLAB_RUNTIME_BACKEND/MODE for real preflight.
+navlab-doctor *args='':
+    {{orchestration_cmd}} doctor {{args}}
 
-# Run built-in P8 movement/exploration acceptance.
-navlab-exploration duration_sec='150' *args='':
-    {{orchestration_cmd}} exploration --duration-sec {{duration_sec}} {{args}}
-
-# Check built-in tilted-scan robustness prerequisites.
-navlab-scan-robustness-doctor *args='':
-    {{orchestration_cmd}} scan-robustness-doctor {{args}}
-
-# Run built-in tilted-scan robustness acceptance.
-navlab-scan-robustness duration_sec='240' *args='':
-    {{orchestration_cmd}} scan-robustness --duration-sec {{duration_sec}} {{args}}
-
-# Check process+real runtime preflight contract.
-navlab-real-preflight-doctor *args='':
-    {{orchestration_cmd}} real-preflight-doctor {{args}}
+# Run a built-in task through the unified wrapper: hover, exploration, or scan-robustness.
+navlab-run task duration_sec='' *args='':
+    if [ -n "{{duration_sec}}" ]; then \
+        {{orchestration_cmd}} run {{task}} --duration-sec {{duration_sec}} {{args}}; \
+    else \
+        {{orchestration_cmd}} run {{task}} {{args}}; \
+    fi
 
 # Command tools
 

@@ -326,7 +326,11 @@ def load_orchestration_runtime_backend_config(runtime: RuntimeConfig) -> Orchest
     real_sources = RealRuntimeSourceConfig(
         scan_source_claim=_resolve_router_value(raw_real_sources, "scan_source_claim", "real_lidar_driver"),
         scan_source_topic=_resolve_router_value(raw_real_sources, "scan_source_topic", "/scan"),
-        fcu_source_claim=_resolve_router_value(raw_real_sources, "fcu_source_claim", "real_ardupilot_dds"),
+        fcu_source_claim=_resolve_router_value(
+            raw_real_sources,
+            "fcu_source_claim",
+            "real_serial_mavlink_or_ardupilot_dds_bridge",
+        ),
         imu_source_claim=_resolve_router_value(raw_real_sources, "imu_source_claim", "real_fcu_or_sensor"),
         rangefinder_source_claim=_resolve_router_value(
             raw_real_sources,
