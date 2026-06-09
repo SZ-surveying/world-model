@@ -140,6 +140,10 @@ def command_ack_success(command_acks: list[dict[str, int]], command_id: int) -> 
     return any(ack.get("command") == command_id and ack.get("result") == 0 for ack in command_acks)
 
 
+def command_ack_rejected(command_acks: list[dict[str, int]], command_id: int) -> bool:
+    return any(ack.get("command") == command_id and ack.get("result") not in (0, None) for ack in command_acks)
+
+
 def _request_hover_streams(connection, target_system: int, target_component: int) -> None:
     from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
@@ -187,6 +191,24 @@ def _command_disarm(connection, target_system: int, target_component: int) -> No
     )
 
 
+def _command_land(connection, target_system: int, target_component: int) -> None:
+    from pymavlink.dialects.v20 import ardupilotmega as mavlink
+
+    connection.mav.command_long_send(
+        target_system,
+        target_component,
+        mavlink.MAV_CMD_NAV_LAND,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run NavLab FCU-controlled hover mission via MAVLink setpoints.")
     parser.add_argument("--endpoint", default="tcp:sitl:5765")
@@ -207,12 +229,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-system", type=int, default=255)
     parser.add_argument("--source-component", type=int, default=190)
     parser.add_argument("--status-topic", default="/navlab/hover/status")
+    parser.add_argument("--landing-status-topic", default="/navlab/landing/status")
+    parser.add_argument("--landing-intent-topic", default="/navlab/landing/intent")
     parser.add_argument("--sim-log-topic", default=DEFAULT_SIM_LOG_TOPIC)
     parser.add_argument("--external-nav-status-topic", default="/external_nav/status")
     parser.add_argument("--imu-status-topic", default="/imu/status")
     parser.add_argument("--mavlink-status-topic", default="/navlab/mavlink/status")
     parser.add_argument("--status-timeout-sec", type=float, default=1.0)
     parser.add_argument("--setpoint-rate-hz", type=float, default=5.0)
+    parser.add_argument("--pre-land-hold-sec", type=float, default=2.0)
+    parser.add_argument("--max-landing-duration-sec", type=float, default=35.0)
+    parser.add_argument("--touchdown-altitude-m", type=float, default=0.12)
+    parser.add_argument("--touchdown-vertical-speed-mps", type=float, default=0.08)
+    parser.add_argument("--require-disarm", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--require-motors-safe", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--require-external-nav", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--require-imu-status", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--send-position-setpoints", action=argparse.BooleanOptionalAction, default=True)
@@ -261,6 +291,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                 dialect="ardupilotmega",
             )
             self._status_pub = self.create_publisher(String, args.status_topic, 10)
+            self._landing_status_pub = self.create_publisher(String, args.landing_status_topic, 10)
+            self._landing_intent_pub = self.create_publisher(String, args.landing_intent_topic, 10)
             self._sim_log_pub = self.create_publisher(String, args.sim_log_topic, 10)
             self.create_subscription(String, args.external_nav_status_topic, self._handle_external_nav_status, 10)
             self.create_subscription(String, args.imu_status_topic, self._handle_imu_status, 10)
@@ -286,6 +318,8 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._current_x: float | None = None
             self._current_y: float | None = None
             self._current_z: float | None = None
+            self._current_vz: float | None = None
+            self._current_range_m: float | None = None
             self._current_yaw_rad: float | None = None
             self._next_request = 0.0
             self._next_heartbeat = 0.0
@@ -294,6 +328,8 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._next_arm_command = 0.0
             self._next_takeoff_command = 0.0
             self._next_setpoint = 0.0
+            self._next_land_command = 0.0
+            self._next_disarm_command = 0.0
             self._started = time.monotonic()
             self._phases_seen: set[str] = set()
             self._phase_counts: dict[str, int] = {}
@@ -308,6 +344,14 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._gps_global_origin_seen = False
             self._home_position_seen = False
             self._hover_samples: list[tuple[float, float, float, float]] = []
+            self._landing_started: float | None = None
+            self._hover_body_ok = False
+            self._hover_body_reason = ""
+            self._landing_state = "not_started"
+            self._landed_state: int | None = None
+            self._touchdown_confirmed = False
+            self._land_command_sent = False
+            self._landing_blockers: list[str] = []
             self.create_timer(0.05, self._tick)
             self.get_logger().info(f"hover mission controller started endpoint={args.endpoint}")
 
@@ -345,14 +389,17 @@ def run(argv: Sequence[str] | None = None) -> int:
             now = time.monotonic()
             if now - self._started >= args.duration_sec:
                 self._stop_vehicle()
-                self._write_summary(ok=False, reason="duration_timeout")
+                self._write_summary(ok=False, reason="duration_timeout", landing_ok=False)
                 rclpy.try_shutdown()
                 return
             self._drain_mavlink()
             if self._crash_detected:
                 self._stop_vehicle()
-                self._write_summary(ok=False, reason="crash_detected")
+                self._write_summary(ok=False, reason="crash_detected", landing_ok=False)
                 rclpy.try_shutdown()
+                return
+            if self._landing_started is not None:
+                self._tick_landing(now)
                 return
             if now >= self._next_heartbeat:
                 _send_gcs_heartbeat(self._connection)
@@ -447,7 +494,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._publish_status(decision, inputs)
             if decision.terminal:
                 drift = summarize_hover_drift(self._hover_samples)
-                ok = (
+                self._hover_body_ok = (
                     drift.ok
                     and drift.duration_sec >= args.hover_hold_sec - HOVER_DURATION_TOLERANCE_SEC
                     and drift.horizontal_drift_m <= args.max_horizontal_drift_m
@@ -455,9 +502,106 @@ def run(argv: Sequence[str] | None = None) -> int:
                     and self._message_counts.get("LOCAL_POSITION_NED", 0) > 0
                     and not self._crash_detected
                 )
-                self._stop_vehicle()
-                self._write_summary(ok=ok, reason="hover_complete" if ok else "hover_unstable")
+                self._hover_body_reason = "hover_complete" if self._hover_body_ok else "hover_unstable"
+                self._start_landing(now)
+
+        def _start_landing(self, now: float) -> None:
+            self._landing_started = now
+            self._landing_state = "task_body_complete"
+            intent = String()
+            intent.data = json.dumps(
+                {
+                    "source": "mavlink_hover_mission_controller",
+                    "kind": "land_in_place",
+                    "policy": "land_in_place",
+                    "reason": self._hover_body_reason,
+                    "updated_ms": int(time.time() * 1000),
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            self._landing_intent_pub.publish(intent)
+            self._publish_landing_status()
+
+        def _tick_landing(self, now: float) -> None:
+            if self._target_system is None or self._target_component is None:
+                self._landing_blockers.append("landing_target_system_missing")
+                self._write_summary(ok=False, reason="landing_target_system_missing", landing_ok=False)
                 rclpy.try_shutdown()
+                return
+            self._drain_mavlink()
+            elapsed = 0.0 if self._landing_started is None else now - self._landing_started
+            if elapsed > args.max_landing_duration_sec:
+                self._landing_blockers.append("landing_timeout")
+                self._stop_vehicle()
+                self._write_summary(ok=False, reason="landing_timeout", landing_ok=False)
+                rclpy.try_shutdown()
+                return
+            if elapsed < args.pre_land_hold_sec:
+                self._landing_state = "pre_land_hold"
+                self._send_hold_setpoint(now)
+                self._publish_landing_status()
+                return
+            if not self._land_command_sent or now >= self._next_land_command:
+                self._landing_state = "land_command_sent"
+                _command_land(self._connection, self._target_system, self._target_component)
+                self._count_sent_command("land")
+                self._land_command_sent = True
+                self._next_land_command = now + 2.0
+            if command_ack_rejected(self._command_acks, mavlink.MAV_CMD_NAV_LAND):
+                self._landing_blockers.append("landing_command_rejected")
+                self._write_summary(ok=False, reason="landing_command_rejected", landing_ok=False)
+                rclpy.try_shutdown()
+                return
+            self._touchdown_confirmed = self._touchdown_confirmed or self._touchdown_candidate()
+            self._landing_state = "touchdown_candidate" if self._touchdown_confirmed else "descent_monitoring"
+            if self._touchdown_confirmed and args.require_disarm and now >= self._next_disarm_command:
+                self._landing_state = "disarm_requested"
+                _command_disarm(self._connection, self._target_system, self._target_component)
+                self._count_sent_command("disarm")
+                self._next_disarm_command = now + 2.0
+            disarmed = not self._armed_seen
+            motors_safe = disarmed if args.require_motors_safe else True
+            landing_ok = (
+                command_ack_success(self._command_acks, mavlink.MAV_CMD_NAV_LAND)
+                and self._touchdown_confirmed
+                and (disarmed if args.require_disarm else True)
+                and motors_safe
+            )
+            self._publish_landing_status()
+            if landing_ok:
+                self._landing_state = "landing_complete"
+                self._write_summary(ok=self._hover_body_ok and landing_ok, reason=self._hover_body_reason, landing_ok=True)
+                rclpy.try_shutdown()
+
+        def _send_hold_setpoint(self, now: float) -> None:
+            if (
+                not args.send_position_setpoints
+                or self._target_system is None
+                or self._target_component is None
+                or now < self._next_setpoint
+            ):
+                return
+            _send_local_position_yaw_setpoint(
+                self._connection,
+                self._target_system,
+                self._target_component,
+                self._hold_x if self._hold_x is not None else 0.0,
+                self._hold_y if self._hold_y is not None else 0.0,
+                -args.takeoff_alt_m,
+                self._hold_yaw_rad if self._hold_x is not None else (self._current_yaw_rad or 0.0),
+            )
+            self._setpoints_sent += 1
+            self._count_sent_command("local_position_yaw_setpoint")
+            self._next_setpoint = now + (1.0 / args.setpoint_rate_hz)
+
+        def _touchdown_candidate(self) -> bool:
+            if self._landed_state == mavlink.MAV_LANDED_STATE_ON_GROUND:
+                return True
+            range_ok = self._current_range_m is not None and self._current_range_m <= args.touchdown_altitude_m
+            z_ok = self._current_z is not None and self._current_z >= -args.touchdown_altitude_m
+            vz_ok = self._current_vz is None or abs(self._current_vz) <= args.touchdown_vertical_speed_mps
+            return bool((range_ok or z_ok) and vz_ok)
 
         def _drain_mavlink(self) -> None:
             while True:
@@ -484,6 +628,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                     self._current_x = float(msg.x)
                     self._current_y = float(msg.y)
                     self._current_z = float(msg.z)
+                    self._current_vz = float(getattr(msg, "vz", 0.0))
                     if self._current_z <= -args.min_airborne_alt_m:
                         self._airborne_seen = True
                 elif msg_type == "ATTITUDE":
@@ -497,6 +642,13 @@ def run(argv: Sequence[str] | None = None) -> int:
                     self._gps_global_origin_seen = True
                 elif msg_type == "HOME_POSITION":
                     self._home_position_seen = True
+                elif msg_type in {"DISTANCE_SENSOR", "RANGEFINDER"}:
+                    if hasattr(msg, "current_distance"):
+                        self._current_range_m = float(msg.current_distance) / 100.0
+                    elif hasattr(msg, "distance"):
+                        self._current_range_m = float(msg.distance)
+                elif msg_type == "EXTENDED_SYS_STATE":
+                    self._landed_state = int(msg.landed_state)
                 if self._airborne_seen and self._airborne_started is None:
                     self._airborne_started = time.monotonic()
 
@@ -583,19 +735,78 @@ def run(argv: Sequence[str] | None = None) -> int:
             )
             self._sim_log_pub.publish(sim_log)
 
+        def _landing_summary(self) -> dict[str, object]:
+            land_command_accepted = command_ack_success(self._command_acks, mavlink.MAV_CMD_NAV_LAND)
+            disarmed = not self._armed_seen
+            motors_safe = disarmed if args.require_motors_safe else True
+            ok = bool(
+                land_command_accepted
+                and self._touchdown_confirmed
+                and (disarmed if args.require_disarm else True)
+                and motors_safe
+            )
+            blockers = list(dict.fromkeys(self._landing_blockers))
+            if self._landing_started is not None:
+                if not land_command_accepted:
+                    blockers.append("landing_command_not_accepted")
+                if not self._touchdown_confirmed:
+                    blockers.append("touchdown_not_confirmed")
+                if args.require_disarm and not disarmed:
+                    blockers.append("disarm_not_confirmed")
+                if args.require_motors_safe and not motors_safe:
+                    blockers.append("motors_not_safe")
+            else:
+                blockers.append("landing_not_started")
+            return {
+                "ok": ok,
+                "claim": "evaluated" if self._landing_started is not None else "not_evaluated",
+                "policy": "land_in_place",
+                "state": self._landing_state,
+                "return_home": {
+                    "required": False,
+                    "ok": True,
+                    "state": "not_required",
+                    "distance_to_home_m": None,
+                    "duration_sec": None,
+                },
+                "land_command_accepted": land_command_accepted,
+                "landing_duration_sec": None
+                if self._landing_started is None
+                else max(0.0, time.monotonic() - self._landing_started),
+                "landed_confirmed": self._touchdown_confirmed,
+                "touchdown_confirmed": self._touchdown_confirmed,
+                "disarmed": disarmed,
+                "motors_safe": motors_safe,
+                "require_disarm": args.require_disarm,
+                "require_motors_safe": args.require_motors_safe,
+                "uses_gazebo_truth_as_input": False,
+                "last_range_m": self._current_range_m,
+                "last_z_ned": self._current_z,
+                "last_vz_mps": self._current_vz,
+                "landed_state": self._landed_state,
+                "blockers": sorted(set(blockers)) if not ok else [],
+            }
+
+        def _publish_landing_status(self) -> None:
+            msg = String()
+            msg.data = json.dumps(self._landing_summary(), separators=(",", ":"), sort_keys=True)
+            self._landing_status_pub.publish(msg)
+
         def _rangefinder_count(self) -> int:
             return self._message_counts.get("DISTANCE_SENSOR", 0) + self._message_counts.get("RANGEFINDER", 0)
 
         def _count_sent_command(self, name: str) -> None:
             self._sent_commands[name] = self._sent_commands.get(name, 0) + 1
 
-        def _write_summary(self, *, ok: bool, reason: str) -> None:
+        def _write_summary(self, *, ok: bool, reason: str, landing_ok: bool) -> None:
             if not args.summary_file:
                 return
             drift = summarize_hover_drift(self._hover_samples)
             summary = {
                 "ok": ok,
                 "reason": reason,
+                "hover_body_ok": self._hover_body_ok,
+                "landing_ok": landing_ok,
                 "phases_seen": sorted(self._phases_seen),
                 "phase_counts": dict(sorted(self._phase_counts.items())),
                 "status_history": self._status_history[-40:],
@@ -645,6 +856,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                 "ekf_flags_seen": sorted(set(self._ekf_flags)),
                 "gps_global_origin_seen": self._gps_global_origin_seen,
                 "home_position_seen": self._home_position_seen,
+                "landing": self._landing_summary(),
             }
             path = Path(args.summary_file)
             path.parent.mkdir(parents=True, exist_ok=True)

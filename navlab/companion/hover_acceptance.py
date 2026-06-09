@@ -43,6 +43,7 @@ HOVER_DIAGNOSTIC_MINIMUM_ROSBAG_TOPICS = (
     "/navlab/mavlink/status",
     "/navlab/pose_mirror/status",
     "/navlab/mission/status",
+    "/navlab/landing/status",
 )
 
 
@@ -140,6 +141,7 @@ def _write_hover_summary(
     mavlink_external_nav_status = _sample_payload(samples, "MAVLINK_EXTERNAL_NAV_STATUS_SAMPLE")
     x2_status = _sample_payload(samples, "X2_STATUS_SAMPLE")
     rangefinder_down_status = _sample_payload(samples, "RANGEFINDER_DOWN_STATUS_SAMPLE")
+    landing_status = _sample_payload(samples, "LANDING_STATUS_SAMPLE")
     gazebo_truth_trajectory = _load_gazebo_truth_trajectory_summary(artifact_dir)
     truth_hover_containment = _truth_hover_containment(artifact_dir, max_radius_m=containment_max_radius_m)
     slam_truth_comparison = _slam_truth_comparison(samples)
@@ -238,6 +240,7 @@ def _write_hover_summary(
         "rosbag_profile_ok": rosbag_profile.get("ok") is True,
         "rosbag_profile": rosbag_profile,
         "mission_summary": mission_summary,
+        "landing_status": landing_status,
         "mavlink_status": mavlink_status,
         "pose_mirror_status": pose_mirror_status,
         "imu_status": imu_status,

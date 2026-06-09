@@ -179,15 +179,16 @@ def _generate_lite_mcap(run_dir: Path) -> bool:
 
 def _build_targets(run_dir: Path, *, lite: bool = False) -> list[UploadTarget]:
     run_id = run_dir.name
+    task_kind = _task_kind(run_dir)
     base_key = f"{KEY_PREFIX}/{SESSION_ID}/{run_id}"
     mcap_path = run_dir / (FOXGLOVE_MCAP_RELATIVE if lite else MCAP_RELATIVE)
     mcap_source_name = "rosbag_foxglove_0.mcap" if lite else "rosbag_0.mcap"
     targets = [
-        UploadTarget("mcap", mcap_path, f"navlab_p8_{run_id}.mcap", f"{base_key}/{mcap_source_name}"),
+        UploadTarget("mcap", mcap_path, f"navlab_{task_kind}_{run_id}.mcap", f"{base_key}/{mcap_source_name}"),
         UploadTarget(
             "summary",
             run_dir / SUMMARY_FILENAME,
-            f"navlab_p8_{run_id}_summary.json",
+            f"navlab_{task_kind}_{run_id}_summary.json",
             f"{base_key}/{ATTACHMENT_PREFIX}/{SUMMARY_FILENAME}",
         ),
     ]
@@ -197,11 +198,28 @@ def _build_targets(run_dir: Path, *, lite: bool = False) -> list[UploadTarget]:
             UploadTarget(
                 "replay_summary",
                 replay_summary,
-                f"navlab_p8_{run_id}_foxglove_replay_summary.json",
+                f"navlab_{task_kind}_{run_id}_foxglove_replay_summary.json",
                 f"{base_key}/{ATTACHMENT_PREFIX}/{REPLAY_SUMMARY_FILENAME}",
             )
         )
     return targets
+
+
+def _task_kind(run_dir: Path) -> str:
+    summary_path = run_dir / SUMMARY_FILENAME
+    if not summary_path.is_file():
+        return "run"
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return "run"
+    if "hover_gate" in summary or ("hover" in summary and "p8_exploration" not in summary):
+        return "hover"
+    if "p8_exploration" in summary or "p8_exploration_gate" in summary:
+        return "p8"
+    if "p12_airframe_disturbance_gate" in summary or "scan_robustness" in summary:
+        return "scan_robustness"
+    return "run"
 
 
 def _upload_with_retries(token: str, target: UploadTarget, progress: Progress) -> dict[str, Any]:

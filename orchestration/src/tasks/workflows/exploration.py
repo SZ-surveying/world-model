@@ -10,12 +10,19 @@ from pathlib import Path
 from typing import Any
 
 import tomli_w
+from navlab.gazebo_sensor.airframe_disturbance import (
+    AirframeDisturbanceProfile,
+    apply_profile_to_iris_sdf,
+    estimate_disturbance_metrics,
+    profile_from_library,
+)
 from python_on_whales import DockerClient
 from python_on_whales.exceptions import DockerException
 from rich.console import Console
 
 from src import host
 from src.config import RunConfig
+from src.tasks.helpers.landing import apply_landing_gate
 from src.tasks.helpers.fcu import (
     P4_CONTROLLER_CONTAINER,
     _append_controller_blockers,
@@ -39,6 +46,7 @@ from src.tasks.helpers.navlab_models import (
     GAZEBO_SENSOR_CONTAINER,
     OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
     _capture_container_log,
+    _collect_laser_scan_sample,
     _collect_topic_info,
     _collect_x2_status,
     _file_sha256,
@@ -67,6 +75,109 @@ from src.tasks.helpers.slam import (
 from src.tasks.helpers.slam_hover import _baseline_env, _build_p6_doctor_summary, _load_json, _source_official_setup
 
 P8_ROSBAG_CONTAINER = "navlab-p8-rosbag"
+SUPPORTED_SIMULATION_PROFILES = ("ideal", "mild_disturbance")
+MILD_DISTURBANCE_AIRFRAME_PROFILE = "mild_bias"
+
+
+def _normalize_simulation_profile(value: str) -> str:
+    profile = value.strip().lower()
+    if profile not in SUPPORTED_SIMULATION_PROFILES:
+        supported = ", ".join(SUPPORTED_SIMULATION_PROFILES)
+        raise ValueError(f"unsupported P8 simulation profile {value!r}; supported: {supported}")
+    return profile
+
+
+def _airframe_profile_for_simulation_profile(simulation_profile: str) -> AirframeDisturbanceProfile | None:
+    if simulation_profile == "mild_disturbance":
+        return profile_from_library(MILD_DISTURBANCE_AIRFRAME_PROFILE)
+    return None
+
+
+def _p8_airframe_runtime_config(config: RunConfig, *, profile: AirframeDisturbanceProfile) -> dict[str, Any]:
+    p12 = config.orchestration.airframe_disturbance
+    return {
+        "enabled": True,
+        "profile": profile.name,
+        "injection_layer": p12.injection_layer,
+        "seed": str(profile.seed),
+        "motor_count": str(profile.motor_count),
+        "thrust_multipliers": ",".join(str(value) for value in profile.thrust_multipliers),
+        "esc_lag_ms": ",".join(str(value) for value in profile.esc_lag_ms),
+        "esc_lag_model": p12.esc_lag_model,
+        "thrust_noise_std": profile.thrust_noise_std,
+        "thrust_noise_correlation_ms": profile.thrust_noise_correlation_ms,
+        "motor_jitter_hz": profile.motor_jitter_hz,
+        "imu_vibration_enabled": profile.imu_vibration_enabled,
+        "imu_input_topic": p12.imu_input_topic,
+        "imu_output_topic": p12.imu_output_topic,
+        "imu_gyro_noise_std_dps": profile.imu_gyro_noise_std_dps,
+        "imu_accel_noise_std_mps2": profile.imu_accel_noise_std_mps2,
+        "imu_vibration_freq_hz": profile.imu_vibration_freq_hz,
+        "imu_vibration_roll_pitch_amp_deg": profile.imu_vibration_roll_pitch_amp_deg,
+        "status_topic": p12.status_topic,
+        "events_topic": p12.events_topic,
+    }
+
+
+def _write_p8_model_overlay(
+    config: RunConfig,
+    path: Path,
+    *,
+    airframe_profile: AirframeDisturbanceProfile | None,
+) -> dict[str, Any]:
+    base_summary = _write_p2_model_overlay(config, path)
+    if airframe_profile is None:
+        return base_summary
+    rendered, disturbance_summary = apply_profile_to_iris_sdf(path.read_text(encoding="utf-8"), airframe_profile)
+    path.write_text(rendered, encoding="utf-8")
+    return {
+        **base_summary,
+        "overlay_sha256": _file_sha256(path),
+        "airframe_disturbance": disturbance_summary,
+        "disturbance_injection_layer": config.orchestration.airframe_disturbance.injection_layer,
+        "esc_lag_claim": config.orchestration.airframe_disturbance.esc_lag_model,
+    }
+
+
+def _write_p8_sensor_config(
+    config: RunConfig,
+    path: Path,
+    *,
+    vendor_profile: Path,
+    airframe_profile: AirframeDisturbanceProfile | None,
+) -> dict[str, Any]:
+    summary = _write_p2_sensor_config(config, path, vendor_profile=vendor_profile)
+    if airframe_profile is None:
+        return summary
+    data = summary["data"]
+    data.setdefault("gazebo_sensor", {})["airframe_disturbance"] = _p8_airframe_runtime_config(
+        config,
+        profile=airframe_profile,
+    )
+    path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
+    return {"path": str(path), "workspace_path": host._workspace_path(path), "sha256": _file_sha256(path), "data": data}
+
+
+def _collect_p8_lidar_x2_preflight(config: RunConfig, *, image: str) -> dict[str, Any]:
+    p2 = config.orchestration.rangefinder_imu
+    lidar_sample = _collect_laser_scan_sample(config, image=image, topic=p2.x2_scan_input_topic)
+    x2_status = _collect_x2_status(config, image=image)
+    x2_sample = x2_status.get("result", {}).get("sample") or {}
+    latest_ideal_age = x2_sample.get("latest_scan_ideal_age_sec")
+    ready = bool(
+        lidar_sample.get("result", {}).get("received")
+        and x2_status.get("result", {}).get("received")
+        and x2_sample.get("scan_source") == "gazebo_ideal"
+        and latest_ideal_age is not None
+        and float(latest_ideal_age) <= 2.0
+    )
+    return {
+        "ok": ready,
+        "lidar_sample": lidar_sample.get("result", {}),
+        "x2_status": x2_status.get("result", {}),
+        "scan_source": x2_sample.get("scan_source"),
+        "latest_scan_ideal_age_sec": latest_ideal_age,
+    }
 
 
 def _apply_replay_profile(config: RunConfig, replay_profile: str | None) -> RunConfig:
@@ -127,6 +238,7 @@ def _append_replay_slam_health_blockers(*, blockers: list[str], p3: Any, slam_od
 
 def _write_p8_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
     p8 = config.orchestration.exploration_gate
+    landing = config.orchestration.landing
     data = {
         "exploration_gate": {
             "runtime": {
@@ -181,6 +293,21 @@ def _write_p8_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
                 "hover_claim": p8.hover_claim,
                 "motion_claim": p8.motion_claim,
                 "exploration_claim": p8.exploration_claim,
+            }
+        },
+        "landing": {
+            "runtime": {
+                "policy": landing.policy_for_task("exploration"),
+                "landing_status_topic": landing.landing_status_topic,
+                "landing_intent_topic": landing.landing_intent_topic,
+                "home_source": landing.home_source,
+                "home_radius_m": landing.home_radius_m,
+                "pre_land_hold_sec": landing.pre_land_hold_sec,
+                "max_return_home_duration_sec": landing.max_return_home_duration_sec,
+                "max_landing_duration_sec": landing.max_landing_duration_sec,
+                "require_disarm": landing.require_disarm,
+                "require_motors_safe": landing.require_motors_safe,
+                "uses_gazebo_truth_as_input": landing.uses_gazebo_truth_as_input,
             }
         }
     }
@@ -279,6 +406,7 @@ class ExplorationGateProbe:
         self.coverage_pub = self.node.create_publisher(String, SPEC["exploration_coverage_topic"], 10)
         self.motion_pub = self.node.create_publisher(String, SPEC["motion_status_topic"], 10)
         self.intent_pub = self.node.create_publisher(String, SPEC["setpoint_intent_topic"], 10)
+        self.landing_intent_pub = self.node.create_publisher(String, SPEC["landing_intent_topic"], 10)
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=10)
         self.node.create_subscription(PoseStamped, SPEC["fcu_pose_topic"], self._pose_cb, qos)
         self.node.create_subscription(TwistStamped, SPEC["fcu_twist_topic"], self._touch_cb("fcu_twist"), qos)
@@ -472,6 +600,19 @@ class ExplorationGateProbe:
         }}
         self.intent_pub.publish(self._json_msg(intent))
 
+    def publish_landing_intent(self, *, reason: str) -> None:
+        intent = {{
+            "source": "navlab_p8_exploration_gate",
+            "target_owner": SPEC["owner_name"],
+            "target_owner_id": SPEC["owner_id"],
+            "kind": "return_home_then_land",
+            "policy": "return_home_then_land",
+            "home_required": True,
+            "reason": reason,
+            "updated_ms": now_ms(),
+        }}
+        self.landing_intent_pub.publish(self._json_msg(intent))
+
     def run_phase(self, phase: str, duration: float, *, linear_x: float = 0.0, angular_z: float = 0.0, kind: str = "stop") -> None:
         self.phase = phase
         end = time.monotonic() + duration
@@ -626,7 +767,7 @@ class ExplorationGateProbe:
             self.phase = "complete"
             summary = self.summary()
             for _ in range(5):
-                self.publish_intent(kind="complete", reason="p8_exploration_complete")
+                self.publish_landing_intent(reason="p8_exploration_complete")
                 rclpy.spin_once(self.node, timeout_sec=0.05)
                 time.sleep(0.05)
         self.publish_status(final=True)
@@ -669,6 +810,7 @@ def _write_exploration_probe_script(config: RunConfig, script_path: Path) -> dic
         "truth_diagnostic_topic": p8.truth_diagnostic_topic,
         "controller_status_topic": p8.controller_status_topic,
         "setpoint_intent_topic": p8.setpoint_intent_topic,
+        "landing_intent_topic": config.orchestration.landing.landing_intent_topic,
         "setpoint_output_topic": p8.setpoint_output_topic,
         "owner_status_topic": p8.owner_status_topic,
         "hover_status_topic": p8.hover_status_topic,
@@ -991,8 +1133,11 @@ def run_exploration_gate_acceptance(
     duration_sec: float = 150.0,
     console: Console | None = None,
     replay_profile: str | None = None,
+    simulation_profile: str = "ideal",
 ) -> int:
     console = console or Console()
+    simulation_profile = _normalize_simulation_profile(simulation_profile)
+    airframe_profile = _airframe_profile_for_simulation_profile(simulation_profile)
     config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
     config = _apply_replay_profile(config, replay_profile)
     config.artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -1020,18 +1165,29 @@ def run_exploration_gate_acceptance(
 
     summary: dict[str, Any] | None = None
     try:
-        model_overlay_summary = _write_p2_model_overlay(config, model_overlay)
+        model_overlay_summary = _write_p8_model_overlay(config, model_overlay, airframe_profile=airframe_profile)
         param_overlay_summary = _write_p2_param_overlay(config, param_overlay)
-        sensor_config_summary = _write_p2_sensor_config(config, sensor_config, vendor_profile=vendor_profile)
+        sensor_config_summary = _write_p8_sensor_config(
+            config,
+            sensor_config,
+            vendor_profile=vendor_profile,
+            airframe_profile=airframe_profile,
+        )
         slam_runtime_summary = _write_p3_slam_runtime_config(config, slam_runtime_config)
         p4_runtime_summary = _write_p4_runtime_config(config, p4_runtime_config)
         p5_runtime_summary = _write_p5_runtime_config(config, p5_runtime_config)
         p8_runtime_summary = _write_p8_runtime_config(config, p8_runtime_config)
+        landing_budget_sec = (
+            config.orchestration.landing.max_return_home_duration_sec
+            + config.orchestration.landing.pre_land_hold_sec
+            + config.orchestration.landing.max_landing_duration_sec
+            + 20.0
+        )
         controller_script_summary = _write_controller_runtime_script(
             config,
             controller_script,
-            duration_sec=max(150.0, duration_sec + 60.0),
-            hold_after_ready_sec=max(120.0, duration_sec),
+            duration_sec=max(150.0, duration_sec + landing_budget_sec + 60.0),
+            hold_after_ready_sec=max(120.0, duration_sec + landing_budget_sec),
             enable_motion_intent_control=True,
             hover_status_topic=p8.hover_status_topic,
         )
@@ -1039,9 +1195,15 @@ def run_exploration_gate_acceptance(
         exploration_probe_script_summary = _write_exploration_probe_script(config, exploration_probe_script)
 
         if replay_profile:
-            console.print(f"[bold cyan]Starting official maze + P8 exploration replay profile={replay_profile}[/bold cyan]")
+            console.print(
+                "[bold cyan]Starting official maze + P8 exploration replay "
+                f"profile={replay_profile} simulation_profile={simulation_profile}[/bold cyan]"
+            )
         else:
-            console.print("[bold cyan]Starting official maze + P8 exploration gate[/bold cyan]")
+            console.print(
+                "[bold cyan]Starting official maze + P8 exploration gate "
+                f"simulation_profile={simulation_profile}[/bold cyan]"
+            )
         try:
             host._compose_stop(config)
         except DockerException:
@@ -1089,14 +1251,41 @@ def run_exploration_gate_acceptance(
                 image=baseline.runtime_image,
                 artifact_name="p8_rangefinder_preflight_baseline_retry_probe.txt",
             )
+        lidar_preflight = _collect_p8_lidar_x2_preflight(config, image=baseline.runtime_image)
+        if not lidar_preflight.get("ok"):
+            console.print("[yellow]P8 lidar/x2 preflight missed Gazebo ideal scan; restarting official baseline once[/yellow]")
+            _capture_container_log(
+                config,
+                container=GAZEBO_SENSOR_CONTAINER,
+                output_name="p8_gazebo_sensor_preflight_lidar_tail.log",
+            )
+            _remove_container(GAZEBO_SENSOR_CONTAINER)
+            host._remove_official_baseline_container()
+            time.sleep(2.0)
+            host._start_official_baseline_container(config, volume_overrides=official_volume_overrides)
+            time.sleep(12.0)
+            _start_gazebo_sensor_container(config, sensor_config=sensor_config)
+            time.sleep(10.0)
+            rangefinder_preflight = _collect_rangefinder_probe(
+                config,
+                image=baseline.runtime_image,
+                artifact_name="p8_rangefinder_preflight_lidar_retry_probe.txt",
+            )
+            lidar_preflight = _collect_p8_lidar_x2_preflight(config, image=baseline.runtime_image)
         _start_p3_slam_container(config, runtime_config=slam_runtime_config)
         time.sleep(4.0)
-        _start_p8_rosbag_recording(config, duration_sec=max(120.0, min(duration_sec, 180.0)))
+        _start_p8_rosbag_recording(config, duration_sec=max(120.0, min(duration_sec + landing_budget_sec, 240.0)))
         time.sleep(2.0)
         _start_p4_controller_container(config, script_path=controller_script)
         frame_summary = _run_frame_probe(config, script_path=frame_probe_script)
         exploration_summary = _run_exploration_probe(config, script_path=exploration_probe_script)
-        controller_summary = _wait_for_controller_summary(config, timeout_sec=30.0)
+        landing_wait_sec = (
+            config.orchestration.landing.max_return_home_duration_sec
+            + config.orchestration.landing.pre_land_hold_sec
+            + config.orchestration.landing.max_landing_duration_sec
+            + 20.0
+        )
+        controller_summary = _wait_for_controller_summary(config, timeout_sec=landing_wait_sec)
         rosbag_profile = _finish_p8_rosbag_recording(config)
         counts = _message_counts(config)
 
@@ -1138,6 +1327,7 @@ def run_exploration_gate_acceptance(
                 p8.exploration_status_topic,
                 p8.exploration_goal_topic,
                 p8.exploration_coverage_topic,
+                config.orchestration.airframe_disturbance.status_topic,
             ),
             transient_topics=(
                 p8.fcu_pose_topic,
@@ -1152,6 +1342,7 @@ def run_exploration_gate_acceptance(
                 p8.exploration_status_topic,
                 p8.exploration_goal_topic,
                 p8.exploration_coverage_topic,
+                config.orchestration.airframe_disturbance.status_topic,
             ),
         )
         doctor = _build_p8_doctor_summary(config, runtime_config=p8_runtime_config, include_dependencies=False)
@@ -1172,10 +1363,37 @@ def run_exploration_gate_acceptance(
             blockers.append(f"{p2.x2_scan_input_topic} was not recorded")
         if not rangefinder_preflight.get("result", {}).get("range_received"):
             blockers.append("P8 rangefinder preflight did not receive range data")
+        if not lidar_preflight.get("ok"):
+            blockers.append("P8 lidar/x2 preflight did not receive gazebo ideal scan")
+        if lidar_preflight.get("scan_source") != "gazebo_ideal":
+            blockers.append("X2 emulator is not consuming Gazebo lidar input")
+        latest_ideal_age = lidar_preflight.get("latest_scan_ideal_age_sec")
+        if latest_ideal_age is None or float(latest_ideal_age) > 2.0:
+            blockers.append("X2 Gazebo lidar input is stale")
         if not rangefinder_probe.get("result", {}).get("range_received"):
             blockers.append("P8 did not receive rangefinder")
         if not imu_probe.get("result", {}).get("received"):
             blockers.append("P8 did not receive IMU")
+        airframe_disturbance_summary: dict[str, Any]
+        if airframe_profile is None:
+            airframe_disturbance_summary = {
+                "enabled": False,
+                "simulation_profile": simulation_profile,
+                "status_topic": config.orchestration.airframe_disturbance.status_topic,
+                "status_count": 0,
+            }
+        else:
+            airframe_status_topic = config.orchestration.airframe_disturbance.status_topic
+            airframe_disturbance_summary = {
+                "enabled": True,
+                "simulation_profile": simulation_profile,
+                "profile": airframe_profile.to_summary(),
+                "estimated_metrics": estimate_disturbance_metrics(airframe_profile),
+                "status_topic": airframe_status_topic,
+                "status_count": counts.get(airframe_status_topic, 0),
+            }
+            if counts.get(airframe_status_topic, 0) <= 0:
+                blockers.append(f"{airframe_status_topic} was not recorded for P8 mild disturbance")
         if replay_profile:
             _append_replay_slam_health_blockers(
                 blockers=blockers,
@@ -1234,6 +1452,7 @@ def run_exploration_gate_acceptance(
             "ok": not blockers,
             "blocked": bool(blockers),
             "blockers": blockers,
+            "simulation_profile": simulation_profile,
             "p8_exploration_gate": {
                 "runtime_config": p8_runtime_summary,
                 "exploration_probe_script": exploration_probe_script_summary,
@@ -1247,6 +1466,8 @@ def run_exploration_gate_acceptance(
                 "controller_script": controller_script_summary,
                 "frame_probe_script": frame_probe_script_summary,
                 "controller_runtime": controller_summary,
+                "landing": controller_summary.get("landing", {}) if controller_summary else {},
+                "airframe_disturbance": airframe_disturbance_summary,
                 "external_nav_input_topic": p8.slam_odom_topic,
                 "uses_gazebo_truth_as_input": p8.uses_gazebo_truth_as_input,
                 "hover_claim": p8.hover_claim,
@@ -1274,17 +1495,21 @@ def run_exploration_gate_acceptance(
             "x2_status": x2_status.get("result", {}),
             "rangefinder_probe": rangefinder_probe.get("result", {}),
             "rangefinder_preflight": rangefinder_preflight.get("result", {}),
+            "lidar_preflight": lidar_preflight,
             "imu_probe": imu_probe.get("result", {}),
             "topic_info": topic_info,
             "ros_graph": graph,
             "message_counts": counts,
             "rosbag_profile": rosbag_profile,
+            "airframe_disturbance": airframe_disturbance_summary,
             "hover_claim": p8.hover_claim,
             "motion_claim": p8.motion_claim,
             "exploration_claim": p8.exploration_claim,
             "uses_gazebo_truth_as_input": p8.uses_gazebo_truth_as_input,
             "replay_profile": replay_profile or "",
         }
+        landing_summary = controller_summary.get("landing") if isinstance(controller_summary.get("landing"), dict) else None
+        summary = apply_landing_gate(summary, config, task_name="exploration", landing=landing_summary)
         _write_json(config.artifact_dir / "summary.json", summary)
         _write_foxglove_notes(config)
     finally:

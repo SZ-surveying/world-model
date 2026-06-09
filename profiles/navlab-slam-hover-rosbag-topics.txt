@@ -22,12 +22,16 @@ required /navlab/fcu/setpoint/intent
 required /navlab/fcu/setpoint/output
 required /navlab/fcu/owner/status
 required /navlab/hover/status
+required /navlab/landing/status
 
 # Optional diagnostic topics for Foxglove replay.
+optional /navlab/landing/intent
 optional /map
 optional /submap_list
 optional /trajectory_node_list
 optional /odometry
+optional /navlab/airframe_disturbance/status
+optional /navlab/airframe_disturbance/events
 optional /navlab/frame_contract/status
 optional /navlab/x2/vendor_scan
 optional /rangefinder/down/scan_ideal

@@ -27,6 +27,7 @@ from navlab.gazebo_sensor.airframe_disturbance import (
 from src import host
 from src.config import RunConfig
 from src.runtime import DockerBackend, RuntimeHandle, ServiceWaitError
+from src.tasks.helpers.landing import apply_landing_gate
 from src.tasks.helpers.official_stack import _write_json, _write_text
 from src.tasks.helpers.navlab_models import _file_sha256, _profile_topics
 from src.tasks.helpers.sensors import _write_p2_model_overlay
@@ -211,9 +212,24 @@ def _validate_p12_config(config: RunConfig) -> list[str]:
 def _write_p12_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
     p12 = config.orchestration.airframe_disturbance
     gate = config.orchestration.airframe_disturbance_gate
+    landing = config.orchestration.landing
     data = {
         "airframe_disturbance": {"runtime": {key: getattr(p12, key) for key in p12.__dataclass_fields__}},
         "airframe_disturbance_gate": {"runtime": {key: getattr(gate, key) for key in gate.__dataclass_fields__}},
+        "landing": {
+            "runtime": {
+                "policy": landing.policy_for_task("scan-robustness"),
+                "landing_status_topic": landing.landing_status_topic,
+                "landing_intent_topic": landing.landing_intent_topic,
+                "home_source": landing.home_source,
+                "home_radius_m": landing.home_radius_m,
+                "pre_land_hold_sec": landing.pre_land_hold_sec,
+                "max_landing_duration_sec": landing.max_landing_duration_sec,
+                "require_disarm": landing.require_disarm,
+                "require_motors_safe": landing.require_motors_safe,
+                "uses_gazebo_truth_as_input": landing.uses_gazebo_truth_as_input,
+            }
+        },
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
@@ -741,6 +757,7 @@ def run_airframe_disturbance_gate_acceptance(
         "P12 evaluates motor/ESC/vibration disturbance profiles against the P11 stabilized scan contract.\n"
         "Official maze overlay is review-only and is not used by SLAM or scan stabilization.\n",
     )
+    summary = apply_landing_gate(summary, config, task_name="scan-robustness")
     _write_json(config.artifact_dir / "summary.json", summary)
     color = "green" if summary["ok"] else "red"
     console.print(

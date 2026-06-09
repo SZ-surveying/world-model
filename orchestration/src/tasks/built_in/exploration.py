@@ -33,6 +33,7 @@ class BuiltInExplorationTask(OrchestrationTask):
         *,
         config_path: str | Path | None = None,
         duration_sec: float = 150.0,
+        simulation_profile: str = "ideal",
         console: Console | None = None,
     ) -> int:
         from src.tasks.workflows.exploration import run_exploration_gate_acceptance
@@ -40,5 +41,6 @@ class BuiltInExplorationTask(OrchestrationTask):
         return run_exploration_gate_acceptance(
             config_path=config_path,
             duration_sec=duration_sec,
+            simulation_profile=simulation_profile,
             console=console,
         )

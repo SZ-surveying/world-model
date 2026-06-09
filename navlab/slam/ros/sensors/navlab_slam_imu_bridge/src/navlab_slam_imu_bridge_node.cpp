@@ -62,11 +62,13 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
  private:
   void handle_input_imu(const sensor_msgs::msg::Imu::SharedPtr msg) {
     const auto received_at = now();
+    const auto received_wall_at = std::chrono::steady_clock::now();
     auto normalized = *msg;
     bool timestamp_replaced = false;
 
     if (last_output_msg_) {
-      const double delta_sec = (received_at - last_source_msg_time_).seconds();
+      const double delta_sec =
+          std::chrono::duration<double>(received_wall_at - last_source_wall_time_).count();
       if (delta_sec > 0.0) {
         if (input_rate_hz_ <= 0.0) {
           input_rate_hz_ = 1.0 / delta_sec;
@@ -87,6 +89,7 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
     }
 
     last_source_msg_time_ = received_at;
+    last_source_wall_time_ = received_wall_at;
     last_output_msg_ = std::make_shared<sensor_msgs::msg::Imu>(normalized);
     last_input_frame_id_ = msg->header.frame_id;
     last_output_frame_id_ = normalized.header.frame_id;
@@ -107,6 +110,7 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
 
     imu_pub_->publish(imu);
     last_source_msg_time_ = now();
+    last_source_wall_time_ = std::chrono::steady_clock::now();
     last_output_msg_ = std::make_shared<sensor_msgs::msg::Imu>(imu);
     last_input_frame_id_.clear();
     last_output_frame_id_ = output_frame_id_;
@@ -120,8 +124,9 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
       return false;
     }
 
-    return (now() - last_source_msg_time_).nanoseconds() <
-           static_cast<int64_t>(input_timeout_ms_) * 1000000LL;
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - last_source_wall_time_)
+               .count() < input_timeout_ms_;
   }
 
   double input_age_ms() const {
@@ -129,8 +134,9 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
       return -1.0;
     }
 
-    return static_cast<double>((now() - last_source_msg_time_).nanoseconds()) /
-           1000000.0;
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now() - last_source_wall_time_)
+        .count();
   }
 
   bool input_rate_ok() const {
@@ -251,6 +257,7 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
 
   sensor_msgs::msg::Imu::SharedPtr last_output_msg_;
   rclcpp::Time last_source_msg_time_{0, 0, RCL_ROS_TIME};
+  std::chrono::steady_clock::time_point last_source_wall_time_;
 
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;

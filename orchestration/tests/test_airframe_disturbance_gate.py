@@ -37,6 +37,19 @@ def test_p12_doctor_summary_is_green_for_default_config(tmp_path: Path) -> None:
     assert summary["p12_airframe_disturbance_doctor"]["scan_contract"] == "p11_stabilized_scan"
 
 
+def test_p12_runtime_config_writes_landing_contract(tmp_path: Path) -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260608_000000", artifact_dir=tmp_path)
+    runtime = tmp_path / "p12_runtime.toml"
+
+    summary = p12._write_p12_runtime_config(config, runtime)
+
+    assert runtime.is_file()
+    landing = summary["data"]["landing"]["runtime"]
+    assert landing["policy"] == "land_in_place"
+    assert landing["landing_status_topic"] == "/navlab/landing/status"
+    assert landing["uses_gazebo_truth_as_input"] is False
+
+
 def test_p12_config_validation_blocks_invalid_motor_array() -> None:
     config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260608_000000")
     bad_airframe = replace(config.orchestration.airframe_disturbance, thrust_multipliers=(1.0, 1.0))

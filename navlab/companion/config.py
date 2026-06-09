@@ -432,6 +432,8 @@ class MissionNodeConfig(EndpointNodeConfig):
     source_system: int = 255
     source_component: int = 190
     status_topic: str = "/navlab/mission/status"
+    landing_status_topic: str = "/navlab/landing/status"
+    landing_intent_topic: str = "/navlab/landing/intent"
     sim_log_topic: str = "/sim/log"
     scan_features_topic: str = "/scan_features"
     external_nav_status_topic: str = "/external_nav/status"
@@ -442,8 +444,14 @@ class MissionNodeConfig(EndpointNodeConfig):
     status_timeout_sec: float = 1.0
     setpoint_rate_hz: float = 5.0
     setpoint_lookahead_sec: float = 2.0
+    pre_land_hold_sec: float = 2.0
+    max_landing_duration_sec: float = 35.0
+    touchdown_altitude_m: float = 0.12
+    touchdown_vertical_speed_mps: float = 0.08
     require_external_nav: bool = True
     require_imu_status: bool = True
+    require_disarm: bool = True
+    require_motors_safe: bool = True
     send_position_setpoints: bool = True
     disable_arming_checks: bool = True
     force_arm: bool = True
@@ -480,6 +488,8 @@ class MissionNodeConfig(EndpointNodeConfig):
             source_system=_int(data.get("source_system"), 255),
             source_component=_int(data.get("source_component"), 190),
             status_topic=as_str(data.get("status_topic"), "/navlab/mission/status"),
+            landing_status_topic=as_str(data.get("landing_status_topic"), "/navlab/landing/status"),
+            landing_intent_topic=as_str(data.get("landing_intent_topic"), "/navlab/landing/intent"),
             sim_log_topic=as_str(data.get("sim_log_topic"), "/sim/log"),
             scan_features_topic=as_str(data.get("scan_features_topic"), "/scan_features"),
             external_nav_status_topic=as_str(data.get("external_nav_status_topic"), "/external_nav/status"),
@@ -490,8 +500,14 @@ class MissionNodeConfig(EndpointNodeConfig):
             status_timeout_sec=_float(data.get("status_timeout_sec"), 1.0),
             setpoint_rate_hz=_float(data.get("setpoint_rate_hz"), 5.0),
             setpoint_lookahead_sec=_float(data.get("setpoint_lookahead_sec"), 2.0),
+            pre_land_hold_sec=_float(data.get("pre_land_hold_sec"), 2.0),
+            max_landing_duration_sec=_float(data.get("max_landing_duration_sec"), 35.0),
+            touchdown_altitude_m=_float(data.get("touchdown_altitude_m"), 0.12),
+            touchdown_vertical_speed_mps=_float(data.get("touchdown_vertical_speed_mps"), 0.08),
             require_external_nav=as_bool(data.get("require_external_nav"), True),
             require_imu_status=as_bool(data.get("require_imu_status"), True),
+            require_disarm=as_bool(data.get("require_disarm"), True),
+            require_motors_safe=as_bool(data.get("require_motors_safe"), True),
             send_position_setpoints=as_bool(data.get("send_position_setpoints"), True),
             disable_arming_checks=as_bool(data.get("disable_arming_checks"), True),
             force_arm=as_bool(data.get("force_arm"), True),
@@ -527,6 +543,8 @@ class MissionNodeConfig(EndpointNodeConfig):
         _append_flag(argv, "--source-system", self.source_system)
         _append_flag(argv, "--source-component", self.source_component)
         _append_flag(argv, "--status-topic", self.status_topic)
+        _append_flag(argv, "--landing-status-topic", self.landing_status_topic)
+        _append_flag(argv, "--landing-intent-topic", self.landing_intent_topic)
         _append_flag(argv, "--sim-log-topic", self.sim_log_topic)
         _append_flag(argv, "--scan-features-topic", self.scan_features_topic)
         _append_flag(argv, "--external-nav-status-topic", self.external_nav_status_topic)
@@ -537,8 +555,14 @@ class MissionNodeConfig(EndpointNodeConfig):
         _append_flag(argv, "--status-timeout-sec", self.status_timeout_sec)
         _append_flag(argv, "--setpoint-rate-hz", self.setpoint_rate_hz)
         _append_flag(argv, "--setpoint-lookahead-sec", self.setpoint_lookahead_sec)
+        _append_flag(argv, "--pre-land-hold-sec", self.pre_land_hold_sec)
+        _append_flag(argv, "--max-landing-duration-sec", self.max_landing_duration_sec)
+        _append_flag(argv, "--touchdown-altitude-m", self.touchdown_altitude_m)
+        _append_flag(argv, "--touchdown-vertical-speed-mps", self.touchdown_vertical_speed_mps)
         _append_boolean_optional_flag(argv, "--require-external-nav", self.require_external_nav)
         _append_boolean_optional_flag(argv, "--require-imu-status", self.require_imu_status)
+        _append_boolean_optional_flag(argv, "--require-disarm", self.require_disarm)
+        _append_boolean_optional_flag(argv, "--require-motors-safe", self.require_motors_safe)
         _append_boolean_optional_flag(argv, "--send-position-setpoints", self.send_position_setpoints)
         _append_boolean_optional_flag(argv, "--disable-arming-checks", self.disable_arming_checks)
         _append_bool_flag(argv, "--force-arm", self.force_arm)

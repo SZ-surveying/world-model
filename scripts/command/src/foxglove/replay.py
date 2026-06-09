@@ -19,7 +19,9 @@ DEFAULT_RESOLUTION_M = 0.10
 DEFAULT_MARGIN_M = 4.0
 PUBLISHABLE_MIN_PATH_LENGTH_M = 2.5
 PUBLISHABLE_MIN_ACCEPTED_GOALS = 5
-FOXGLOVE_LITE_PROFILE = REPO_ROOT / "profiles/navlab-exploration-foxglove-lite-topics.txt"
+EXPLORATION_FOXGLOVE_LITE_PROFILE = REPO_ROOT / "profiles/navlab-exploration-foxglove-lite-topics.txt"
+HOVER_FOXGLOVE_LITE_PROFILE = REPO_ROOT / "profiles/navlab-hover-foxglove-lite-topics.txt"
+FOXGLOVE_LITE_PROFILE = EXPLORATION_FOXGLOVE_LITE_PROFILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,10 +114,9 @@ def build_replay(
     raw_mcap = run_dir / RAW_MCAP_RELATIVE
     output_mcap = run_dir / FOXGLOVE_MCAP_RELATIVE
     p8_summary_path = run_dir / "summary.json"
-    topic_profile = load_lite_topic_profile(topic_profile_path)
     blockers: list[str] = []
     if not p8_summary_path.is_file():
-        blockers.append("P8 summary missing")
+        blockers.append("run summary missing")
     if not raw_mcap.is_file():
         blockers.append("raw MCAP missing")
     if not maze_path.is_file():
@@ -123,8 +124,10 @@ def build_replay(
     if resolution_m <= 0:
         blockers.append("overlay resolution must be positive")
     p8_summary = _read_json(p8_summary_path) if p8_summary_path.is_file() else {}
+    task_kind = task_kind_from_summary(p8_summary)
+    topic_profile = load_lite_topic_profile(resolve_lite_topic_profile(p8_summary, topic_profile_path))
     if p8_summary and not bool(p8_summary.get("ok")):
-        blockers.append("P8 summary is not ok")
+        blockers.append(f"{task_kind} summary is not ok")
 
     walls: list[Wall] = []
     maze_extent: BBox | None = None
@@ -512,6 +515,21 @@ def inspect_output_counts(path: Path, mcap_modules: dict[str, Any]) -> dict[str,
 
 
 def replay_quality_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    task_kind = task_kind_from_summary(summary)
+    if task_kind == "hover":
+        hover = summary.get("hover") or {}
+        landing = summary.get("landing") or {}
+        return {
+            "profile": "hover_landing",
+            "publishable": bool(summary.get("ok")) and bool(hover.get("ok")) and bool(landing.get("ok")),
+            "path_length_m": 0.0,
+            "accepted_goals": 0,
+            "known_cell_growth": 0,
+            "estimated_explored_area_m2": 0.0,
+            "min_scan_clearance_m": None,
+            "stop_drift_m": hover.get("stop_drift_m"),
+            "warnings": [],
+        }
     coverage = summary.get("coverage") or {}
     exploration = summary.get("p8_exploration") or {}
     safety = summary.get("safety") or {}
@@ -533,6 +551,24 @@ def replay_quality_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def task_kind_from_summary(summary: dict[str, Any]) -> str:
+    if "hover_gate" in summary or ("hover" in summary and "p8_exploration" not in summary):
+        return "hover"
+    if "p8_exploration" in summary or "p8_exploration_gate" in summary:
+        return "p8"
+    if "p12_airframe_disturbance_gate" in summary or "scan_robustness" in summary:
+        return "scan_robustness"
+    return "run"
+
+
+def resolve_lite_topic_profile(summary: dict[str, Any], topic_profile_path: Path) -> Path:
+    if topic_profile_path != FOXGLOVE_LITE_PROFILE:
+        return topic_profile_path
+    if task_kind_from_summary(summary) == "hover":
+        return HOVER_FOXGLOVE_LITE_PROFILE
+    return topic_profile_path
+
+
 def _summary_template(
     run_dir: Path,
     raw_mcap: Path,
@@ -542,12 +578,16 @@ def _summary_template(
     replay_quality: dict[str, Any],
     blockers: list[str],
 ) -> dict[str, Any]:
+    task_kind = task_kind_from_summary(p8_summary)
+    prerequisite = {"task": task_kind, "ok": bool(p8_summary.get("ok")), "summary": str(run_dir / "summary.json")}
     return {
         "ok": not blockers,
         "blocked": bool(blockers),
         "blockers": blockers,
         "run_id": run_dir.name,
-        "p8_prerequisite": {"ok": bool(p8_summary.get("ok")), "summary": str(run_dir / "summary.json")},
+        "task": task_kind,
+        "task_prerequisite": prerequisite,
+        "p8_prerequisite": prerequisite,
         "replay_quality": replay_quality,
         "official_maze": {"source": str(maze_path), "sha256": file_sha256(maze_path) if maze_path.is_file() else ""},
         "replay_mcap": {

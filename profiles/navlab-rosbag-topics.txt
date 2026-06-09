@@ -12,3 +12,9 @@
 # optional /map
 # optional /odom
 # optional /constraint_list
+required /navlab/landing/status
+optional /navlab/landing/intent
+required /navlab/fcu/controller/status
+required /ap/v1/status
+required /ap/v1/pose/filtered
+required /rangefinder/down/range

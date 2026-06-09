@@ -29,6 +29,7 @@ required /navlab/fcu/controller/status
 required /navlab/fcu/setpoint/intent
 required /navlab/fcu/setpoint/output
 required /navlab/fcu/owner/status
+required /navlab/landing/status
 
 required /navlab/hover/status
 required /navlab/motion/status
@@ -37,6 +38,9 @@ required /navlab/exploration/goal
 required /navlab/exploration/coverage
 
 optional /odometry
+optional /navlab/landing/intent
+optional /navlab/airframe_disturbance/status
+optional /navlab/airframe_disturbance/events
 optional /navlab/frame_contract/status
 optional /navlab/x2/vendor_scan
 optional /rangefinder/down/scan_ideal

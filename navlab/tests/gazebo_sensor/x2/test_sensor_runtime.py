@@ -16,6 +16,7 @@ from navlab.gazebo_sensor.runtime import (
     build_vendor_driver_command,
     wait_for_virtual_serial_link,
 )
+from navlab.gazebo_sensor.scan_time_normalizer import monotonic_scan_stamp_ns
 
 
 def _runtime_config() -> X2SensorLaunchConfig:
@@ -99,6 +100,19 @@ def test_x2_sensor_runtime_normalizes_vendor_scan_time() -> None:
     command = build_scan_time_normalizer_command()
 
     assert command == [command[0], "-m", "navlab.gazebo_sensor.scan_time_normalizer"]
+
+
+def test_scan_time_normalizer_uses_monotonic_fallback_for_zero_stamp() -> None:
+    first = monotonic_scan_stamp_ns(preferred_ns=0, fallback_elapsed_sec=0.25, previous_ns=None)
+    second = monotonic_scan_stamp_ns(preferred_ns=0, fallback_elapsed_sec=0.20, previous_ns=first)
+
+    assert first == 1_250_000_000
+    assert second == first + 1
+
+
+def test_scan_time_normalizer_keeps_preferred_stamp_when_valid() -> None:
+    assert monotonic_scan_stamp_ns(preferred_ns=42, fallback_elapsed_sec=1.0, previous_ns=None) == 42
+    assert monotonic_scan_stamp_ns(preferred_ns=40, fallback_elapsed_sec=1.0, previous_ns=42) == 43
 
 
 def test_x2_sensor_runtime_can_launch_scan_integrity_filter() -> None:

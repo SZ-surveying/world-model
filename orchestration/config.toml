@@ -60,6 +60,26 @@ slam_source_claim = "real_slam"
 required_real_topics = ["/scan", "/tf", "/tf_static", "/slam/odom", "/ap/v1/status", "/ap/v1/pose/filtered"]
 forbidden_simulation_input_topics = ["/gazebo/*", "/scan_ideal", "/sim/x2/status", "/rangefinder/down/scan_ideal"]
 
+[landing]
+enabled = true
+default_policy = "land_in_place"
+hover_policy = "land_in_place"
+exploration_policy = "return_home_then_land"
+scan_robustness_policy = "land_in_place"
+landing_status_topic = "/navlab/landing/status"
+landing_intent_topic = "/navlab/landing/intent"
+home_source = "post_takeoff_hover_pose"
+home_radius_m = 0.35
+pre_land_hold_sec = 2.0
+max_return_home_duration_sec = 45.0
+max_landing_duration_sec = 35.0
+max_descent_rate_mps = 0.6
+touchdown_altitude_m = 0.12
+touchdown_vertical_speed_mps = 0.08
+require_disarm = true
+require_motors_safe = true
+uses_gazebo_truth_as_input = false
+
 [sitl]
 image = "remote-sitl-lab/ardupilot-sitl:stage1-f10500ae45aa"
 model = "JSON"

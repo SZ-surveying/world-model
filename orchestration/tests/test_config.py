@@ -24,6 +24,7 @@ from src.tasks.workflows import exploration as exploration_gate_task_module
 from src.tasks.helpers import fcu as fcu_controller_task_module
 from src.tasks.helpers import frame_contract as frame_contract_task_module
 from src.tasks import hover as hover_task_module
+from src.tasks.helpers import landing as landing_task_module
 from src.tasks.helpers import motion as motion_gate_task_module
 from src.tasks.helpers import official_stack as official_baseline_task_module
 from src.tasks.helpers import navlab_models as official_maze_x2_task_module
@@ -150,6 +151,18 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.slam.runtime_config == "/workspace/navlab/config.toml"
     assert config.sensor.scan_source == "x2_virtual_serial"
     assert config.sensor.acceptance_scan_source == "x2_virtual_serial_vendor_driver"
+    assert config.landing.enabled is True
+    assert config.landing.default_policy == "land_in_place"
+    assert config.landing.policy_for_task("hover") == "land_in_place"
+    assert config.landing.policy_for_task("exploration") == "return_home_then_land"
+    assert config.landing.policy_for_task("scan-robustness") == "land_in_place"
+    assert config.landing.landing_status_topic == "/navlab/landing/status"
+    assert config.landing.landing_intent_topic == "/navlab/landing/intent"
+    assert config.landing.home_source == "post_takeoff_hover_pose"
+    assert config.landing.home_radius_m == 0.35
+    assert config.landing.require_disarm is True
+    assert config.landing.require_motors_safe is True
+    assert config.landing.uses_gazebo_truth_as_input is False
     assert config.official_baseline.rosbag_profile == "profiles/navlab-official-baseline-rosbag-topics.txt"
     assert config.official_baseline.dds_enable == "1"
     assert config.official_baseline.dds_domain_id == "0"
@@ -592,8 +605,10 @@ def test_p4_fcu_controller_rosbag_profile_contains_required_topics() -> None:
         "/navlab/fcu/setpoint/intent",
         "/navlab/fcu/setpoint/output",
         "/navlab/fcu/owner/status",
+        "/navlab/landing/status",
     ):
         assert f"required {topic}" in content
+    assert "optional /navlab/landing/intent" in content
 
 
 def test_p4_runtime_config_writes_controller_contract(tmp_path) -> None:  # noqa: ANN001
@@ -614,6 +629,10 @@ def test_p4_runtime_config_writes_controller_contract(tmp_path) -> None:  # noqa
     assert runtime["takeoff_service"] == "/ap/v1/experimental/takeoff"
     assert runtime["hover_claim"] == "not_evaluated"
     assert runtime["exploration_claim"] == "not_evaluated"
+    assert runtime["landing_status_topic"] == "/navlab/landing/status"
+    assert runtime["landing_intent_topic"] == "/navlab/landing/intent"
+    assert runtime["home_source"] == "post_takeoff_hover_pose"
+    assert runtime["uses_gazebo_truth_as_input"] is False
 
 
 def test_p4_doctor_blocks_mavlink_fallback(monkeypatch, tmp_path) -> None:  # noqa: ANN001
@@ -1133,6 +1152,52 @@ def test_p7_controller_script_can_consume_motion_intents(tmp_path) -> None:  # n
     assert 'self.cmd_vel_pub = self.node.create_publisher(TwistStamped, SPEC["cmd_vel_topic"], 10)' in script
 
 
+def test_p4_controller_script_can_consume_landing_intents(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(
+        config_path="orchestration/config.toml",
+        artifact_dir=tmp_path,
+        run_id="20260603_000000",
+    )
+    script_path = tmp_path / "p8_fcu_controller_runtime.py"
+
+    summary = fcu_controller_task_module._write_controller_runtime_script(
+        config,
+        script_path,
+        duration_sec=120.0,
+        hold_after_ready_sec=90.0,
+        enable_motion_intent_control=True,
+        hover_status_topic=config.orchestration.exploration_gate.hover_status_topic,
+    )
+    script = script_path.read_text(encoding="utf-8")
+
+    assert summary["spec"]["enable_landing_intent_control"] is True
+    assert summary["spec"]["landing_status_topic"] == "/navlab/landing/status"
+    assert summary["spec"]["landing_intent_topic"] == "/navlab/landing/intent"
+    assert summary["spec"]["home_radius_m"] == 0.35
+    assert 'self.landing_status_pub = self.node.create_publisher(String, SPEC["landing_status_topic"], 10)' in script
+    assert 'self.node.create_subscription(String, SPEC["landing_intent_topic"], self._landing_intent_cb, 10)' in script
+    assert 'def run_landing_sequence(self) -> bool:' in script
+    assert 'MAV_CMD_NAV_LAND' in script
+    assert '"return_home_required_before_landing_not_satisfied"' in script
+
+
+def test_p8_probe_publishes_return_home_landing_intent(tmp_path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(
+        config_path="orchestration/config.toml",
+        artifact_dir=tmp_path,
+        run_id="20260603_000000",
+    )
+    script_path = tmp_path / "p8_exploration_gate_probe.py"
+
+    summary = exploration_gate_task_module._write_exploration_probe_script(config, script_path)
+    script = script_path.read_text(encoding="utf-8")
+
+    assert summary["spec"]["landing_intent_topic"] == "/navlab/landing/intent"
+    assert 'self.landing_intent_pub = self.node.create_publisher(String, SPEC["landing_intent_topic"], 10)' in script
+    assert '"kind": "return_home_then_land"' in script
+    assert 'self.publish_landing_intent(reason="p8_exploration_complete")' in script
+
+
 def test_p7_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
     config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
     orchestration = replace(
@@ -1314,6 +1379,7 @@ def test_p8_exploration_gate_rosbag_profile_contains_required_topics() -> None:
         "/navlab/fcu/setpoint/intent",
         "/navlab/fcu/setpoint/output",
         "/navlab/fcu/owner/status",
+        "/navlab/landing/status",
         "/navlab/hover/status",
         "/navlab/motion/status",
         "/navlab/exploration/status",
@@ -1321,6 +1387,29 @@ def test_p8_exploration_gate_rosbag_profile_contains_required_topics() -> None:
         "/navlab/exploration/coverage",
     ):
         assert f"required {topic}" in content
+
+
+def test_hover_rosbag_profile_contains_landing_topics() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    content = Path(config.rosbag_profile).read_text(encoding="utf-8")
+
+    for topic in (
+        "/navlab/landing/status",
+        "/navlab/fcu/controller/status",
+        "/ap/v1/status",
+        "/ap/v1/pose/filtered",
+        "/rangefinder/down/range",
+    ):
+        assert f"required {topic}" in content
+    assert "optional /navlab/landing/intent" in content
+
+
+def test_p12_rosbag_profile_contains_landing_topics() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260608_000000")
+    content = Path(config.airframe_disturbance_gate_rosbag_profile).read_text(encoding="utf-8")
+
+    assert "required /navlab/landing/status" in content
+    assert "optional /navlab/landing/intent" in content
 
 
 def test_p8_runtime_config_writes_exploration_gate_contract(tmp_path) -> None:  # noqa: ANN001
@@ -1341,6 +1430,112 @@ def test_p8_runtime_config_writes_exploration_gate_contract(tmp_path) -> None:  
     assert runtime["hover_claim"] == "evaluated"
     assert runtime["motion_claim"] == "evaluated"
     assert runtime["exploration_claim"] == "evaluated"
+    landing = summary["data"]["landing"]["runtime"]
+    assert landing["policy"] == "return_home_then_land"
+    assert landing["landing_status_topic"] == "/navlab/landing/status"
+    assert landing["uses_gazebo_truth_as_input"] is False
+
+
+def test_landing_gate_blocks_when_landing_not_evaluated() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    summary = landing_task_module.apply_landing_gate(
+        {"ok": True, "blocked": False, "blockers": []},
+        config,
+        task_name="exploration",
+    )
+
+    assert summary["ok"] is False
+    assert summary["blocked"] is True
+    assert summary["landing_claim"] == "not_evaluated"
+    assert summary["simulation_landing_claim"] == "not_evaluated"
+    assert summary["real_landing_claim"] == "not_evaluated"
+    assert summary["landing"]["policy"] == "return_home_then_land"
+    assert summary["landing"]["return_home"]["required"] is True
+    assert "landing_not_evaluated" in summary["blockers"]
+
+
+def test_landing_gate_blocks_p8_return_home_failure_even_after_emergency_landing() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    summary = landing_task_module.apply_landing_gate(
+        {"ok": True, "blocked": False, "blockers": []},
+        config,
+        task_name="exploration",
+        landing={
+            "ok": True,
+            "claim": "evaluated",
+            "policy": "return_home_then_land",
+            "state": "landing_complete",
+            "return_home": {
+                "required": True,
+                "ok": False,
+                "state": "timeout",
+                "fallback_landing_policy": "emergency_land_in_place",
+            },
+            "blockers": [],
+        },
+    )
+
+    assert summary["ok"] is False
+    assert summary["landing"]["ok"] is True
+    assert "return_home_required_before_landing_not_satisfied" in summary["blockers"]
+
+
+def test_landing_gate_blocks_real_stage_without_simulation_acceptance() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    summary = landing_task_module.build_landing_acceptance_summary(
+        config,
+        task_name="hover",
+        landing={"ok": True, "claim": "evaluated", "blockers": []},
+        simulation_summary={"ok": False},
+    )
+
+    assert summary["acceptance_stage"] == "simulation"
+
+    orchestration = replace(
+        config.orchestration,
+        landing=replace(config.orchestration.landing, hover_policy="land_in_place"),
+    )
+    real_config = replace(config, orchestration=orchestration)
+
+    def fake_runtime_mode(_config):  # noqa: ANN001
+        return "real"
+
+    original_runtime_mode = landing_task_module.host._runtime_mode_name
+    try:
+        landing_task_module.host._runtime_mode_name = fake_runtime_mode
+        real_summary = landing_task_module.apply_landing_gate(
+            {"ok": True, "blocked": False, "blockers": []},
+            real_config,
+            task_name="hover",
+            landing={"ok": True, "claim": "evaluated", "blockers": []},
+            simulation_summary={"ok": False},
+        )
+    finally:
+        landing_task_module.host._runtime_mode_name = original_runtime_mode
+
+    assert real_summary["ok"] is False
+    assert real_summary["acceptance_stage"] == "real"
+    assert "simulation_landing_acceptance_not_passed" in real_summary["blockers"]
+    assert real_summary["real_landing_acceptance"]["state"] == "blocked"
+
+
+def test_landing_gate_blocks_gazebo_truth_as_input() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    orchestration = replace(
+        config.orchestration,
+        landing=replace(config.orchestration.landing, uses_gazebo_truth_as_input=True),
+    )
+    unsafe_config = replace(config, orchestration=orchestration)
+
+    summary = landing_task_module.apply_landing_gate(
+        {"ok": True, "blocked": False, "blockers": []},
+        unsafe_config,
+        task_name="hover",
+        landing={"ok": True, "claim": "evaluated", "blockers": []},
+    )
+
+    assert summary["ok"] is False
+    assert "landing_must_not_use_gazebo_truth_as_input" in summary["blockers"]
 
 
 def test_p8_exploration_coordinator_does_not_publish_cmd_vel(tmp_path) -> None:  # noqa: ANN001
@@ -1902,42 +2097,286 @@ def test_navlab_orchestration_starts_companion_with_runtime_config(monkeypatch) 
 
 
 def test_navlab_hover_acceptance_invokes_hover_runtime_cli(monkeypatch, tmp_path) -> None:
-    calls: list[dict[str, object]] = []
-    captured_logs: list[dict[str, object]] = []
+    calls: list[str] = []
 
     monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path))
     monkeypatch.setattr(host, "_render_run_config", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(host, "_compose_up", lambda _config: None)
-    monkeypatch.setattr(host, "_start_slam_container", lambda _config: None)
-    monkeypatch.setattr(host, "_start_companion_container", lambda _config: None)
-    monkeypatch.setattr(host, "_capture_stack_logs", lambda **_kwargs: None)
-    monkeypatch.setattr(host, "_capture_compose_service_log", lambda **kwargs: captured_logs.append(kwargs))
-    monkeypatch.setattr(hover_task_module, "finalize_navlab_artifact", lambda **_kwargs: None)
-    monkeypatch.setattr(host, "_remove_companion_container", lambda: None)
-    monkeypatch.setattr(host, "_remove_slam_container", lambda: None)
     monkeypatch.setattr(host, "_compose_stop", lambda _config: None)
+    monkeypatch.setattr(host, "_start_official_baseline_container", lambda *_args, **_kwargs: calls.append("official"))
+    monkeypatch.setattr(host, "_capture_official_baseline_log", lambda **_kwargs: None)
+    monkeypatch.setattr(host, "_remove_official_baseline_container", lambda: None)
+    monkeypatch.setattr(host, "_session_log_dir", lambda _config: tmp_path)
+    monkeypatch.setattr(hover_task_module.time, "sleep", lambda _duration: None)
+    monkeypatch.setattr(hover_task_module, "finalize_navlab_artifact", lambda **_kwargs: None)
     monkeypatch.setattr(
         hover_task_module,
         "upload_acceptance_rosbag",
         lambda _config: SimpleNamespace(ok=False, state="skipped", reason="test"),
     )
-
-    def fake_exec_runtime_command(**kwargs):  # noqa: ANN001
-        calls.append(kwargs)
-        return 0
-
-    monkeypatch.setattr(host, "_docker_exec_runtime_command", fake_exec_runtime_command)
+    monkeypatch.setattr(hover_task_module, "_write_p1_bridge_override", lambda _path: None)
+    monkeypatch.setattr(hover_task_module, "_write_p1_vendor_profile", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(hover_task_module, "_write_p2_model_overlay", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(hover_task_module, "_write_p2_param_overlay", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(hover_task_module, "_write_p2_sensor_config", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(hover_task_module, "_write_p3_slam_runtime_config", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(hover_task_module, "_write_p4_runtime_config", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(hover_task_module, "_write_p6_runtime_config", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(hover_task_module, "_write_controller_runtime_script", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(hover_task_module, "_write_hover_probe_script", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(hover_task_module, "_start_gazebo_sensor_container", lambda *_args, **_kwargs: calls.append("sensor"))
+    monkeypatch.setattr(hover_task_module, "_start_p3_slam_container", lambda *_args, **_kwargs: calls.append("slam"))
+    monkeypatch.setattr(hover_task_module, "_start_p6_vehicle_marker_container", lambda _config: None)
+    monkeypatch.setattr(hover_task_module, "_start_p6_rosbag_recording", lambda *_args, **_kwargs: calls.append("rosbag"))
+    monkeypatch.setattr(hover_task_module, "_start_p4_controller_container", lambda *_args, **_kwargs: calls.append("p4"))
+    monkeypatch.setattr(hover_task_module, "_capture_container_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(hover_task_module, "_remove_container", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        hover_task_module,
+        "_collect_rangefinder_probe",
+        lambda *_args, **_kwargs: {"result": {"range_received": True}},
+    )
+    monkeypatch.setattr(
+        hover_task_module,
+        "_collect_imu_probe",
+        lambda *_args, **_kwargs: {"result": {"received": True}},
+    )
+    monkeypatch.setattr(
+        hover_task_module,
+        "_collect_odometry_probe",
+        lambda *_args, **_kwargs: {
+            "result": {
+                "ok": True,
+                "received": True,
+                "frame_id": "odom",
+                "child_frame_id": "base_link",
+                "rate_hz": 20.0,
+                "latest_age_sec": 0.1,
+                "max_jump_m": 0.01,
+                "max_yaw_jump_rad": 0.01,
+                "stationary_drift_m": 0.01,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        hover_task_module,
+        "_collect_official_dds_probe",
+        lambda *_args, **_kwargs: {"result": {"time_received": True}},
+    )
+    monkeypatch.setattr(hover_task_module, "_collect_ros_graph", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        hover_task_module,
+        "_collect_topic_info",
+        lambda *_args, **_kwargs: {"/ap/v1/cmd_vel": {"publisher_nodes": ["navlab_fcu_controller"]}},
+    )
+    monkeypatch.setattr(
+        hover_task_module,
+        "_build_p6_doctor_summary",
+        lambda *_args, **_kwargs: {"ok": True, "blockers": []},
+    )
+    monkeypatch.setattr(
+        hover_task_module,
+        "_run_hover_probe",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "p6_slam_hover": {"ok": True},
+            "hover": {"ok": True},
+            "fcu": {"local_position_ok": True},
+            "slam_odom": {"ok": True},
+            "external_nav": {"ok": True},
+            "owner": {
+                "unique": True,
+                "owner": "navlab_fcu_controller",
+                "owner_id": "navlab-p4",
+                "set_pose_count": 0,
+                "competing_publishers": [],
+            },
+            "blockers": [],
+        },
+    )
+    monkeypatch.setattr(
+        hover_task_module,
+        "_publish_hover_landing_intent",
+        lambda _config: {"ok": True, "topic": "/navlab/landing/intent"},
+    )
+    monkeypatch.setattr(
+        hover_task_module,
+        "_wait_for_controller_summary",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "state": "complete",
+            "blockers": [],
+            "command_results": {
+                "prearm_check": {"success": True},
+                "set_guided": {"success": True},
+                "arm": {"success": True},
+                "takeoff": {"success": True},
+            },
+            "counts": {"pose": 1, "rejected_before_ready": 1, "output": 1},
+            "owner": {
+                "unique": True,
+                "owner": "navlab_fcu_controller",
+                "owner_id": "navlab-p4",
+                "set_pose_count": 0,
+                "competing_publishers": [],
+            },
+            "landing": {
+                "ok": True,
+                "claim": "evaluated",
+                "policy": "land_in_place",
+                "state": "landing_complete",
+                "return_home": {"required": False, "ok": True},
+                "land_command_accepted": True,
+                "touchdown_confirmed": True,
+                "disarmed": True,
+                "motors_safe": True,
+                "uses_gazebo_truth_as_input": False,
+                "blockers": [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        hover_task_module,
+        "_finish_p6_rosbag_recording",
+        lambda _config: {"ok": True, "message_counts": {}},
+    )
+    monkeypatch.setattr(
+        hover_task_module,
+        "_message_counts",
+        lambda _config: {
+            "/slam/odom": 1,
+            "/external_nav/status": 1,
+            "/ap/v1/pose/filtered": 1,
+            "/rangefinder/down/range": 1,
+            "/imu": 1,
+            "/navlab/hover/status": 1,
+            "/navlab/landing/status": 1,
+        },
+    )
+    monkeypatch.setattr(hover_task_module, "_write_foxglove_notes", lambda _config: None)
 
     rc = HoverAcceptanceTask().run(duration_sec=12.0, console=Console(file=io.StringIO()))
 
     assert rc == 0
-    assert len(calls) == 1
-    assert calls[0]["module"] == "navlab.companion.acceptance_cli"
-    args = calls[0]["args"]
-    assert args[0] == "execute-hover-acceptance"
-    assert "--artifact-dir" in args
-    assert captured_logs[0]["service"] == "sitl"
-    assert captured_logs[0]["output_path"] == tmp_path / "sitl.log"
+    assert calls == ["official", "sensor", "slam", "rosbag", "p4"]
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["ok"] is True
+    assert summary["acceptance_stage"] == "simulation"
+    assert summary["simulation_profile"] == "ideal"
+    assert summary["landing"]["policy"] == "land_in_place"
+    assert summary["landing"]["return_home"]["required"] is False
+    assert summary["simulation_landing_claim"] == "evaluated"
+    assert summary["real_landing_claim"] == "not_evaluated"
+    assert summary["hover_gate"]["external_nav_input_topic"] == "/slam/odom"
+
+
+def test_hover_mild_disturbance_profile_writes_airframe_runtime(tmp_path, monkeypatch) -> None:
+    config = RunConfig.from_config(
+        config_path="orchestration/config.toml",
+        artifact_dir=tmp_path,
+        duration_sec=12.0,
+        run_id="20260609_000000",
+    )
+    vendor_profile = tmp_path / "x2.yaml"
+    vendor_profile.write_text("profile: test\n", encoding="utf-8")
+    model_overlay = tmp_path / "iris.sdf"
+    sensor_config = tmp_path / "sensor.toml"
+    source_sdf = """
+<sdf version="1.9">
+  <model name="iris">
+    <plugin name="gz::sim::systems::MulticopterMotorModel" filename="x">
+      <control><multiplier>1.0</multiplier></control>
+      <control><multiplier>-1.0</multiplier></control>
+      <control><multiplier>1.0</multiplier></control>
+      <control><multiplier>-1.0</multiplier></control>
+    </plugin>
+  </model>
+</sdf>
+"""
+
+    def fake_write_p2_model_overlay(_config: RunConfig, path: Path) -> dict[str, Any]:
+        path.write_text(source_sdf, encoding="utf-8")
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        hover_task_module,
+        "_write_p2_model_overlay",
+        fake_write_p2_model_overlay,
+    )
+    airframe_profile = hover_task_module._airframe_profile_for_simulation_profile("mild_disturbance")
+
+    model_summary = hover_task_module._write_hover_model_overlay(
+        config,
+        model_overlay,
+        airframe_profile=airframe_profile,
+    )
+    sensor_summary = hover_task_module._write_hover_sensor_config(
+        config,
+        sensor_config,
+        vendor_profile=vendor_profile,
+        airframe_profile=airframe_profile,
+    )
+
+    assert model_summary["airframe_disturbance"]["profile"]["name"] == "mild_bias"
+    assert "NavLab P12 airframe disturbance profile" in model_overlay.read_text(encoding="utf-8")
+    runtime = sensor_summary["data"]["gazebo_sensor"]["airframe_disturbance"]
+    assert runtime["enabled"] is True
+    assert runtime["profile"] == "mild_bias"
+    assert runtime["status_topic"] == "/navlab/airframe_disturbance/status"
+
+
+def test_p8_mild_disturbance_profile_writes_airframe_runtime(tmp_path, monkeypatch) -> None:
+    config = RunConfig.from_config(
+        config_path="orchestration/config.toml",
+        artifact_dir=tmp_path,
+        duration_sec=12.0,
+        run_id="20260609_000001",
+    )
+    vendor_profile = tmp_path / "x2.yaml"
+    vendor_profile.write_text("profile: test\n", encoding="utf-8")
+    model_overlay = tmp_path / "iris.sdf"
+    sensor_config = tmp_path / "sensor.toml"
+    source_sdf = """
+<sdf version="1.9">
+  <model name="iris">
+    <plugin name="gz::sim::systems::MulticopterMotorModel" filename="x">
+      <control><multiplier>1.0</multiplier></control>
+      <control><multiplier>-1.0</multiplier></control>
+      <control><multiplier>1.0</multiplier></control>
+      <control><multiplier>-1.0</multiplier></control>
+    </plugin>
+  </model>
+</sdf>
+"""
+
+    def fake_write_p2_model_overlay(_config: RunConfig, path: Path) -> dict[str, object]:
+        path.write_text(source_sdf, encoding="utf-8")
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        exploration_gate_task_module,
+        "_write_p2_model_overlay",
+        fake_write_p2_model_overlay,
+    )
+    airframe_profile = exploration_gate_task_module._airframe_profile_for_simulation_profile("mild_disturbance")
+
+    model_summary = exploration_gate_task_module._write_p8_model_overlay(
+        config,
+        model_overlay,
+        airframe_profile=airframe_profile,
+    )
+    sensor_summary = exploration_gate_task_module._write_p8_sensor_config(
+        config,
+        sensor_config,
+        vendor_profile=vendor_profile,
+        airframe_profile=airframe_profile,
+    )
+
+    assert model_summary["airframe_disturbance"]["profile"]["name"] == "mild_bias"
+    assert "NavLab P12 airframe disturbance profile" in model_overlay.read_text(encoding="utf-8")
+    runtime = sensor_summary["data"]["gazebo_sensor"]["airframe_disturbance"]
+    assert runtime["enabled"] is True
+    assert runtime["profile"] == "mild_bias"
+    assert runtime["status_topic"] == "/navlab/airframe_disturbance/status"
 
 
 def test_navlab_image_build_uses_global_image_config(monkeypatch) -> None:

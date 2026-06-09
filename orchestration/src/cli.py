@@ -50,9 +50,23 @@ def hover_acceptance_command(
         str | None,
         typer.Option("--config", help="NavLab TOML profile path"),
     ] = None,
+    simulation_profile: Annotated[
+        str,
+        typer.Option(
+            "--simulation-profile",
+            help="Gazebo/SITL Stage 1 profile: ideal or mild_disturbance",
+        ),
+    ] = "ideal",
 ) -> None:
     task = cast(HoverAcceptanceTask, TaskRegistry.create("hover"))
-    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+    raise typer.Exit(
+        task.run(
+            config_path=config,
+            duration_sec=duration_sec,
+            simulation_profile=simulation_profile,
+            console=console,
+        )
+    )
 
 
 @app.command("exploration-doctor")
@@ -74,9 +88,23 @@ def exploration_command(
         str | None,
         typer.Option("--config", help="NavLab TOML profile path"),
     ] = None,
+    simulation_profile: Annotated[
+        str,
+        typer.Option(
+            "--simulation-profile",
+            help="Gazebo/SITL Stage 1 profile: ideal or mild_disturbance",
+        ),
+    ] = "ideal",
 ) -> None:
     task = cast(BuiltInExplorationTask, TaskRegistry.create("exploration"))
-    raise typer.Exit(task.run(config_path=config, duration_sec=duration_sec, console=console))
+    raise typer.Exit(
+        task.run(
+            config_path=config,
+            duration_sec=duration_sec,
+            simulation_profile=simulation_profile,
+            console=console,
+        )
+    )
 
 
 @app.command("scan-robustness-doctor")

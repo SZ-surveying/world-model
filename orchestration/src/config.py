@@ -541,6 +541,37 @@ class AirframeDisturbanceGateConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class LandingConfig:
+    enabled: bool
+    default_policy: str
+    hover_policy: str
+    exploration_policy: str
+    scan_robustness_policy: str
+    landing_status_topic: str
+    landing_intent_topic: str
+    home_source: str
+    home_radius_m: float
+    pre_land_hold_sec: float
+    max_return_home_duration_sec: float
+    max_landing_duration_sec: float
+    max_descent_rate_mps: float
+    touchdown_altitude_m: float
+    touchdown_vertical_speed_mps: float
+    require_disarm: bool
+    require_motors_safe: bool
+    uses_gazebo_truth_as_input: bool
+
+    def policy_for_task(self, task_name: str) -> str:
+        if task_name == "hover":
+            return self.hover_policy
+        if task_name == "exploration":
+            return self.exploration_policy
+        if task_name == "scan-robustness":
+            return self.scan_robustness_policy
+        return self.default_policy
+
+
+@dataclass(frozen=True, slots=True)
 class OrchestrationConfig:
     path: Path
     session_id: str
@@ -576,6 +607,7 @@ class OrchestrationConfig:
     scan_stabilization_gate: ScanStabilizationGateConfig
     airframe_disturbance: AirframeDisturbanceConfig
     airframe_disturbance_gate: AirframeDisturbanceGateConfig
+    landing: LandingConfig
     foxglove_upload: FoxgloveUploadConfig
 
     @classmethod
@@ -602,6 +634,7 @@ class OrchestrationConfig:
         scan_stabilization_gate = _section(data, "scan_stabilization_gate")
         airframe_disturbance = _section(data, "airframe_disturbance")
         airframe_disturbance_gate = _section(data, "airframe_disturbance_gate")
+        landing = _section(data, "landing")
         foxglove_upload = _section(data, "foxglove_upload")
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
         return cls(
@@ -1480,6 +1513,26 @@ class OrchestrationConfig:
                     airframe_disturbance_gate.get("horizontal_recovery_claim"),
                     "evaluated",
                 ),
+            ),
+            landing=LandingConfig(
+                enabled=_as_bool(landing.get("enabled"), True),
+                default_policy=_as_str(landing.get("default_policy"), "land_in_place"),
+                hover_policy=_as_str(landing.get("hover_policy"), "land_in_place"),
+                exploration_policy=_as_str(landing.get("exploration_policy"), "return_home_then_land"),
+                scan_robustness_policy=_as_str(landing.get("scan_robustness_policy"), "land_in_place"),
+                landing_status_topic=_as_str(landing.get("landing_status_topic"), "/navlab/landing/status"),
+                landing_intent_topic=_as_str(landing.get("landing_intent_topic"), "/navlab/landing/intent"),
+                home_source=_as_str(landing.get("home_source"), "post_takeoff_hover_pose"),
+                home_radius_m=_as_float(landing.get("home_radius_m"), 0.35),
+                pre_land_hold_sec=_as_float(landing.get("pre_land_hold_sec"), 2.0),
+                max_return_home_duration_sec=_as_float(landing.get("max_return_home_duration_sec"), 45.0),
+                max_landing_duration_sec=_as_float(landing.get("max_landing_duration_sec"), 35.0),
+                max_descent_rate_mps=_as_float(landing.get("max_descent_rate_mps"), 0.6),
+                touchdown_altitude_m=_as_float(landing.get("touchdown_altitude_m"), 0.12),
+                touchdown_vertical_speed_mps=_as_float(landing.get("touchdown_vertical_speed_mps"), 0.08),
+                require_disarm=_as_bool(landing.get("require_disarm"), True),
+                require_motors_safe=_as_bool(landing.get("require_motors_safe"), True),
+                uses_gazebo_truth_as_input=_as_bool(landing.get("uses_gazebo_truth_as_input"), False),
             ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),

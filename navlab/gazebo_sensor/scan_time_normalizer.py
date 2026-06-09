@@ -7,6 +7,18 @@ from navlab.common.logging import configure_sim_logging, logger
 from navlab.gazebo_sensor.config import X2SensorRuntimeConfig
 
 
+def stamp_to_nanoseconds(stamp: object) -> int:
+    return int(getattr(stamp, "sec", 0)) * 1_000_000_000 + int(getattr(stamp, "nanosec", 0))
+
+
+def monotonic_scan_stamp_ns(*, preferred_ns: int, fallback_elapsed_sec: float, previous_ns: int | None) -> int:
+    fallback_ns = 1_000_000_000 + max(0, int(fallback_elapsed_sec * 1_000_000_000))
+    candidate_ns = preferred_ns if preferred_ns > 0 else fallback_ns
+    if previous_ns is None:
+        return candidate_ns
+    return max(candidate_ns, previous_ns + 1)
+
+
 def run() -> int:
     try:
         import rclpy
@@ -29,6 +41,7 @@ def run() -> int:
             super().__init__("navlab_x2_scan_time_normalizer")
             self.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, True)])
             self._latest_clock: Clock | None = None
+            self._last_stamp_ns: int | None = None
             self._count = 0
             self._started_at = time.monotonic()
             self._publisher = self.create_publisher(LaserScan, config.scan_topic, qos_profile_sensor_data)
@@ -46,10 +59,19 @@ def run() -> int:
 
         def _handle_scan(self, message: LaserScan) -> None:
             output = copy.deepcopy(message)
+            preferred_ns = 0
             if self._latest_clock is not None:
-                output.header.stamp = self._latest_clock.clock
-            else:
-                output.header.stamp = self.get_clock().now().to_msg()
+                preferred_ns = stamp_to_nanoseconds(self._latest_clock.clock)
+            if preferred_ns <= 0:
+                preferred_ns = stamp_to_nanoseconds(message.header.stamp)
+            stamp_ns = monotonic_scan_stamp_ns(
+                preferred_ns=preferred_ns,
+                fallback_elapsed_sec=time.monotonic() - self._started_at,
+                previous_ns=self._last_stamp_ns,
+            )
+            output.header.stamp.sec = int(stamp_ns // 1_000_000_000)
+            output.header.stamp.nanosec = int(stamp_ns % 1_000_000_000)
+            self._last_stamp_ns = stamp_ns
             self._publisher.publish(output)
             self._count += 1
 

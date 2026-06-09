@@ -21,11 +21,13 @@ required /ap/v1/twist/filtered
 required /ap/v1/status
 required /navlab/fcu/controller/status
 required /navlab/fcu/owner/status
+required /navlab/landing/status
 optional /navlab/scan_integrity/status
 optional /navlab/scan_integrity/events
 optional /ap/v1/cmd_vel
 optional /navlab/fcu/setpoint/intent
 optional /navlab/fcu/setpoint/output
+optional /navlab/landing/intent
 required /navlab/exploration/status
 optional /navlab/exploration/goal
 optional /navlab/exploration/coverage

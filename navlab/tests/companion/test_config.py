@@ -62,11 +62,19 @@ def test_runtime_config_world_markers_follow_navlab_quad_root() -> None:
     assert "--pass-x-m" in mission_argv
     assert "--require-external-nav" in mission_argv
     assert "--require-imu-status" in mission_argv
+    assert "--require-disarm" in mission_argv
+    assert "--require-motors-safe" in mission_argv
     assert "--send-position-setpoints" in mission_argv
+    assert config.mission.landing_status_topic == "/navlab/landing/status"
+    assert config.mission.landing_intent_topic == "/navlab/landing/intent"
+    assert config.mission.pre_land_hold_sec == 2.0
+    assert config.mission.max_landing_duration_sec == 35.0
     pass_x_flag = mission_argv.index("--pass-x-m")
     avoid_distance_flag = mission_argv.index("--obstacle-avoid-distance-m")
+    landing_status_flag = mission_argv.index("--landing-status-topic")
     assert mission_argv[pass_x_flag + 1] == "1.25"
     assert mission_argv[avoid_distance_flag + 1] == "1.2"
+    assert mission_argv[landing_status_flag + 1] == "/navlab/landing/status"
 
 
 def test_companion_runtime_config_uses_structured_fields_not_args_lists() -> None:

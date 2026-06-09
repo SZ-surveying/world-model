@@ -20,6 +20,7 @@ TEMPLATE_DIR = Path(__file__).parent / "templates"
 SAMPLE_TOPICS = (
     ("MISSION_STATUS_SAMPLE", "/navlab/mission/status"),
     ("MAVLINK_STATUS_SAMPLE", "/navlab/mavlink/status"),
+    ("LANDING_STATUS_SAMPLE", "/navlab/landing/status"),
     ("POSE_MIRROR_STATUS_SAMPLE", "/navlab/pose_mirror/status"),
     ("IMU_STATUS_SAMPLE", "/imu/status"),
     ("SLAM_STATUS_SAMPLE", "/navlab/slam/status"),
@@ -47,7 +48,7 @@ MINIMUM_ROSBAG_TOPICS = (
     "/rangefinder/down/status",
     "/gazebo/truth/odom",
     "/gazebo/truth/status",
-    "/imu/data",
+    "/imu",
     "/imu/status",
     "/navlab/fcu/local_position_pose",
     "/tf",
@@ -58,6 +59,7 @@ MINIMUM_ROSBAG_TOPICS = (
     "/external_nav/status",
     "/mavlink_external_nav/status",
     "/navlab/mavlink/status",
+    "/navlab/landing/status",
     "/navlab/pose_mirror/status",
     "/navlab/mission/status",
 )
@@ -390,6 +392,7 @@ def _write_foxglove_notes(*, artifact_dir: Path) -> None:
         laser_topics=("/scan", "/scan_ideal", "/scan_features", "/scan_nearest_point"),
         raw_status_topics=(
             "/navlab/mission/status",
+            "/navlab/landing/status",
             "/sim/log",
             "/sim/x2/status",
             "/rangefinder/down/status",
@@ -410,6 +413,10 @@ def _write_foxglove_notes(*, artifact_dir: Path) -> None:
             "avoid",
             "return_track",
             "final_hold/complete",
+            "pre_land_hold",
+            "land_command_sent",
+            "descent_monitoring",
+            "landing_complete",
         ),
     )
     (artifact_dir / "foxglove_notes.md").write_text(rendered.rstrip() + "\n", encoding="utf-8")

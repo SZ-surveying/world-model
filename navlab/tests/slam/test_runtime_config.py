@@ -36,7 +36,7 @@ def test_cartographer_backend_generates_launch_command_from_runtime_config() -> 
     assert "cartographer_odometry_topic:=/odometry" in command
     assert "odom_topic:=/odom" in command
     assert "slam_status_topic:=/navlab/slam/status" in command
-    assert "imu_source_topic:=/ap/imu/experimental/data" in command
+    assert "imu_source_topic:=/navlab/fcu_imu/data" in command
     assert "external_nav_input_odom_topic:=/odom" in command
     assert "external_nav_input_odom_topic:=/gazebo/truth/odom" not in command
 

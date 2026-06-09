@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-06-09: Landing acceptance gates precede real landing control
+
+Decision: add the unified landing policy, summary schema, rosbag contract, and Stage 1/Stage 2 blocker before implementing the FCU LAND / return-home control path.
+
+Basis: codebase research and the unified landing design.
+
+Reason: hover, P8, and P12 currently finish at final hold/stop semantics. Marking landing as passed without a real LAND/disarm execution path would hide a safety gap. The first implementation slice makes incomplete landing visible in summaries and blocks full acceptance, while leaving actuator-level landing control as an explicit follow-up.
+
 ## 2026-06-09: Orchestration legacy helpers move to helpers/workflows
 
 Decision: delete `orchestration/src/tasks/legacy` by moving reusable gate code into `src.tasks.helpers` and built-in task workflows into `src.tasks.workflows`.
@@ -403,3 +411,43 @@ Decision: convert the remaining legacy `*Task` classes into module-level `run_*`
 Basis: the built-in task wrappers still need P8 exploration and P12 scan-robustness implementations, and the P12 live path still needs P11 replay logic, but these are implementation helpers rather than operator-facing tasks.
 
 Reason: keeping old `*Task` classes in legacy made the code look like hidden runnable tasks even though registry and CLI no longer exposed them. Removing the class shells makes the boundary explicit. A dependency graph from `exploration` and `scan-robustness` still reaches all remaining legacy modules, so no additional legacy file is currently safe to delete without deeper helper extraction.
+
+## 2026-06-09: Stage 1 SLAM IMU input uses companion FCU IMU
+
+Decision: route Gazebo/SITL SLAM IMU input from `/navlab/fcu_imu/data` instead of `/ap/imu/experimental/data`.
+
+Basis: hover acceptance artifact `artifacts/ros/navlab_companion_sitl_gazebo/20260609_095754` showed `/imu/status` waiting for an absent ArduPilot DDS experimental IMU topic while the companion pose mirror is the configured FCU MAVLink/simulation IMU producer.
+
+Reason: hover should still require standardized `/imu/status` readiness before takeoff, but Stage 1 must feed that readiness from the actual companion FCU IMU path. The SLAM IMU bridge uses steady-clock input timing for readiness because ROS simulation time can be paused or repeated during startup. This preserves the safety gate and removes the topic mismatch that blocked Gazebo hover from reaching takeoff and landing evaluation.
+
+## 2026-06-09: P12 runtime contract is the standard for earlier built-in flight tasks
+
+Decision: keep the later P12-proven runtime contract as the standard and migrate hover/P8 forward to it instead of weakening hover-specific readiness.
+
+Basis: user clarification that P12 has already run as a complete hover-capable and motion-capable path, plus hover acceptance artifacts showing failures in bootstrap contract alignment before landing evaluation.
+
+Reason: hover is only the smallest task body, not a separate lower-standard runtime. If hover cannot take off while P12 can hover and move, the useful conclusion is that hover is missing pieces of the P12/P8 bootstrap, SLAM, ExternalNav, or FCU controller contract. Lowering Cartographer, ExternalNav, local-position, or FCU readiness for hover would create a second flight standard and make Stage 1 landing acceptance less representative of the later real-drone path.
+
+## 2026-06-09: Hover Stage 1 uses the P12-aligned FCU/SLAM bootstrap
+
+Decision: run the built-in `hover` acceptance through the same official baseline, Gazebo sensor, SLAM backend, P4 FCU controller, and P6 hover probe contract used by later P8/P12 paths, then finish with a `land_in_place` landing intent and controller landing summary.
+
+Basis: `artifacts/ros/navlab_companion_sitl_gazebo/20260609_110400/summary.json` passed with `ok=true`, `acceptance_stage=simulation`, `simulation_landing_claim=evaluated`, `real_landing_claim=not_evaluated`, `/slam/odom` ExternalNav input, `/navlab/landing/status` recorded, `landing.state=landing_complete`, `disarmed=true`, and `motors_safe=true`.
+
+Reason: the earlier legacy hover mission failed before takeoff because it did not satisfy the P12/P6 runtime contract (`/tf`, SLAM odom, official DDS pose/status, and P4 controller ownership). The hover task now validates the same contract and treats MAVLink disarm as a final-state gate: a denied disarm ACK is acceptable only if the subsequent heartbeat confirms the vehicle is already disarmed, which preserves the required `disarmed && motors_safe` landing condition without overfitting to ACK behavior.
+
+## 2026-06-09: Hover Stage 1 now requires both ideal and mild disturbance profiles
+
+Decision: extend built-in hover Stage 1 to run both `ideal` and `mild_disturbance` Gazebo/SITL profiles, expose the chosen `simulation_profile` in summary, and treat landing completion as `LAND -> touchdown -> disarm`, not as a single ACK round-trip.
+
+Basis: hover accepted with `simulation_profile=ideal` in `artifacts/ros/navlab_companion_sitl_gazebo/20260609_120302/summary.json` and `simulation_profile=mild_disturbance` in `artifacts/ros/navlab_companion_sitl_gazebo/20260609_115602/summary.json`; both reported `acceptance_stage=simulation`, `simulation_landing_claim=evaluated`, `real_landing_claim=not_evaluated`, `landing.ok=true`, and `disarmed=true`.
+
+Reason: the mild-disturbance run proved the old single-shot LAND ACK rule was too brittle for Stage 1. The controller now retries LAND, keeps monitoring descent, and only finalizes acceptance after touchdown and disarm are confirmed. This keeps the simulation gate aligned with the later real flight contract instead of making hover depend on perfect ACK timing.
+
+## 2026-06-09: P8 Stage 1 follows the P12 profile contract before real Stage 2
+
+Decision: extend built-in P8 exploration with the same `ideal` / `mild_disturbance` Stage 1 profile contract as hover and P12, and require the mild profile to keep the Gazebo lidar -> X2 virtual serial -> vendor scan chain on `gazebo_ideal` rather than accepting static fallback.
+
+Basis: P8 `ideal` passed in `artifacts/ros/navlab_companion_sitl_gazebo/20260609_122759/summary.json`; P8 `mild_disturbance` passed in `artifacts/ros/navlab_companion_sitl_gazebo/20260609_125158/summary.json` with `/lidar=1433`, `/scan=1677`, `/sim/x2/status=479`, `/navlab/airframe_disturbance/status=479`, `landing.policy=return_home_then_land`, `landing.state=landing_complete`, `simulation_landing_claim=evaluated`, and `real_landing_claim=not_evaluated`.
+
+Reason: P8 is the movement/exploration bridge between hover and P12, so it cannot pass Stage 1 only under ideal motors or by using X2 static fallback. The new P8 lidar/X2 preflight catches missing Gazebo ideal scan before the long acceptance window, and Stage 2 remains blocked until process+real preflight, manual takeover/kill-switch readiness, and a real-machine return-home landing run are performed.

@@ -103,6 +103,20 @@ def _write_p4_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
                 "require_slam_backend": p4.require_slam_backend,
                 "hover_claim": p4.hover_claim,
                 "exploration_claim": p4.exploration_claim,
+                "landing_status_topic": config.orchestration.landing.landing_status_topic,
+                "landing_intent_topic": config.orchestration.landing.landing_intent_topic,
+                "landing_policy": config.orchestration.landing.default_policy,
+                "home_source": config.orchestration.landing.home_source,
+                "home_radius_m": config.orchestration.landing.home_radius_m,
+                "pre_land_hold_sec": config.orchestration.landing.pre_land_hold_sec,
+                "max_return_home_duration_sec": config.orchestration.landing.max_return_home_duration_sec,
+                "max_landing_duration_sec": config.orchestration.landing.max_landing_duration_sec,
+                "max_descent_rate_mps": config.orchestration.landing.max_descent_rate_mps,
+                "touchdown_altitude_m": config.orchestration.landing.touchdown_altitude_m,
+                "touchdown_vertical_speed_mps": config.orchestration.landing.touchdown_vertical_speed_mps,
+                "require_disarm": config.orchestration.landing.require_disarm,
+                "require_motors_safe": config.orchestration.landing.require_motors_safe,
+                "uses_gazebo_truth_as_input": config.orchestration.landing.uses_gazebo_truth_as_input,
             }
         }
     }
@@ -138,6 +152,20 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def yaw_from_quaternion(q) -> float:
+    siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    return math.atan2(siny_cosp, cosy_cosp)
+
+
+def wrap_angle(angle: float) -> float:
+    while angle > math.pi:
+        angle -= 2.0 * math.pi
+    while angle < -math.pi:
+        angle += 2.0 * math.pi
+    return angle
+
+
 class P4Controller:
     def __init__(self) -> None:
         rclpy.init()
@@ -170,18 +198,38 @@ class P4Controller:
             "imu": None,
         }}
         self.motion_command = {{"kind": "hold", "linear_x_mps": 0.0, "angular_z_radps": 0.0, "updated_monotonic": 0.0}}
+        self.home_pose = None
+        self.landing_request = None
+        self.landing_state = "not_started"
+        self.landing_started_monotonic = None
+        self.return_home_started_monotonic = None
+        self.pre_land_started_monotonic = None
+        self.land_command_sent = False
+        self.land_command_accepted = False
+        self.land_command_rejected = False
+        self.land_command_attempts = 0
+        self.next_land_command_monotonic = 0.0
+        self.touchdown_confirmed = False
+        self.disarm_requested = False
+        self.disarmed_confirmed = False
+        self.motors_safe_confirmed = False
+        self.landing_blockers = []
+        self.mavlink_master = None
         self.stop_requested = False
         self.state_pub = self.node.create_publisher(String, SPEC["fcu_state_topic"], 10)
         self.status_pub = self.node.create_publisher(String, SPEC["controller_status_topic"], 10)
         self.intent_pub = self.node.create_publisher(String, SPEC["setpoint_intent_topic"], 10)
         self.output_pub = self.node.create_publisher(String, SPEC["setpoint_output_topic"], 10)
         self.owner_pub = self.node.create_publisher(String, SPEC["owner_status_topic"], 10)
+        self.landing_status_pub = self.node.create_publisher(String, SPEC["landing_status_topic"], 10)
         self.cmd_vel_pub = self.node.create_publisher(TwistStamped, SPEC["cmd_vel_topic"], 10)
         self.hover_pub = None
         if SPEC.get("hover_status_topic"):
             self.hover_pub = self.node.create_publisher(String, SPEC["hover_status_topic"], 10)
         if SPEC.get("enable_motion_intent_control", False):
             self.node.create_subscription(String, SPEC["setpoint_intent_topic"], self._motion_intent_cb, 10)
+        if SPEC.get("enable_landing_intent_control", False):
+            self.node.create_subscription(String, SPEC["landing_intent_topic"], self._landing_intent_cb, 10)
         self.fcu_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
@@ -212,6 +260,7 @@ class P4Controller:
             "x": float(msg.pose.position.x),
             "y": float(msg.pose.position.y),
             "z": float(msg.pose.position.z),
+            "yaw_rad": yaw_from_quaternion(msg.pose.orientation),
             "monotonic": time.monotonic(),
         }}
 
@@ -274,6 +323,27 @@ class P4Controller:
         }}
         self.publish_intent(kind, accepted=True, reason="motion_intent_accepted")
 
+    def _landing_intent_cb(self, msg: String) -> None:
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        if payload.get("source") == "navlab_fcu_controller":
+            return
+        kind = str(payload.get("kind") or payload.get("policy") or "land_in_place")
+        if kind not in {{"land_in_place", "return_home_then_land", "emergency_land_in_place"}}:
+            self.landing_blockers.append(f"unsupported_landing_intent:{{kind}}")
+            self.publish_landing_status()
+            return
+        self.counts["landing_intent"] = self.counts.get("landing_intent", 0) + 1
+        self.landing_request = {{
+            "kind": kind,
+            "policy": "land_in_place" if kind == "emergency_land_in_place" else kind,
+            "reason": str(payload.get("reason") or "landing_intent"),
+            "received_monotonic": time.monotonic(),
+        }}
+        self.publish_landing_status()
+
     def spin_for(self, seconds: float) -> None:
         end = time.monotonic() + seconds
         while time.monotonic() < end:
@@ -334,6 +404,7 @@ class P4Controller:
             "command_results": self.command_results,
             "hover_claim": SPEC["hover_claim"],
             "exploration_claim": SPEC["exploration_claim"],
+            "landing_state": self.landing_state,
             "updated_ms": now_ms(),
         }}
         self.state_pub.publish(self._json_msg(state_payload))
@@ -341,6 +412,70 @@ class P4Controller:
         self.status_pub.publish(self._json_msg(status_payload))
         if self.hover_pub is not None:
             self.hover_pub.publish(self._json_msg({{**status_payload, "phase": "p6_hover_prerequisite"}}))
+        self.publish_landing_status()
+
+    def landing_summary(self) -> dict:
+        policy = str((self.landing_request or {{}}).get("policy") or SPEC["landing_policy"])
+        return_home_required = policy == "return_home_then_land"
+        return_home_ok = not return_home_required
+        distance_to_home = None
+        if self.home_pose is not None and self.latest.get("pose") is not None:
+            distance_to_home = math.hypot(
+                float(self.latest["pose"]["x"]) - float(self.home_pose["x"]),
+                float(self.latest["pose"]["y"]) - float(self.home_pose["y"]),
+            )
+            return_home_ok = distance_to_home <= float(SPEC["home_radius_m"])
+        disarmed = self.disarmed_confirmed
+        motors_safe = self.motors_safe_confirmed
+        ok = bool(
+            self.land_command_accepted
+            and self.touchdown_confirmed
+            and (disarmed if SPEC["require_disarm"] else True)
+            and (motors_safe if SPEC["require_motors_safe"] else True)
+            and return_home_ok
+        )
+        blockers = list(dict.fromkeys(self.landing_blockers))
+        if self.landing_state != "not_started":
+            if return_home_required and not return_home_ok:
+                blockers.append("return_home_required_before_landing_not_satisfied")
+            if not self.land_command_accepted:
+                blockers.append("landing_command_not_accepted")
+            if not self.touchdown_confirmed:
+                blockers.append("touchdown_not_confirmed")
+            if SPEC["require_disarm"] and not disarmed:
+                blockers.append("disarm_not_confirmed")
+            if SPEC["require_motors_safe"] and not motors_safe:
+                blockers.append("motors_not_safe")
+        else:
+            blockers.append("landing_not_started")
+        return {{
+            "ok": ok,
+            "claim": "evaluated" if self.landing_state != "not_started" else "not_evaluated",
+            "policy": policy,
+            "state": self.landing_state,
+            "return_home": {{
+                "required": return_home_required,
+                "ok": return_home_ok,
+                "state": "not_required" if not return_home_required else ("home_hold" if return_home_ok else "return_home_active"),
+                "distance_to_home_m": distance_to_home,
+                "duration_sec": None if self.return_home_started_monotonic is None else max(0.0, time.monotonic() - self.return_home_started_monotonic),
+            }},
+            "home_pose": self.home_pose,
+            "land_command_accepted": self.land_command_accepted,
+            "landing_duration_sec": None if self.landing_started_monotonic is None else max(0.0, time.monotonic() - self.landing_started_monotonic),
+            "landed_confirmed": self.touchdown_confirmed,
+            "touchdown_confirmed": self.touchdown_confirmed,
+            "disarmed": disarmed,
+            "motors_safe": motors_safe,
+            "require_disarm": SPEC["require_disarm"],
+            "require_motors_safe": SPEC["require_motors_safe"],
+            "uses_gazebo_truth_as_input": SPEC["uses_gazebo_truth_as_input"],
+            "blockers": sorted(set(blockers)) if not ok else [],
+        }}
+
+    def publish_landing_status(self) -> None:
+        self.counts["landing_status"] = self.counts.get("landing_status", 0) + 1
+        self.landing_status_pub.publish(self._json_msg(self.landing_summary()))
 
     def publish_intent(self, kind: str, *, accepted: bool, reason: str) -> None:
         self.seq += 1
@@ -461,6 +596,16 @@ class P4Controller:
                 return True
         return False
 
+    def _wait_mavlink_disarmed(self, master, timeout: float = 8.0) -> bool:
+        from pymavlink import mavutil
+
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            msg = master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
+            if msg and not (int(msg.base_mode) & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED):
+                return True
+        return False
+
     def _wait_mavlink_takeoff_height(self, master, altitude_m: float, timeout: float = 15.0) -> dict:
         target_min = max(0.2, altitude_m * 0.45)
         end = time.monotonic() + timeout
@@ -487,6 +632,7 @@ class P4Controller:
             source_component=int(SPEC["mavlink_bootstrap_source_component"]),
             dialect="ardupilotmega",
         )
+        self.mavlink_master = master
         heartbeat = master.wait_heartbeat(timeout=12.0)
         bootstrap = {{
             "route": SPEC["control_route"],
@@ -581,6 +727,188 @@ class P4Controller:
         self.transition("mavlink_bootstrap", "ok", details=bootstrap)
         return True
 
+    def _touchdown_confirmed(self) -> bool:
+        pose = self.latest.get("pose") or {{}}
+        range_sample = self.latest.get("range") or {{}}
+        z_ok = pose.get("z") is not None and float(pose.get("z") or 0.0) <= float(SPEC["touchdown_altitude_m"])
+        range_ok = range_sample.get("range") is not None and float(range_sample.get("range") or 999.0) <= float(SPEC["touchdown_altitude_m"])
+        return bool(z_ok or range_ok)
+
+    def _publish_return_home_output(self) -> bool:
+        if self.home_pose is None or self.latest.get("pose") is None:
+            self.landing_blockers.append("home_pose_or_current_pose_missing")
+            return False
+        pose = self.latest["pose"]
+        dx = float(self.home_pose["x"]) - float(pose["x"])
+        dy = float(self.home_pose["y"]) - float(pose["y"])
+        distance = math.hypot(dx, dy)
+        if distance <= float(SPEC["home_radius_m"]):
+            self.publish_output("return_home_hold", sent_to_fcu=True, reason="home_radius_hold")
+            return True
+        yaw = float(pose.get("yaw_rad") or 0.0)
+        bearing = math.atan2(dy, dx)
+        yaw_error = wrap_angle(bearing - yaw)
+        linear = min(0.35, max(0.08, distance * 0.35)) if abs(yaw_error) < 0.9 else 0.0
+        angular = max(-0.6, min(0.6, yaw_error))
+        self.publish_output(
+            "return_home",
+            sent_to_fcu=True,
+            reason="return_home_then_land",
+            linear_x_mps=linear,
+            angular_z_radps=angular,
+        )
+        self.counts["return_home_cmd_vel"] = self.counts.get("return_home_cmd_vel", 0) + 1
+        return False
+
+    def _send_land_command(self) -> bool:
+        if self.land_command_accepted:
+            return True
+        now = time.monotonic()
+        if self.land_command_sent and now < self.next_land_command_monotonic:
+            return not self.land_command_rejected
+        self.land_command_sent = True
+        self.land_command_attempts += 1
+        self.next_land_command_monotonic = now + 2.0
+        if SPEC["control_route"] == "official_dds":
+            mode_req = ModeSwitch.Request()
+            mode_req.mode = int(SPEC["land_mode"])
+            self.land_command_accepted = self.call_service("land", self.mode_client, mode_req, "status")
+            self.land_command_rejected = not self.land_command_accepted
+        elif self.mavlink_master is not None:
+            from pymavlink import mavutil
+
+            master = self.mavlink_master
+            master.mav.command_long_send(
+                master.target_system,
+                master.target_component,
+                mavutil.mavlink.MAV_CMD_NAV_LAND,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+            ack = self._wait_mavlink_ack(master, mavutil.mavlink.MAV_CMD_NAV_LAND, timeout=1.0)
+            ack_accepted = bool(ack.get("accepted"))
+            ack_rejected = bool(not ack_accepted and not ack.get("timeout"))
+            self.land_command_accepted = self.land_command_accepted or ack_accepted
+            self.land_command_rejected = self.land_command_rejected or ack_rejected
+            self.command_results["land"] = {{
+                "success": self.land_command_accepted,
+                "route": SPEC["control_route"],
+                "ack": ack,
+                "attempts": self.land_command_attempts,
+                "pending_ack": bool(ack.get("timeout") and not self.land_command_accepted),
+            }}
+        else:
+            self.landing_blockers.append("landing_mavlink_master_missing")
+            self.land_command_rejected = True
+        if self.land_command_rejected and "landing_command_rejected" not in self.landing_blockers:
+            self.landing_blockers.append("landing_command_rejected")
+        return not self.land_command_rejected
+
+    def _send_disarm_command(self) -> bool:
+        if self.disarm_requested and self.disarmed_confirmed:
+            return True
+        self.disarm_requested = True
+        if SPEC["control_route"] == "official_dds":
+            arm_req = ArmMotors.Request()
+            arm_req.arm = False
+            self.disarmed_confirmed = self.call_service("disarm", self.arm_client, arm_req, "result")
+        elif self.mavlink_master is not None:
+            from pymavlink import mavutil
+
+            master = self.mavlink_master
+            master.mav.command_long_send(
+                master.target_system,
+                master.target_component,
+                mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+            ack = self._wait_mavlink_ack(master, mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM)
+            disarmed = self._wait_mavlink_disarmed(master)
+            self.disarmed_confirmed = bool(ack.get("accepted") or disarmed)
+            self.command_results["disarm"] = {{
+                "success": self.disarmed_confirmed,
+                "route": SPEC["control_route"],
+                "ack": ack,
+                "disarmed": disarmed,
+            }}
+        else:
+            self.landing_blockers.append("disarm_mavlink_master_missing")
+            self.disarmed_confirmed = False
+        self.motors_safe_confirmed = self.disarmed_confirmed
+        if not self.disarmed_confirmed:
+            self.landing_blockers.append("disarm_failed")
+        return self.disarmed_confirmed
+
+    def run_landing_sequence(self) -> bool:
+        self.landing_started_monotonic = time.monotonic()
+        request = self.landing_request or {{"policy": SPEC["landing_policy"], "kind": SPEC["landing_policy"]}}
+        policy = str(request.get("policy") or request.get("kind") or SPEC["landing_policy"])
+        if policy == "return_home_then_land":
+            self.landing_state = "return_home_start"
+            self.return_home_started_monotonic = time.monotonic()
+            return_deadline = time.monotonic() + float(SPEC["max_return_home_duration_sec"])
+            while time.monotonic() < return_deadline:
+                rclpy.spin_once(self.node, timeout_sec=0.05)
+                if self._publish_return_home_output():
+                    break
+                self.landing_state = "return_home_active"
+                self.publish_landing_status()
+                self.spin_for(0.1)
+            else:
+                self.landing_blockers.append("return_home_timeout")
+                self.publish_output("emergency_land_in_place", sent_to_fcu=True, reason="return_home_timeout")
+        self.landing_state = "pre_land_hold"
+        self.pre_land_started_monotonic = time.monotonic()
+        while time.monotonic() - self.pre_land_started_monotonic < float(SPEC["pre_land_hold_sec"]):
+            self.publish_output("pre_land_hold", sent_to_fcu=True, reason="pre_land_hold")
+            self.publish_landing_status()
+            self.spin_for(0.2)
+        self.landing_state = "land_command_sent"
+        if not self._send_land_command():
+            return False
+        deadline = time.monotonic() + float(SPEC["max_landing_duration_sec"])
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self.node, timeout_sec=0.1)
+            if not self.land_command_accepted and time.monotonic() >= self.next_land_command_monotonic:
+                if not self._send_land_command():
+                    return False
+            self.touchdown_confirmed = self.touchdown_confirmed or self._touchdown_confirmed()
+            self.landing_state = "touchdown_candidate" if self.touchdown_confirmed else "descent_monitoring"
+            self.publish_landing_status()
+            if self.touchdown_confirmed:
+                break
+        if not self.touchdown_confirmed:
+            self.landing_blockers.append("touchdown_not_confirmed")
+            return False
+        if self.land_command_sent and not self.land_command_rejected:
+            self.land_command_accepted = True
+            land_result = self.command_results.setdefault("land", {{"route": SPEC["control_route"]}})
+            land_result["success"] = True
+            land_result["effect_confirmed_by_touchdown"] = True
+        self.landing_state = "disarm_requested"
+        if SPEC["require_disarm"] and not self._send_disarm_command():
+            return False
+        if not SPEC["require_disarm"]:
+            self.disarmed_confirmed = True
+        if not SPEC["require_motors_safe"]:
+            self.motors_safe_confirmed = True
+        self.landing_state = "landing_complete" if self.landing_summary()["ok"] else "motors_not_safe"
+        self.publish_landing_status()
+        return bool(self.landing_summary()["ok"])
+
     def run(self) -> dict:
         self.publish_intent("hover", accepted=False, reason="controller_not_ready")
         if not self.wait_for("fcu_time", lambda: self.counts["time"] > 0, float(SPEC["readiness_timeout_sec"])):
@@ -617,6 +945,17 @@ class P4Controller:
             return self.finish("blocked_control_route")
         if not self.wait_for("local_position", lambda: self.counts["pose"] > 0, 10.0):
             return self.finish("blocked_local_position")
+        pose = self.latest.get("pose") or {{}}
+        self.home_pose = {{
+            "source": SPEC["home_source"],
+            "frame_id": pose.get("frame_id", ""),
+            "x": pose.get("x"),
+            "y": pose.get("y"),
+            "z": pose.get("z"),
+            "yaw_rad": pose.get("yaw_rad"),
+            "sampled_after": "takeoff_local_position_ready",
+            "uses_gazebo_truth_as_input": False,
+        }}
 
         self.ready = True
         self.transition("hold_ready", "ok")
@@ -626,6 +965,9 @@ class P4Controller:
             self.spin_for(0.4)
         hold_end = min(self.deadline, time.monotonic() + float(SPEC["hold_after_ready_sec"]))
         while time.monotonic() < hold_end and not self.stop_requested:
+            if self.landing_request is not None:
+                landing_ok = self.run_landing_sequence()
+                return self.finish("complete" if landing_ok else "blocked_landing")
             command = self.motion_command
             command_age = time.monotonic() - float(command.get("updated_monotonic") or 0.0)
             if SPEC.get("enable_motion_intent_control", False) and command_age <= 1.0:
@@ -651,6 +993,7 @@ class P4Controller:
             "blockers": self.blockers,
             "transitions": self.transitions,
             "command_results": self.command_results,
+            "landing": self.landing_summary(),
             "counts": self.counts,
             "latest": self.latest,
             "owner": {{
@@ -674,6 +1017,8 @@ class P4Controller:
                 "setpoint_output": SPEC["setpoint_output_topic"],
                 "owner_status": SPEC["owner_status_topic"],
                 "cmd_vel": SPEC["cmd_vel_topic"],
+                "landing_status": SPEC["landing_status_topic"],
+                "landing_intent": SPEC["landing_intent_topic"],
             }},
         }}
         Path(SPEC["summary_file"]).parent.mkdir(parents=True, exist_ok=True)
@@ -718,6 +1063,7 @@ def _write_controller_runtime_script(
     duration_sec: float,
     hold_after_ready_sec: float | None = None,
     enable_motion_intent_control: bool = False,
+    enable_landing_intent_control: bool | None = None,
     hover_status_topic: str = "",
 ) -> dict[str, Any]:
     p4 = config.orchestration.fcu_controller
@@ -752,12 +1098,32 @@ def _write_controller_runtime_script(
         "slam_status_topic": p4.slam_status_topic,
         "guided_mode": p4.guided_mode,
         "takeoff_alt_m": p4.takeoff_alt_m,
+        "land_mode": 9,
         "readiness_timeout_sec": p4.readiness_timeout_sec,
         "hold_after_ready_sec": p4.hold_after_ready_sec if hold_after_ready_sec is None else hold_after_ready_sec,
         "enable_motion_intent_control": enable_motion_intent_control,
+        "enable_landing_intent_control": (
+            enable_motion_intent_control
+            if enable_landing_intent_control is None
+            else enable_landing_intent_control
+        ),
         "hover_status_topic": hover_status_topic,
         "hover_claim": p4.hover_claim,
         "exploration_claim": p4.exploration_claim,
+        "landing_status_topic": config.orchestration.landing.landing_status_topic,
+        "landing_intent_topic": config.orchestration.landing.landing_intent_topic,
+        "landing_policy": config.orchestration.landing.default_policy,
+        "home_source": config.orchestration.landing.home_source,
+        "home_radius_m": config.orchestration.landing.home_radius_m,
+        "pre_land_hold_sec": config.orchestration.landing.pre_land_hold_sec,
+        "max_return_home_duration_sec": config.orchestration.landing.max_return_home_duration_sec,
+        "max_landing_duration_sec": config.orchestration.landing.max_landing_duration_sec,
+        "max_descent_rate_mps": config.orchestration.landing.max_descent_rate_mps,
+        "touchdown_altitude_m": config.orchestration.landing.touchdown_altitude_m,
+        "touchdown_vertical_speed_mps": config.orchestration.landing.touchdown_vertical_speed_mps,
+        "require_disarm": config.orchestration.landing.require_disarm,
+        "require_motors_safe": config.orchestration.landing.require_motors_safe,
+        "uses_gazebo_truth_as_input": config.orchestration.landing.uses_gazebo_truth_as_input,
     }
     script_path.parent.mkdir(parents=True, exist_ok=True)
     _write_text(script_path, _controller_runtime_script(spec))
@@ -1050,7 +1416,3 @@ def _write_foxglove_notes(config: RunConfig) -> None:
         )
         + "\n",
     )
-
-
-
-
