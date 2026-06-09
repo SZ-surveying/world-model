@@ -22,10 +22,16 @@ from src.config import RealPreflightDependencyConfig, RunConfig, SerialMavlinkCo
 from src.project_config import RuntimeConfig as ProjectRuntimeConfig
 from src.project_config import load_orchestration_runtime_backend_config, load_runtime_config
 from src.tasks.base import OrchestrationTask
+from src.tasks.fcu_bridge import get_fcu_bridge_mode
 from src.tasks.registry import TaskRegistry
 
-DEFAULT_REAL_ROS_DISTRO = "jazzy"
+DEFAULT_REAL_ROS_DISTRO = "humble"
+YDLIDAR_SDK_SOURCE = Path("third_party/YDLidar-SDK")
+YDLIDAR_SDK_BUILD = Path("build/ydlidar_sdk")
+YDLIDAR_SDK_PREFIX = Path("build/ydlidar_sdk_install")
+ROS_HUMBLE_CARTOGRAPHER_OVERLAY = Path("build/ros_humble_cartographer_overlay/opt/ros/humble")
 APT_ROS_PACKAGE_MAP = {
+    "cartographer_ros": "ros-{distro}-cartographer-ros",
     "mavros": "ros-{distro}-mavros",
     "mavros_msgs": "ros-{distro}-mavros-msgs",
 }
@@ -35,15 +41,20 @@ LOCAL_ROS_BUILD_PACKAGE_TEMPLATES = (
     "ros-{distro}-geometry-msgs",
     "ros-{distro}-nav-msgs",
     "ros-{distro}-rclcpp",
+    "ros-{distro}-rmw",
     "ros-{distro}-sensor-msgs",
     "ros-{distro}-std-msgs",
+    "ros-{distro}-std-srvs",
     "ros-{distro}-tf2-msgs",
+    "ros-{distro}-visualization-msgs",
 )
+LOCAL_ROS_SYSTEM_BUILD_PACKAGES = ("build-essential", "cmake", "pkg-config")
 LOCAL_ROS_PACKAGES = {
     "navlab_slam_bringup",
     "navlab_cartographer_adapter",
     "navlab_external_nav_bridge",
     "navlab_slam_imu_bridge",
+    "ydlidar_ros2_driver",
 }
 LOCAL_ROS_BUILD_PACKAGES = (
     "navlab_cartographer_adapter",
@@ -52,8 +63,9 @@ LOCAL_ROS_BUILD_PACKAGES = (
     "navlab_slam_bringup",
     "navlab_slam_imu_bridge",
     "ydlidar_interfaces",
+    "ydlidar_ros2_driver",
 )
-LOCAL_ROS_PACKAGE_BASE_PATHS = ("navlab/interfaces", "navlab/slam/ros")
+LOCAL_ROS_PACKAGE_BASE_PATHS = ("navlab/interfaces", "navlab/slam/ros", "third_party/ydlidar_ros2_driver")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,11 +104,15 @@ def _build_real_preflight_summary(
     if serial_mavlink_probe is None:
         serial_mavlink_probe = _probe_serial_mavlink(config.orchestration.real_preflight.serial_mavlink)
     if dependency_probe is None:
+        dependency_settings, dependency_blockers = _effective_real_preflight_dependencies(config)
         dependency_probe = _probe_real_preflight_dependencies(
-            config.orchestration.real_preflight.dependencies,
+            dependency_settings,
             ros_distro=config.orchestration.real_preflight.ros_distro,
             process_service_names=(),
         )
+    else:
+        dependency_settings = config.orchestration.real_preflight.dependencies
+        dependency_blockers = ()
     checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     try:
         selected = _load_runtime_selection(config)
@@ -113,6 +129,7 @@ def _build_real_preflight_summary(
             "checked_at": checked_at,
             "valid_for_sec": config.orchestration.real_preflight.valid_for_sec,
             "ros_distro": config.orchestration.real_preflight.ros_distro,
+            "fcu_bridge_mode": config.orchestration.real_prepare.fcu_bridge_mode,
             "real_preflight": {
                 "serial_mavlink": serial_mavlink_probe.summary,
                 "dependencies": dependency_probe.summary,
@@ -126,10 +143,11 @@ def _build_real_preflight_summary(
 
     if not dependency_probe.summary.get("configured_process_services") and selected.process.services:
         dependency_probe = _probe_real_preflight_dependencies(
-            config.orchestration.real_preflight.dependencies,
+            dependency_settings,
             ros_distro=config.orchestration.real_preflight.ros_distro,
             process_service_names=tuple(selected.process.services),
         )
+    blockers.extend(dependency_blockers)
     blockers.extend(dependency_probe.blockers)
     blockers.extend(serial_mavlink_probe.blockers)
 
@@ -145,11 +163,41 @@ def _build_real_preflight_summary(
         "checked_at": checked_at,
         "valid_for_sec": config.orchestration.real_preflight.valid_for_sec,
         "ros_distro": config.orchestration.real_preflight.ros_distro,
+        "fcu_bridge_mode": config.orchestration.real_prepare.fcu_bridge_mode,
         "real_preflight": {
             "serial_mavlink": serial_mavlink_probe.summary,
             "dependencies": dependency_probe.summary,
         },
     }
+
+
+def _effective_real_preflight_dependencies(config: RunConfig) -> tuple[RealPreflightDependencyConfig, tuple[str, ...]]:
+    base = config.orchestration.real_preflight.dependencies
+    mode_name = config.orchestration.real_prepare.fcu_bridge_mode
+    try:
+        mode_spec = get_fcu_bridge_mode(mode_name)
+        blockers: tuple[str, ...] = ()
+    except ValueError as exc:
+        mode_spec = None
+        blockers = (f"real_preflight_fcu_bridge_mode_unknown:{mode_name}:{exc}",)
+
+    command_groups = list(base.required_command_groups)
+    ros_packages = list(base.required_ros_packages)
+    python_modules = list(base.required_python_modules)
+    if mode_spec:
+        command_groups.extend(mode_spec.preflight_required_command_groups)
+        ros_packages.extend(mode_spec.preflight_required_ros_packages)
+        python_modules.extend(mode_spec.preflight_required_python_modules)
+
+    return (
+        RealPreflightDependencyConfig(
+            required_command_groups=tuple(dict.fromkeys(command_groups)),
+            required_ros_packages=tuple(dict.fromkeys(ros_packages)),
+            required_python_modules=tuple(dict.fromkeys(python_modules)),
+            required_process_services=base.required_process_services,
+        ),
+        blockers,
+    )
 
 
 def _probe_real_preflight_dependencies(
@@ -247,7 +295,7 @@ def _ros2_path_for_distro(ros_distro: str) -> Path:
 def _run_ros2_pkg_prefix(package: str, *, ros_distro: str) -> subprocess.CompletedProcess[str]:
     ros2_command = shlex.quote(str(_ros2_path_for_distro(ros_distro)))
     workspace_setup = Path("install/setup.bash")
-    source_commands = _ros_source_commands(ros_distro)
+    source_commands = [*_ros_source_commands(ros_distro), *_local_ros_overlay_commands()]
     if workspace_setup.exists():
         source_commands.append(f"source {shlex.quote(str(workspace_setup))}")
         command = " && ".join([*source_commands, f"{ros2_command} pkg prefix {shlex.quote(package)}"])
@@ -345,7 +393,12 @@ def _probe_serial_mavlink(settings: SerialMavlinkConfig) -> SerialMavlinkProbe:
             source_system=255,
             source_component=0,
         )
-        heartbeat = master.wait_heartbeat(timeout=settings.heartbeat_timeout_sec)
+        heartbeat, heartbeat_read_errors = _wait_for_mavlink_heartbeat(
+            master,
+            timeout_sec=settings.heartbeat_timeout_sec,
+        )
+        if heartbeat_read_errors:
+            summary["heartbeat_read_errors"] = heartbeat_read_errors
         if heartbeat is None:
             if settings.require_autopilot_heartbeat:
                 blockers.append("serial_mavlink_heartbeat_missing")
@@ -382,8 +435,14 @@ def _probe_serial_mavlink(settings: SerialMavlinkConfig) -> SerialMavlinkProbe:
 
         deadline = time.monotonic() + settings.telemetry_window_sec
         wanted_messages = set(settings.required_messages) | set(settings.optional_messages)
+        telemetry_read_errors: list[str] = []
         while time.monotonic() < deadline:
-            msg = master.recv_match(blocking=True, timeout=max(0.0, min(0.5, deadline - time.monotonic())))
+            try:
+                msg = master.recv_match(blocking=True, timeout=max(0.0, min(0.5, deadline - time.monotonic())))
+            except Exception as exc:
+                if len(telemetry_read_errors) < 3:
+                    telemetry_read_errors.append(str(exc))
+                continue
             if msg is None:
                 continue
             msg_type = str(msg.get_type()).upper()
@@ -402,6 +461,8 @@ def _probe_serial_mavlink(settings: SerialMavlinkConfig) -> SerialMavlinkProbe:
                 if blocker not in blockers:
                     blockers.append(blocker)
         summary["message_counts"] = message_counts
+        if telemetry_read_errors:
+            summary["telemetry_read_errors"] = telemetry_read_errors
     except Exception as exc:  # pragma: no cover - hardware-specific failure surface.
         blockers.append(f"serial_mavlink_probe_failed:{exc}")
     finally:
@@ -425,6 +486,21 @@ def _request_mavlink_telemetry_streams(master: Any, mavutil: Any) -> None:
         mavutil.mavlink.MAV_DATA_STREAM_RAW_SENSORS,
     ):
         master.mav.request_data_stream_send(target_system, target_component, stream_id, 4, 1)
+
+
+def _wait_for_mavlink_heartbeat(master: Any, *, timeout_sec: float) -> tuple[Any | None, list[str]]:
+    deadline = time.monotonic() + timeout_sec
+    read_errors: list[str] = []
+    while time.monotonic() < deadline:
+        try:
+            msg = master.recv_match(type="HEARTBEAT", blocking=True, timeout=min(0.5, deadline - time.monotonic()))
+        except Exception as exc:
+            if len(read_errors) < 3:
+                read_errors.append(str(exc))
+            continue
+        if msg is not None:
+            return msg, read_errors
+    return None, read_errors
 
 
 def _looks_like_network_mavlink_endpoint(value: str) -> bool:
@@ -550,6 +626,7 @@ def _print_real_preflight_console_summary(
     table.add_row("Status", status)
     table.add_row("Runtime", f"{runtime_backend}+{runtime_mode}")
     table.add_row("ROS distro", str(summary.get("ros_distro", dependencies.get("ros_distro", "unknown"))))
+    table.add_row("FCU bridge", str(summary.get("fcu_bridge_mode", "unknown")))
     table.add_row("Serial", f"{serial_mavlink.get('port', '')} @ {serial_mavlink.get('baud', '')}")
     table.add_row(
         "Serial state",
@@ -662,6 +739,7 @@ def _install_missing_real_preflight_dependencies(
     if not (Path("/opt/ros") / ros_distro / "setup.bash").exists():
         apt_packages = [*(template.format(distro=ros_distro) for template in ROS_DISTRO_BASE_PACKAGES), *apt_packages]
     if local_packages:
+        apt_packages.extend(LOCAL_ROS_SYSTEM_BUILD_PACKAGES)
         apt_packages.extend(template.format(distro=ros_distro) for template in LOCAL_ROS_BUILD_PACKAGE_TEMPLATES)
     apt_packages = list(dict.fromkeys(apt_packages))
     result: dict[str, Any] = {
@@ -681,6 +759,8 @@ def _install_missing_real_preflight_dependencies(
                 result=result,
             )
         if local_packages:
+            if "ydlidar_ros2_driver" in local_packages:
+                _install_ydlidar_sdk(console=console, result=result)
             if shutil.which("colcon") is None:
                 _run_install_command(
                     [
@@ -694,6 +774,8 @@ def _install_missing_real_preflight_dependencies(
                     result=result,
                 )
             source_commands = [*_python_venv_deactivation_commands(), *_ros_source_commands(ros_distro)]
+            if "ydlidar_ros2_driver" in local_packages:
+                source_commands.append(_ydlidar_sdk_prefix_command())
             build_command = " && ".join(
                 [
                     *source_commands,
@@ -717,6 +799,53 @@ def _install_missing_real_preflight_dependencies(
     else:
         console.print("[red]Dependency install failed:[/red] " + "; ".join(result["errors"]))
     return result
+
+
+def _install_ydlidar_sdk(*, console: Console, result: dict[str, Any]) -> None:
+    sdk_config = YDLIDAR_SDK_PREFIX / "lib/cmake/ydlidar_sdk/ydlidar_sdkConfig.cmake"
+    if sdk_config.exists():
+        return
+    if not (YDLIDAR_SDK_SOURCE / "CMakeLists.txt").exists():
+        raise RuntimeError(f"missing YDLidar-SDK source at {YDLIDAR_SDK_SOURCE}")
+    build_command = " && ".join(
+        [
+            "cmake -S "
+            f"{shlex.quote(str(YDLIDAR_SDK_SOURCE))} "
+            f"-B {shlex.quote(str(YDLIDAR_SDK_BUILD))} "
+            f"-DCMAKE_INSTALL_PREFIX={shlex.quote(str(YDLIDAR_SDK_PREFIX))}",
+            f"cmake --build {shlex.quote(str(YDLIDAR_SDK_BUILD))} -j {os.cpu_count() or 1}",
+            shlex.join(["cmake", "--install", str(YDLIDAR_SDK_BUILD)]),
+        ]
+    )
+    _run_install_command(["bash", "-lc", build_command], console=console, result=result)
+
+
+def _ydlidar_sdk_prefix_command() -> str:
+    prefix = shlex.quote(str(YDLIDAR_SDK_PREFIX.resolve()))
+    return f'export CMAKE_PREFIX_PATH="{prefix}:$CMAKE_PREFIX_PATH"'
+
+
+def _local_ros_overlay_commands() -> list[str]:
+    prefix = ROS_HUMBLE_CARTOGRAPHER_OVERLAY
+    sys_prefix = prefix.parents[2] / "usr" if len(prefix.parents) >= 3 else Path()
+    commands: list[str] = []
+    if (prefix / "share/ament_index").exists():
+        resolved = shlex.quote(str(prefix.resolve()))
+        commands.extend(
+            [
+                f'export AMENT_PREFIX_PATH="{resolved}:$AMENT_PREFIX_PATH"',
+                f'export CMAKE_PREFIX_PATH="{resolved}:$CMAKE_PREFIX_PATH"',
+                f'export PATH="{resolved}/bin:$PATH"',
+                f'export PYTHONPATH="{resolved}/local/lib/python3.10/dist-packages:{resolved}/lib/python3.10/site-packages:$PYTHONPATH"',
+                f'export LD_LIBRARY_PATH="{resolved}/lib:$LD_LIBRARY_PATH"',
+            ]
+        )
+    if sys_prefix.exists():
+        resolved_sys = shlex.quote(str(sys_prefix.resolve()))
+        commands.append(
+            f'export LD_LIBRARY_PATH="{resolved_sys}/lib:{resolved_sys}/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH"'
+        )
+    return commands
 
 
 def _python_venv_deactivation_commands() -> list[str]:

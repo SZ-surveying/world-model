@@ -10,19 +10,18 @@ from pathlib import Path
 from typing import Any
 
 import tomli_w
+from python_on_whales import DockerClient
+from python_on_whales.exceptions import DockerException
+from rich.console import Console
+
 from navlab.gazebo_sensor.airframe_disturbance import (
     AirframeDisturbanceProfile,
     apply_profile_to_iris_sdf,
     estimate_disturbance_metrics,
     profile_from_library,
 )
-from python_on_whales import DockerClient
-from python_on_whales.exceptions import DockerException
-from rich.console import Console
-
 from src import host
 from src.config import RunConfig, load_task_invocation_config
-from src.tasks.helpers.landing import apply_landing_gate
 from src.tasks.helpers.fcu import (
     P4_CONTROLLER_CONTAINER,
     _append_controller_blockers,
@@ -32,16 +31,14 @@ from src.tasks.helpers.fcu import (
     _write_controller_runtime_script,
     _write_p4_runtime_config,
 )
-from src.tasks.helpers.frame_contract import _append_p5_blockers, _run_frame_probe, _write_frame_probe_script, _write_p5_runtime_config
-from src.tasks.helpers.motion import _build_p7_doctor_summary
-from src.tasks.helpers.official_stack import (
-    _collect_official_dds_probe,
-    _collect_ros_graph,
-    _load_rosbag_metadata_counts,
-    _validate_official_rosbag_profile,
-    _write_json,
-    _write_text,
+from src.tasks.helpers.frame_contract import (
+    _append_p5_blockers,
+    _run_frame_probe,
+    _write_frame_probe_script,
+    _write_p5_runtime_config,
 )
+from src.tasks.helpers.landing import apply_landing_gate
+from src.tasks.helpers.motion import _build_p7_doctor_summary
 from src.tasks.helpers.navlab_models import (
     GAZEBO_SENSOR_CONTAINER,
     OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
@@ -55,6 +52,14 @@ from src.tasks.helpers.navlab_models import (
     _start_gazebo_sensor_container,
     _write_p1_bridge_override,
     _write_p1_vendor_profile,
+)
+from src.tasks.helpers.official_stack import (
+    _collect_official_dds_probe,
+    _collect_ros_graph,
+    _load_rosbag_metadata_counts,
+    _validate_official_rosbag_profile,
+    _write_json,
+    _write_text,
 )
 from src.tasks.helpers.sensors import (
     OFFICIAL_GAZEBO_IRIS_PARAMS,

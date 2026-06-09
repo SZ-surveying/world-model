@@ -25,6 +25,7 @@ def test_cli_exposes_only_build_doctor_and_run_wrapper() -> None:
     assert "--simulation-profile" in result.output
     assert "--live" in result.output
     assert "--live-profiles" in result.output
+    assert "--dry-run" in result.output
 
 
 def test_real_preflight_doctor_is_not_a_top_level_command() -> None:
@@ -100,6 +101,65 @@ def test_run_wrapper_dispatches_hover(monkeypatch) -> None:  # noqa: ANN001
     assert calls
     assert calls[0]["duration_sec"] == 2.5
     assert calls[0]["simulation_profile"] == "ideal"
+
+
+def test_run_wrapper_dry_run_skips_simulation_champion(monkeypatch) -> None:  # noqa: ANN001
+    from src.tasks.hover import HoverAcceptanceTask
+
+    def fake_run(self, **kwargs):  # noqa: ANN001
+        raise AssertionError("dry-run must not execute the hover champion")
+
+    monkeypatch.setattr(HoverAcceptanceTask, "run", fake_run)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["run", "hover", "--duration-sec", "2.5", "--simulation-profile", "ideal", "--dry-run"],
+    )
+
+    assert result.exit_code == 0
+    assert "Dry run" in result.output
+    assert "task=hover" in result.output
+    assert "champion" in result.output
+
+
+def test_run_wrapper_real_dry_run_stops_after_preflight_prepare_and_task_doctor(monkeypatch) -> None:  # noqa: ANN001
+    from src import cli
+    from src.tasks.doctor import DoctorTask
+
+    calls: list[str] = []
+
+    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+        calls.append("preflight")
+        return 0
+
+    def fake_prepare(**kwargs):  # noqa: ANN001
+        calls.append(f"prepare:{kwargs['task_name']}")
+        return SimpleNamespace(return_code=0)
+
+    def fake_task_doctor(**kwargs):  # noqa: ANN001
+        calls.append(f"task_doctor:{kwargs['task_name']}")
+        return 0
+
+    def fake_stop(result):  # noqa: ANN001
+        calls.append("stop_prepare")
+
+    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
+    monkeypatch.setattr(cli, "run_real_task_doctor", fake_task_doctor)
+    monkeypatch.setattr(cli, "stop_real_prepare_phase", fake_stop)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["run", "exploration", "--dry-run"],
+        env={"NAVLAB_RUNTIME_BACKEND": "process", "NAVLAB_RUNTIME_MODE": "real"},
+    )
+
+    assert result.exit_code == 0
+    assert "runtime=process+real" in result.output
+    assert "stopped after preflight, prepare, and task doctor" in result.output
+    assert calls == ["preflight", "prepare:exploration", "task_doctor:exploration", "stop_prepare"]
 
 
 def test_run_wrapper_blocks_when_real_preflight_fails(monkeypatch) -> None:  # noqa: ANN001

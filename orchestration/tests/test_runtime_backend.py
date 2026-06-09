@@ -570,9 +570,32 @@ def test_real_preflight_loads_serial_mavlink_task_config() -> None:
     assert "DISTANCE_SENSOR" in serial_mavlink.optional_messages
     dependencies = config.orchestration.real_preflight.dependencies
     assert dependencies.required_command_groups == (("mavlink-routerd", "mavlink-router"), ("ros2",))
-    assert "mavros" in dependencies.required_ros_packages
+    assert "mavros" not in dependencies.required_ros_packages
+    assert "mavros_msgs" not in dependencies.required_ros_packages
+    assert "cartographer_ros" in dependencies.required_ros_packages
     assert "navlab_slam_bringup" in dependencies.required_ros_packages
+    assert "ydlidar_ros2_driver" in dependencies.required_ros_packages
     assert dependencies.required_python_modules == ("navlab.companion.cli", "navlab.slam.cli")
+
+
+def test_real_preflight_effective_dependencies_use_fcu_bridge_mode() -> None:
+    from src.tasks.real_preflight import _effective_real_preflight_dependencies
+
+    config = RunConfig.from_config(
+        config_path="orchestration/config.real.toml",
+        task_name="real-preflight-doctor",
+        run_id="20260609_000000",
+    )
+
+    dependencies, blockers = _effective_real_preflight_dependencies(config)
+
+    assert blockers == ()
+    assert dependencies.required_command_groups == (("mavlink-routerd", "mavlink-router"), ("ros2",))
+    assert "cartographer_ros" in dependencies.required_ros_packages
+    assert "navlab_external_nav_bridge" in dependencies.required_ros_packages
+    assert "ydlidar_ros2_driver" in dependencies.required_ros_packages
+    assert "mavros" not in dependencies.required_ros_packages
+    assert "mavros_msgs" not in dependencies.required_ros_packages
 
 
 def test_real_preflight_dependency_probe_checks_host_real_hover_chain(monkeypatch: pytest.MonkeyPatch) -> None:

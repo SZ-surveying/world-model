@@ -6,7 +6,7 @@ real preflight doctor 只做真机起飞前最基础的非执行性检查：
 
 - 当前 wrapper 处在 `process + real` runtime 边界内。
 - 真机 FCU 串口存在、可打开，并能通过 MAVLink 看到真实 autopilot HEARTBEAT。
-- 真机运行所需的基础依赖存在，例如 `mavlink-router`、`ros2`、MAVROS、SLAM 和 companion Python 入口。
+- 真机运行所需的基础依赖存在，例如 `mavlink-router`、`ros2`、所选 `fcu_bridge_mode` 的 ROS packages、SLAM 和 companion Python 入口。
 
 其他真机 bringup 和任务 readiness 职责归入
 `docs/scenarios/indoor/todos/real_prepare_and_task_doctor_todo.md`。
@@ -34,7 +34,7 @@ real preflight doctor 只做真机起飞前最基础的非执行性检查：
 - [x] 在 `docs/README.md` 中加入 real preflight design / TODO 入口。
 - [x] 文档明确 preflight doctor 是 `run <task>` wrapper 内部 phase，不是单独 operator CLI。
 - [x] 文档明确 real preflight doctor 不 arm、不 takeoff、不 land、不发布 movement setpoint。
-- [x] 文档明确 real preflight doctor 不启动 `mavlink-router`、MAVROS、SLAM、lidar driver 或 companion。
+- [x] 文档明确 real preflight doctor 不启动 `mavlink-router`、FCU ROS bridge、SLAM、lidar driver 或 companion。
 - [x] 文档明确 real preflight doctor 只检查串口 MAVLink 和依赖存在性。
 
 验收：
@@ -72,7 +72,8 @@ real preflight doctor 只做真机起飞前最基础的非执行性检查：
 - [x] 配置 `[real_preflight.dependencies]`。
 - [x] 检查 `mavlink-routerd` 或 `mavlink-router` 可执行文件存在。
 - [x] 检查 `ros2` CLI 存在。
-- [x] 检查 MAVROS 相关 ROS package 存在，例如 `mavros`、`mavros_msgs`。
+- [x] 依赖检查按 `fcu_bridge_mode` 注册器展开；`navlab_mavlink` 不要求 MAVROS / `mavros_msgs`。
+- [x] `navlab_mavlink` 检查本地 ROS package，例如 `navlab_slam_bringup`、`navlab_external_nav_bridge`、`ydlidar_ros2_driver`。
 - [x] 检查 SLAM 相关 package 存在，例如 `navlab_slam_bringup`。
 - [x] 检查 companion Python 入口可 import，例如 `navlab.companion.cli`。
 - [x] 检查 SLAM Python 入口可 import，例如 `navlab.slam.cli`。
@@ -184,7 +185,7 @@ RFD 全部完成必须满足：
 - [x] 真实串口 MAVLink 可打开并收到 FCU HEARTBEAT。
 - [x] summary 记录 MAVLink system/component id、mode、armed 和 message_counts。
 - [x] doctor 不 arm、不 takeoff、不 land、不发布 movement setpoint。
-- [x] doctor 不启动 `mavlink-router`、MAVROS、SLAM、lidar driver 或 companion。
+- [x] doctor 不启动 `mavlink-router`、FCU ROS bridge、SLAM、lidar driver 或 companion。
 - [x] doctor summary 标记 `flight_claim=not_evaluated`。
 - [x] doctor summary 标记 `landing_claim=not_evaluated`。
 
@@ -220,3 +221,9 @@ RFD 全部完成必须满足：
 - 命令：`just navlab-doctor`
 - 结果：real preflight doctor 在 `process+real`、`ros_distro=humble` 下通过；`Deps cmd=2/2, ros=6/6, py=2/2`，`/dev/ttyUSB1` 可打开并收到 ArduPilot HEARTBEAT，summary 记录 system/component、mode、armed 和 message_counts。
 - blocker：无；后续真机 prepare、task doctor 和 flight wrapper 继续在 `real_prepare_and_task_doctor_todo.md` 跟踪。
+
+### 2026-06-09 RFD fcu_bridge_mode registry
+
+- 命令：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --project orchestration pytest orchestration/tests/test_real_prepare.py orchestration/tests/test_runtime_backend.py::test_real_preflight_loads_serial_mavlink_task_config orchestration/tests/test_runtime_backend.py::test_real_preflight_effective_dependencies_use_fcu_bridge_mode -q`
+- 结果：新增 `fcu_bridge_mode = "navlab_mavlink"` 注册器；preflight 依赖和 prepare/task doctor required topics 按 mode 展开，默认不要求 MAVROS 或 `/ap/v1/*`。
+- blocker：`navlab_mavlink` bridge 进程本身仍属于后续 real flight runner/companion bringup，不由 preflight doctor 启动。

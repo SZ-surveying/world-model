@@ -131,6 +131,7 @@ class RealPrepareServiceConfig:
 @dataclass(frozen=True, slots=True)
 class RealPrepareConfig:
     dry_run: bool
+    fcu_bridge_mode: str
     process_log_dir: str
     summary_artifact_dir: str
     ros_topic_probe_timeout_sec: float
@@ -145,6 +146,7 @@ class RealPrepareConfig:
     required_upstream_topics: tuple[str, ...]
     forbidden_simulation_topics: tuple[str, ...]
     mavlink_router: RealPrepareServiceConfig
+    navlab_mavlink_bridge: RealPrepareServiceConfig
     mavros: RealPrepareServiceConfig
     lidar: RealPrepareServiceConfig
     slam: RealPrepareServiceConfig
@@ -1090,7 +1092,10 @@ class OrchestrationConfig:
                 rangefinder_frame_id=_as_str(frame_contract.get("rangefinder_frame_id"), "rangefinder_down_frame"),
                 scan_topic=_as_str(frame_contract.get("scan_topic"), "/scan"),
                 imu_topic=_as_str(frame_contract.get("imu_topic"), "/imu"),
-                rangefinder_range_topic=_as_str(frame_contract.get("rangefinder_range_topic"), "/rangefinder/down/range"),
+                rangefinder_range_topic=_as_str(
+                    frame_contract.get("rangefinder_range_topic"),
+                    "/rangefinder/down/range",
+                ),
                 rangefinder_status_topic=_as_str(
                     frame_contract.get("rangefinder_status_topic"),
                     "/rangefinder/down/status",
@@ -1675,7 +1680,7 @@ class OrchestrationConfig:
                     real_preflight.get("valid_for_sec", task.get("valid_for_sec")),
                     300.0,
                 ),
-                ros_distro=_as_str(real_preflight.get("ros_distro"), "jazzy"),
+                ros_distro=_as_str(real_preflight.get("ros_distro"), "humble"),
                 serial_mavlink=SerialMavlinkConfig(
                     enabled=_as_bool(serial_mavlink.get("enabled"), False),
                     port=_as_str(serial_mavlink.get("port"), "/dev/ttyACM0"),
@@ -1724,14 +1729,7 @@ class OrchestrationConfig:
                     ),
                     required_ros_packages=_as_str_tuple(
                         real_preflight_dependencies.get("required_ros_packages"),
-                        (
-                            "mavros",
-                            "mavros_msgs",
-                            "navlab_slam_bringup",
-                            "navlab_cartographer_adapter",
-                            "navlab_external_nav_bridge",
-                            "navlab_slam_imu_bridge",
-                        ),
+                        (),
                     ),
                     required_python_modules=_as_str_tuple(
                         real_preflight_dependencies.get("required_python_modules"),
@@ -1745,6 +1743,7 @@ class OrchestrationConfig:
             ),
             real_prepare=RealPrepareConfig(
                 dry_run=_as_bool(real_prepare.get("dry_run"), False),
+                fcu_bridge_mode=_as_str(real_prepare.get("fcu_bridge_mode"), "navlab_mavlink"),
                 process_log_dir=_as_str(
                     real_prepare.get("process_log_dir"),
                     "artifacts/runtime_logs/real_prepare",
@@ -1769,6 +1768,7 @@ class OrchestrationConfig:
                         "external_nav_yaw_ready",
                         "yaw_ready",
                         "orientation_ready",
+                        "ready",
                     ),
                 ),
                 mavlink_router_serial_port=_as_str(
@@ -1779,19 +1779,17 @@ class OrchestrationConfig:
                     _as_float(real_prepare.get("mavlink_router_baud"), float(serial_baud)),
                 ),
                 mavlink_router_local_endpoint=router_endpoint,
-                fcu_bridge_state_topic=_as_str(real_prepare.get("fcu_bridge_state_topic"), "/mavros/state"),
+                fcu_bridge_state_topic=_as_str(real_prepare.get("fcu_bridge_state_topic"), "/navlab/mavlink/status"),
                 required_upstream_topics=_as_str_tuple(
                     real_prepare.get("required_upstream_topics"),
                     (
                         "/scan",
+                        "/imu/data",
+                        "/imu",
                         "/tf",
                         "/tf_static",
                         "/slam/odom",
                         "/navlab/slam/status",
-                        "/ap/v1/status",
-                        "/ap/v1/pose/filtered",
-                        "/ap/v1/twist/filtered",
-                        "/mavros/state",
                     ),
                 ),
                 forbidden_simulation_topics=_as_str_tuple(
@@ -1815,6 +1813,22 @@ class OrchestrationConfig:
                     default_health_topics=(),
                     default_shutdown_policy="stop_on_wrapper_exit",
                 ),
+                navlab_mavlink_bridge=_real_prepare_service_from_config(
+                    real_prepare,
+                    "navlab_mavlink_bridge",
+                    default_command=_navlab_mavlink_bridge_command(
+                        ros_distro=_as_str(real_preflight.get("ros_distro"), "humble"),
+                        mavlink_endpoint=_mavlink_router_tcp_endpoint(router_endpoint),
+                    ),
+                    default_health_topics=(
+                        "/navlab/mavlink/status",
+                        "/navlab/fcu/local_position_pose",
+                        "/mavlink_external_nav/status",
+                        "/imu/data",
+                        "/imu/status",
+                    ),
+                    default_shutdown_policy="stop_on_wrapper_exit",
+                ),
                 mavros=_real_prepare_service_from_config(
                     real_prepare,
                     "mavros",
@@ -1822,7 +1836,7 @@ class OrchestrationConfig:
                         "ros2",
                         "launch",
                         "mavros",
-                        "apm.launch.py",
+                        "apm.launch",
                         f"fcu_url:=udp://@{router_endpoint}",
                     ),
                     default_health_topics=("/mavros/state", "/ap/v1/status"),
@@ -1831,7 +1845,13 @@ class OrchestrationConfig:
                 lidar=_real_prepare_service_from_config(
                     real_prepare,
                     "lidar",
-                    default_command=("ros2", "launch", "ydlidar_ros2_driver", "ydlidar_launch.py"),
+                    default_command=(
+                        "bash",
+                        "-lc",
+                        "source /opt/ros/humble/setup.bash && source install/setup.bash && "
+                        "PYTHONPATH=.:$PYTHONPATH /usr/bin/python3 orchestration/src/tasks/lidar_bridge/ydlidar_x2_scan_bridge.py "
+                        "--port /dev/ttyUSB0 --baud 115200 --scan-topic /scan --frame-id laser_frame",
+                    ),
                     default_health_topics=("/scan",),
                     default_shutdown_policy="stop_on_wrapper_exit",
                 ),
@@ -1842,10 +1862,25 @@ class OrchestrationConfig:
                         "ros2",
                         "launch",
                         "navlab_slam_bringup",
-                        "cartographer.launch.py",
+                        "navlab_slam_bringup.launch.py",
                         "use_sim_time:=false",
+                        "launch_fake_odom:=false",
+                        "launch_cartographer_backend:=true",
+                        "publish_placeholder_odom:=false",
+                        "cartographer_configuration_basename:=navlab_cartographer_2d.lua",
+                        "scan_topic:=/scan",
+                        "imu_source_topic:=/imu/data",
+                        "imu_topic:=/imu",
+                        "cartographer_odometry_topic:=/odometry",
+                        "odom_topic:=/slam/odom",
+                        "external_nav_input_odom_topic:=/slam/odom",
+                        "require_imu_for_external_nav:=false",
+                        "require_height_for_external_nav:=false",
+                        "laser_frame:=laser_frame",
+                        "imu_frame:=imu_link",
+                        "base_frame:=base_link",
                     ),
-                    default_health_topics=("/slam/odom", "/navlab/slam/status"),
+                    default_health_topics=("/imu", "/slam/odom", "/navlab/slam/status", "/external_nav/status"),
                     default_shutdown_policy="stop_on_wrapper_exit",
                 ),
                 rangefinder_bridge=_real_prepare_service_from_config(
@@ -2297,7 +2332,9 @@ def _real_prepare_service_from_config(
     raw_env = service.get("env", {})
     if raw_env is None:
         raw_env = {}
-    if not isinstance(raw_env, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in raw_env.items()):
+    if not isinstance(raw_env, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in raw_env.items()
+    ):
         raise ValueError(f"Invalid [real_prepare.{name}.env] section: expected string table")
     return RealPrepareServiceConfig(
         enabled=_as_bool(service.get("enabled"), default_enabled),
@@ -2310,6 +2347,33 @@ def _real_prepare_service_from_config(
         shutdown_policy=_as_str(service.get("shutdown_policy"), default_shutdown_policy),
         direct_serial_access_allowed=_as_bool(service.get("direct_serial_access_allowed"), False),
     )
+
+
+def _navlab_mavlink_bridge_command(*, ros_distro: str, mavlink_endpoint: str) -> tuple[str, ...]:
+    return (
+        "uv",
+        "run",
+        "--project",
+        "orchestration",
+        "python",
+        "orchestration/src/tasks/fcu_bridge/navlab_mavlink_bridge.py",
+        "--ros-distro",
+        ros_distro,
+        "--mavlink-endpoint",
+        mavlink_endpoint,
+    )
+
+
+def _mavlink_router_tcp_endpoint(router_endpoint: str) -> str:
+    if router_endpoint.startswith("tcp:"):
+        return router_endpoint
+    endpoint = router_endpoint
+    for prefix in ("udp://@", "udp:", "udpin:", "udpout:"):
+        if endpoint.startswith(prefix):
+            endpoint = endpoint[len(prefix) :]
+            break
+    host, _, _port = endpoint.partition(":")
+    return f"tcp:{host or '127.0.0.1'}:5760"
 
 
 def _section(data: dict[str, Any], *keys: str) -> dict[str, Any]:

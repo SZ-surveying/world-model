@@ -139,16 +139,115 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 
 ## RTD.5 Lidar、rangefinder 和 SLAM bringup
 
+### RTD.5A 当前最高优先级：按 simulation 链路打通 real SLAM yaw
+
+目标：不要为了让 prepare 过而伪造 yaw；real prepare 必须完整模仿当前
+simulation 中已跑通的 SLAM contract，而不是只抄 `/scan` 这一段。simulation
+SLAM 是一个整体输入链路：`scan + IMU + odometry/TF + Cartographer +
+ExternalNav`。real 只替换输入来源为真实硬件，输出 contract 保持一致。
+
+simulation 完整对照：
+
+| Contract | simulation 来源 | simulation topic / 参数 | real 对应来源 |
+|---|---|---|---|
+| 2D lidar scan | Gazebo `/scan_ideal` 经过 X2 virtual serial 和 `ydlidar_ros2_driver` | `/scan` | `/dev/ttyUSB0` 真实 YDLidar，经真实 driver 发布 `/scan` |
+| FCU / IMU evidence | simulation FCU / official Gazebo IMU bridge / NavLab IMU bridge | `imu_source_topic=/navlab/fcu_imu/data` 或 P3 helper 的 `/imu`，统一输出 `/imu` | `/dev/ttyUSB1` MAVLink `HIGHRES_IMU` / `SCALED_IMU` / `RAW_IMU` 发布 `/imu/data`，再归一化到 `/imu` |
+| Cartographer backend | `launch_cartographer_backend=true`，不允许 placeholder | `scan_topic=/scan`、`imu_topic=/imu`、`cartographer_odometry_topic=/odometry` | 同样启动 `cartographer_ros`，消费真实 `/scan` 和真实 `/imu` |
+| SLAM odom contract | adapter 输出 canonical odom | simulation runtime 默认 `/odom`，orchestration P3/hover 验收使用 `/slam/odom` | real prepare 固定 `/slam/odom` |
+| ExternalNav yaw gate | external nav bridge 消费 SLAM odom | `external_nav_input_odom_topic=/slam/odom`，`/external_nav/status.ready=true` | 同样消费 `/slam/odom`，以 `/external_nav/status.ready=true` 作为 yaw evidence |
+
+必须一起参考这五个 contract；缺任一项都不能把 real prepare 判定为 yaw ready。
+
+real prepare 对齐后的目标链路：
+
+```text
+/dev/ttyUSB0 real lidar
+  -> real lidar driver /scan
+/dev/ttyUSB1 FCU MAVLink IMU
+  -> navlab_mavlink bridge /imu/data
+  -> navlab_slam_imu_bridge /imu
+/scan + /imu + Cartographer odometry/TF contract
+  -> cartographer_ros backend
+  -> navlab_cartographer_adapter
+  -> /slam/odom + /navlab/slam/status ready=true
+  -> navlab_external_nav_bridge
+  -> /external_nav/status ready=true
+  -> prepare yaw gate passes
+```
+
+任务：
+
+- [x] 固化 real lidar 参数：`/dev/ttyUSB0 @ 115200`，发布真实
+  `sensor_msgs/msg/LaserScan` 到 `/scan`，不能使用 `/scan_ideal`、
+  `/sim/x2/status` 或 X2 virtual serial。
+- [x] 修复或替换当前真机 lidar bringup，使 `/scan` 不只是 topic 存在，
+  而是能在 prepare 窗口内收到真实 LaserScan 样本。
+- [x] 固化 real IMU 输入：`/dev/ttyUSB1` MAVLink 中的 `HIGHRES_IMU`、
+  `SCALED_IMU` 或 `RAW_IMU` 必须通过 NavLab bridge 发布真实 `/imu/data`，
+  再由 `navlab_slam_imu_bridge` 归一化到 `/imu`。
+- [x] real prepare 禁止使用 synthetic IMU 作为 SLAM yaw gate evidence；
+  如果 MAVLink IMU 缺失，应 blocked 为 `real_imu_no_data` 或等价 blocker，
+  不能 silent fallback。
+- [x] prepare readiness 必须检查 `/imu/data` 和 `/imu` 的 presence、type、
+  freshness、frame，并在 `/navlab/slam/status` 中记录 `imu.present=true`、
+  `imu.fresh=true`、`imu.count>0`。
+- [x] prepare readiness 必须检查 Cartographer backend 真正运行并产生 TF /
+  odometry evidence；`/slam/odom` 必须来自 `navlab_cartographer_adapter`
+  的真实 backend 输出，而不是 placeholder/fake。
+- [x] real prepare 启动 SLAM 时显式设置
+  `launch_cartographer_backend:=true`、`publish_placeholder_odom:=false`、
+  `scan_topic:=/scan`、`imu_source_topic:=/imu/data`、`imu_topic:=/imu`、
+  `cartographer_odometry_topic:=/odometry`、`odom_topic:=/slam/odom`、
+  `external_nav_input_odom_topic:=/slam/odom`。
+- [x] preflight 依赖检查包含 `cartographer_ros`；缺失时 doctor 先 warning /
+  可安装，不能静默降级成 placeholder odom。
+- [x] prepare readiness 不只看 topic list；必须读取 `/navlab/slam/status`
+  JSON 并确认 `ready=true`，同时记录 scan/imu/tf/odom 计数和 state。
+- [x] prepare readiness 必须读取 `/external_nav/status` JSON 并确认
+  `ready=true`；`ready=true` 是当前 `external_nav_yaw_ready` 的 accepted
+  evidence。
+- [x] `/external_nav/status` 的 `odom.input_topic` 必须等于 `/slam/odom`，
+  且 `odom.frame_ok=true`、`odom.rate_ok=true`。
+- [x] prepare fail 时 summary 必须区分：
+  `real_lidar_no_scan_data`、`real_imu_no_data`、`cartographer_ros_missing`、
+  `slam_status_not_ready`、`external_nav_status_not_ready`、
+  `external_nav_yaw_not_ready`。
+- [x] 禁止为了通过 `run hover --dry-run` 而启用
+  `publish_placeholder_odom`、`launch_fake_odom` 或直接把 FCU pose TF 当作
+  SLAM yaw gate。
+- [x] `run hover --dry-run` 在 real mode 下通过 prepare / task doctor 后，
+  summary 要证明 companion 未启动、无人机未 arm/takeoff。
+
+验收：
+
+- [x] `just navlab-doctor` 能提示/安装 `cartographer_ros` 等缺失依赖，不把
+  Cartographer 缺失误报成 yaw 问题。
+- [x] `NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real uv run --project orchestration python orchestration/main.py run hover --dry-run`
+  能启动真实 `/dev/ttyUSB0` lidar、SLAM 和 ExternalNav，并通过 prepare yaw gate。
+- [x] 最新 prepare summary 中：
+  `/scan` 有真实样本、`/imu/data` 和 `/imu` 有真实样本、
+  `/navlab/slam/status.ready=true`、`/external_nav/status.ready=true`、
+  `accepted_topic=/external_nav/status`。
+- [x] latest runtime logs 中没有 `/scan_ideal`、`/sim/x2/status`、Gazebo、
+  SITL、placeholder odom 或 fake odom 作为 real evidence。
+- [x] prepare 通过时仍不启动 companion、不 arm、不 takeoff、不 land。
+
 任务：
 
 - [x] prepare 启动真实 lidar driver。
 - [x] prepare 检查 `/scan` 存在、类型正确、数据新鲜。
-- [ ] prepare 检查 `/scan` frame 符合配置。
+- [x] prepare 检查 `/scan` frame 符合配置。
+- [x] 文档明确 2D lidar `/scan` 是水平 SLAM/yaw evidence，不是高度/rangefinder evidence。
 - [x] prepare 启动 SLAM runtime。
-- [ ] SLAM runtime 消费真实 `/scan` 和真实 IMU/odom evidence。
+- [x] SLAM runtime 消费真实 `/scan` 和真实 IMU/odom evidence。
 - [x] prepare 检查 `/slam/odom` 存在、类型正确、数据新鲜。
 - [x] prepare 检查 `/navlab/slam/status` ready。
+- [x] 文档明确 real Stage 2 需要三链路：FCU bridge、2D lidar/SLAM/yaw、height/rangefinder。
+- [x] 文档记录 2026-06-10 真机举高测试：FCU `DISTANCE_SENSOR` 会随高度变化，作为 real height bridge 首选输入。
 - [ ] prepare 检查 optional `/rangefinder/down/range`、`/rangefinder/down/status` 或 FCU telemetry evidence。
+- [ ] 若存在 ROS rangefinder bridge，必须发布 `/rangefinder/down/range` 和 `/rangefinder/down/status`，与 simulation topic contract 一致。
+- [ ] 无 ROS rangefinder bridge 时，prepare/task doctor summary 必须记录 FCU MAVLink `DISTANCE_SENSOR` 有效性；`RANGEFINDER`、baro 或 EKF height 只能作为辅助 evidence。
+- [ ] real rangefinder bridge 优先从 FCU `DISTANCE_SENSOR` 生成 `/rangefinder/down/range` 和 `/rangefinder/down/status`，并按 orientation/min/max/current 过滤。
 - [x] prepare 禁止 `/scan_ideal`、`/sim/x2/status`、Gazebo rangefinder 作为 real evidence。
 
 验收：
@@ -157,7 +256,10 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 - [x] `/slam/odom` 缺失、类型错误或 stale 时 prepare blocked。
 - [x] SLAM 未 ready 时 prepare blocked。
 - [ ] required rangefinder evidence 缺失时 hover / landing readiness blocked。
-- [ ] 真实 lidar 不能被 X2 virtual serial 替代。
+- [ ] 2D `/scan` 存在但 rangefinder / height evidence 缺失时，hover / landing readiness 仍 blocked。
+- [ ] ROS rangefinder bridge 只发布其他 topic 名时 blocked 或明确 migration blocker。
+- [ ] `DISTANCE_SENSOR.current_distance` 为 0、低于 `min_distance`、高于 `max_distance` 或 orientation 非下视时，hover / landing readiness blocked。
+- [x] 真实 lidar 不能被 X2 virtual serial 替代。
 
 ## RTD.6 Prepare summary、blocker 和进程清理
 
@@ -167,7 +269,7 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 - [x] prepare summary 记录 `started_services`。
 - [x] prepare summary 记录每个 service 的 command、pid、logs、health topic。
 - [x] prepare summary 记录 MAVLink router serial provenance。
-- [ ] prepare summary 记录 FCU、scan、SLAM、rangefinder readiness。
+- [ ] prepare summary 分别记录 FCU bridge、2D lidar/SLAM/yaw、height/rangefinder readiness。
 - [x] prepare summary 使用稳定 blocker 字符串。
 - [x] prepare fail 时关闭已启动但不再需要的辅助进程。
 - [x] wrapper exit 时按 shutdown policy 清理 process。
@@ -190,7 +292,7 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 - [x] helper 检查 MAVROS state 或等价 FCU bridge state。
 - [ ] helper 检查 `/slam/odom` presence、type、freshness、frame。
 - [x] helper 检查 `/navlab/slam/status` ready。
-- [ ] helper 检查 rangefinder evidence。
+- [ ] helper 检查 rangefinder / height evidence；若 ROS bridge 存在，topic 必须是 `/rangefinder/down/range` 和 `/rangefinder/down/status`。
 - [x] helper 检查 yaw source evidence，室内 SLAM 真机任务只接受 `external_nav_yaw_ready=true`。
 - [x] helper 在无 GPS / 室内 real mode 下不把“未校准磁罗盘”单独作为 blocker，但必须要求 ExternalNav/SLAM yaw ready。
 - [x] helper 记录 yaw source provenance，包括 ExternalNav yaw readiness topic 和 ready field。

@@ -94,6 +94,18 @@ def build_pose_stamped_fields(pose: PlanarPoseState) -> dict[str, float]:
     }
 
 
+def sample_from_attitude(msg: object) -> MavlinkImuSample:
+    return MavlinkImuSample(
+        source_message="ATTITUDE",
+        linear_acceleration_x=0.0,
+        linear_acceleration_y=0.0,
+        linear_acceleration_z=GRAVITY_MPS2,
+        angular_velocity_x=float(getattr(msg, "rollspeed", 0.0)),
+        angular_velocity_y=float(getattr(msg, "pitchspeed", 0.0)),
+        angular_velocity_z=float(getattr(msg, "yawspeed", 0.0)),
+    )
+
+
 def build_replay_transform_fields(
     *,
     parent_frame_id: str,
@@ -264,6 +276,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sensor-base-frame-id", default="base_link")
     parser.add_argument("--replay-base-frame-id", default="")
     parser.add_argument("--replay-base-parent-frame-id", default="")
+    parser.add_argument("--disable-replay-static-tf", action="store_true")
     parser.add_argument("--laser-frame-id", default="laser_frame")
     parser.add_argument("--replay-imu-frame-id", default="")
     parser.add_argument("--laser-x-m", type=float, default=0.05)
@@ -353,7 +366,7 @@ def run(argv: Sequence[str] | None = None) -> int:
 
     class MavlinkGazeboPoseMirror(Node):
         def __init__(self) -> None:
-            super().__init__("mavlink_gazebo_pose_mirror")
+            super().__init__("navlab_mavlink_pose_mirror")
             self._connection = None
             self._pose_pub = self.create_publisher(PoseStamped, args.pose_topic, 10)
             self._tf_pub = self.create_publisher(TFMessage, "/tf", 10)
@@ -416,19 +429,24 @@ def run(argv: Sequence[str] | None = None) -> int:
                     self._handle_constraint_list,
                     10,
                 )
-            self._static_transform_specs = default_replay_static_transforms(
-                root_frame_id=args.pose_frame_id,
-                map_frame_id=args.map_frame_id,
-                odom_frame_id=args.odom_frame_id,
-                sensor_base_frame_id=args.sensor_base_frame_id,
-                laser_frame_id=args.laser_frame_id,
-                imu_frame_id=args.replay_imu_frame_id or args.imu_frame_id,
-                laser_x_m=args.laser_x_m,
-                laser_y_m=args.laser_y_m,
-                laser_z_m=args.laser_z_m,
-                laser_yaw_rad=args.laser_yaw_rad,
+            self._static_transform_specs = (
+                ()
+                if args.disable_replay_static_tf
+                else default_replay_static_transforms(
+                    root_frame_id=args.pose_frame_id,
+                    map_frame_id=args.map_frame_id,
+                    odom_frame_id=args.odom_frame_id,
+                    sensor_base_frame_id=args.sensor_base_frame_id,
+                    laser_frame_id=args.laser_frame_id,
+                    imu_frame_id=args.replay_imu_frame_id or args.imu_frame_id,
+                    laser_x_m=args.laser_x_m,
+                    laser_y_m=args.laser_y_m,
+                    laser_z_m=args.laser_z_m,
+                    laser_yaw_rad=args.laser_yaw_rad,
+                )
             )
-            self._publish_static_replay_tf()
+            if self._static_transform_specs:
+                self._publish_static_replay_tf()
             self.create_timer(1.0 / args.rate_hz, self._tick)
             self.create_timer(2.0, self._publish_static_replay_tf)
             replay_base_parent = args.replay_base_parent_frame_id or args.pose_frame_id
@@ -533,6 +551,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                     self._mode_number = int(msg.custom_mode)
                 elif msg_type == "ATTITUDE":
                     self._last_yaw_rad = float(msg.yaw)
+                    self._handle_imu_sample(sample_from_attitude(msg))
                 elif msg_type == "LOCAL_POSITION_NED":
                     self._last_sample = NedPoseSample(
                         x_north_m=float(msg.x),
@@ -615,6 +634,8 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._tf_pub.publish(TFMessage(transforms=[transform]))
 
         def _publish_static_replay_tf(self) -> None:
+            if not self._static_transform_specs:
+                return
             stamp = self.get_clock().now().to_msg()
             transforms = [
                 self._transform_from_fields(
@@ -793,6 +814,10 @@ def run(argv: Sequence[str] | None = None) -> int:
     node = MavlinkGazeboPoseMirror()
     try:
         rclpy.spin(node)
+    except Exception as exc:
+        if rclpy.ok():
+            raise
+        node.get_logger().info(f"pose observer shutting down: {exc}")
     finally:
         node.destroy_node()
         if rclpy.ok():

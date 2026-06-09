@@ -11,12 +11,12 @@ required_command_groups = [
     ["ros2"],
 ]
 required_ros_packages = [
-    "mavros",
-    "mavros_msgs",
+    "cartographer_ros",
     "navlab_slam_bringup",
     "navlab_cartographer_adapter",
     "navlab_external_nav_bridge",
     "navlab_slam_imu_bridge",
+    "ydlidar_ros2_driver",
 ]
 required_python_modules = [
     "navlab.companion.cli",

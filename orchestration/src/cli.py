@@ -96,6 +96,10 @@ def run_task_command(
         str | None,
         typer.Option("--live-profiles", help="Comma-separated disturbance profiles for live replay"),
     ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Show what the wrapper would run without starting the task champion."),
+    ] = False,
 ) -> None:
     normalized = task_name.strip()
     if normalized not in RUN_TASKS:
@@ -104,6 +108,7 @@ def run_task_command(
         raise typer.Exit(2)
 
     backend_mode = _runtime_backend_mode_from_env()
+
     if backend_mode == ("process", "real"):
         doctor = cast(DoctorTask, TaskRegistry.create("doctor"))
         rc = doctor.run(config_path=orchestration_config, task_config_path=None, console=console)
@@ -125,6 +130,19 @@ def run_task_command(
             )
             if rc != 0:
                 raise typer.Exit(rc)
+            if dry_run:
+                _print_run_dry_run(
+                    task_name=normalized,
+                    backend_mode=backend_mode,
+                    duration_sec=duration_sec,
+                    orchestration_config=orchestration_config,
+                    task_config=task_config,
+                    simulation_profile=simulation_profile,
+                    live=live,
+                    live_profiles=live_profiles,
+                )
+                console.print("[yellow]Real dry run stopped after preflight, prepare, and task doctor.[/yellow]")
+                raise typer.Exit(0)
             console.print(
                 "[red]Real task run is blocked after task doctor:[/red] "
                 "companion startup / arm / takeoff flight wrapper is not implemented yet."
@@ -132,6 +150,19 @@ def run_task_command(
             raise typer.Exit(20)
         finally:
             stop_real_prepare_phase(prepare_result)
+
+    if dry_run:
+        _print_run_dry_run(
+            task_name=normalized,
+            backend_mode=backend_mode,
+            duration_sec=duration_sec,
+            orchestration_config=orchestration_config,
+            task_config=task_config,
+            simulation_profile=simulation_profile,
+            live=live,
+            live_profiles=live_profiles,
+        )
+        raise typer.Exit(0)
     if backend_mode != ("docker", "simulation"):
         console.print("[red]Unsupported runtime run combination:[/red] " f"{backend_mode[0]}+{backend_mode[1]}")
         raise typer.Exit(20)
@@ -169,6 +200,34 @@ def run_task_command(
             console=console,
         )
     )
+
+
+def _print_run_dry_run(
+    *,
+    task_name: str,
+    backend_mode: tuple[str, str],
+    duration_sec: float | None,
+    orchestration_config: str | None,
+    task_config: str | None,
+    simulation_profile: str | None,
+    live: bool | None,
+    live_profiles: str | None,
+) -> None:
+    console.print("[yellow]Dry run:[/yellow] wrapper will not execute the task champion.")
+    console.print(f"task={task_name}")
+    console.print(f"runtime={backend_mode[0]}+{backend_mode[1]}")
+    if duration_sec is not None:
+        console.print(f"duration_sec={duration_sec}")
+    if orchestration_config is not None:
+        console.print(f"orchestration_config={orchestration_config}")
+    if task_config is not None:
+        console.print(f"task_config={task_config}")
+    if simulation_profile is not None:
+        console.print(f"simulation_profile={simulation_profile}")
+    if live is not None:
+        console.print(f"live={live}")
+    if live_profiles is not None:
+        console.print(f"live_profiles={live_profiles}")
 
 
 def _runtime_backend_mode_from_env() -> tuple[str, str]:

@@ -11,16 +11,46 @@ from src.tasks.real_prepare import RealTopicSnapshot, TopicEvidence
 def _complete_hover_snapshot() -> RealTopicSnapshot:
     return RealTopicSnapshot(
         topics={
-            "/scan": TopicEvidence(type_name="sensor_msgs/msg/LaserScan"),
+            "/scan": TopicEvidence(
+                type_name="sensor_msgs/msg/LaserScan",
+                frame_id="laser_frame",
+                metadata={"sample_seen": True, "range_count": 360},
+            ),
+            "/imu/data": TopicEvidence(
+                type_name="sensor_msgs/msg/Imu",
+                frame_id="imu_link",
+                metadata={"sample_seen": True},
+            ),
+            "/imu": TopicEvidence(
+                type_name="sensor_msgs/msg/Imu",
+                frame_id="imu_link",
+                metadata={"sample_seen": True},
+            ),
+            "/imu/status": TopicEvidence(type_name="std_msgs/msg/String", metadata={"ready": True}),
             "/tf": TopicEvidence(type_name="tf2_msgs/msg/TFMessage"),
             "/tf_static": TopicEvidence(type_name="tf2_msgs/msg/TFMessage"),
             "/slam/odom": TopicEvidence(type_name="nav_msgs/msg/Odometry"),
-            "/navlab/slam/status": TopicEvidence(metadata={"external_nav_yaw_ready": True}),
-            "/external_nav/status": TopicEvidence(metadata={"external_nav_yaw_ready": True}),
-            "/ap/v1/status": TopicEvidence(),
-            "/ap/v1/pose/filtered": TopicEvidence(),
-            "/ap/v1/twist/filtered": TopicEvidence(),
-            "/mavros/state": TopicEvidence(),
+            "/navlab/slam/status": TopicEvidence(
+                type_name="std_msgs/msg/String",
+                metadata={
+                    "ready": True,
+                    "external_nav_yaw_ready": True,
+                    "scan": {"fresh": True, "count": 10},
+                    "imu": {"fresh": True, "count": 10},
+                    "tf": {"fresh": True, "count": 10},
+                },
+            ),
+            "/navlab/mavlink/status": TopicEvidence(type_name="std_msgs/msg/String"),
+            "/navlab/fcu/local_position_pose": TopicEvidence(),
+            "/mavlink_external_nav/status": TopicEvidence(type_name="std_msgs/msg/String"),
+            "/external_nav/status": TopicEvidence(
+                type_name="std_msgs/msg/String",
+                metadata={
+                    "ready": True,
+                    "external_nav_yaw_ready": True,
+                    "odom": {"input_topic": "/slam/odom", "frame_ok": True, "rate_ok": True},
+                },
+            ),
         },
         collected_at="2026-06-09T00:00:00Z",
     )
@@ -33,14 +63,77 @@ def test_real_prepare_config_parser_loads_router_serial_and_services() -> None:
     assert prepare.mavlink_router_serial_port == "/dev/ttyUSB1"
     assert prepare.mavlink_router_baud == 115200
     assert prepare.mavlink_router_local_endpoint == "127.0.0.1:14550"
+    assert prepare.fcu_bridge_mode == "navlab_mavlink"
     assert prepare.mavlink_router.command[-1] == "/dev/ttyUSB1:115200"
+    assert prepare.navlab_mavlink_bridge.enabled is True
+    assert "orchestration/src/tasks/fcu_bridge/navlab_mavlink_bridge.py" in prepare.navlab_mavlink_bridge.command
+    assert "/navlab/mavlink/status" in prepare.navlab_mavlink_bridge.health_topics
+    assert "/imu/data" in prepare.navlab_mavlink_bridge.health_topics
+    assert "/imu/status" in prepare.navlab_mavlink_bridge.health_topics
+    assert prepare.mavros.enabled is False
+    assert prepare.mavros.command[3] == "apm.launch"
     assert prepare.mavros.command[-1] == "fcu_url:=udp://@127.0.0.1:14550"
     assert prepare.lidar.health_topics == ("/scan",)
-    assert prepare.slam.health_topics == ("/slam/odom", "/navlab/slam/status")
+    assert "launch_cartographer_backend:=true" in prepare.slam.command
+    assert "publish_placeholder_odom:=false" in prepare.slam.command
+    assert "cartographer_odometry_topic:=/odometry" in prepare.slam.command
+    assert "scan_topic:=/scan" in prepare.slam.command
+    assert "imu_topic:=/imu" in prepare.slam.command
+    assert "odom_topic:=/slam/odom" in prepare.slam.command
+    assert "external_nav_input_odom_topic:=/slam/odom" in prepare.slam.command
+    assert "require_imu_for_external_nav:=false" in prepare.slam.command
+    assert prepare.slam.health_topics == ("/imu", "/slam/odom", "/navlab/slam/status", "/external_nav/status")
     assert prepare.rangefinder_bridge.enabled is False
     assert prepare.external_nav_yaw_required is True
     assert prepare.external_nav_yaw_status_topics == ("/external_nav/status", "/navlab/slam/status")
     assert "external_nav_yaw_ready" in prepare.external_nav_yaw_ready_fields
+    assert "ready" in prepare.external_nav_yaw_ready_fields
+    assert "/ap/v1/status" not in prepare.required_upstream_topics
+    assert "/mavros/state" not in prepare.required_upstream_topics
+
+
+def test_real_prepare_fcu_bridge_registry_selects_navlab_mavlink_topics() -> None:
+    from src.tasks.fcu_bridge import get_fcu_bridge_mode
+
+    config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
+    mode = get_fcu_bridge_mode(config.orchestration.real_prepare.fcu_bridge_mode)
+    services = real_prepare._prepare_services(config)
+    required_topics = real_prepare._required_upstream_topics("hover", config)
+
+    assert mode.name == "navlab_mavlink"
+    assert set(services) == {"mavlink_router", "navlab_mavlink_bridge", "lidar", "slam"}
+    assert "/navlab/mavlink/status" in required_topics
+    assert "/navlab/fcu/local_position_pose" in required_topics
+    assert "/mavlink_external_nav/status" in required_topics
+    assert "/imu/data" in required_topics
+    assert "/imu" in required_topics
+    assert "/external_nav/status" in required_topics
+    assert "/mavros/state" not in required_topics
+    assert not any(topic.startswith("/ap/v1/") for topic in required_topics)
+
+
+def test_real_prepare_ros_services_source_local_install(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
+    service = config.orchestration.real_prepare.slam
+    existing = {Path("/opt/ros/humble/setup.bash"), Path("install/setup.bash")}
+
+    monkeypatch.setattr(real_prepare.Path, "exists", lambda self: self in existing)
+
+    spec = real_prepare._service_spec("slam", service, config=config, log_dir=tmp_path)
+
+    assert spec.command[:2] == ("bash", "-lc")
+    assert "source /opt/ros/humble/setup.bash" in spec.command[2]
+    assert "source install/setup.bash" in spec.command[2]
+    assert "ros2 launch navlab_slam_bringup" in spec.command[2]
+
+
+def test_real_prepare_keeps_non_ros_service_command(tmp_path: Path) -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
+    service = config.orchestration.real_prepare.mavlink_router
+
+    spec = real_prepare._service_spec("mavlink_router", service, config=config, log_dir=tmp_path)
+
+    assert spec.command == service.command
 
 
 def test_real_prepare_serial_provenance_requires_router_command_serial() -> None:
@@ -72,7 +165,9 @@ direct_serial_access_allowed = false
         task_config_path=task_config,
     )
 
-    blockers = real_prepare._validate_prepare_services(config, real_prepare._prepare_services(config))
+    services = real_prepare._prepare_services(config)
+    services["mavros"] = config.orchestration.real_prepare.mavros
+    blockers = real_prepare._validate_prepare_services(config, services)
 
     assert "prepare_service_direct_fcu_serial_forbidden:mavros:/dev/ttyUSB1" in blockers
 
@@ -113,7 +208,7 @@ def test_real_prepare_summary_dry_run_starts_only_auxiliary_services(
     monkeypatch.setattr(
         real_prepare,
         "collect_ros_topic_snapshot",
-        lambda *, timeout_sec: _complete_hover_snapshot(),
+        lambda **_kwargs: _complete_hover_snapshot(),
     )
     handles = []
 
@@ -136,7 +231,9 @@ def test_real_prepare_summary_dry_run_starts_only_auxiliary_services(
 def test_task_doctor_helper_blocks_missing_stale_wrong_type_and_forbidden_topics() -> None:
     config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="hover")
 
-    missing_scan = RealTopicSnapshot(topics={k: v for k, v in _complete_hover_snapshot().topics.items() if k != "/scan"})
+    missing_scan = RealTopicSnapshot(
+        topics={k: v for k, v in _complete_hover_snapshot().topics.items() if k != "/scan"}
+    )
     result = real_prepare.check_real_task_upstream_topics("hover", config, topic_snapshot=missing_scan)
     assert "required_topic_missing:/scan" in result["blockers"]
 
@@ -184,6 +281,13 @@ def test_task_doctor_requires_external_nav_yaw_ready() -> None:
 
     assert "external_nav_yaw_not_ready" in result["blockers"]
     assert result["yaw_source"]["accepted_source"] == ""
+
+
+def test_external_nav_yaw_metadata_parses_std_msgs_json_payload() -> None:
+    payload = """data: '{"state":"healthy","ready":true,"odom":{"rate_ok":true}}'\n---\n"""
+
+    assert real_prepare._std_msgs_string_payload(payload) == '{"state":"healthy","ready":true,"odom":{"rate_ok":true}}'
+    assert real_prepare._metadata_bool({"ready": True}.get("ready")) is True
 
 
 def test_task_doctor_external_nav_yaw_ready_ignores_uncalibrated_compass() -> None:

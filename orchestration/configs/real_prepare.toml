@@ -1,26 +1,25 @@
 [real_prepare]
 dry_run = false
+fcu_bridge_mode = "navlab_mavlink"
 process_log_dir = "artifacts/runtime_logs/real_prepare"
 summary_artifact_dir = "artifacts/ros/navlab_real_prepare"
 ros_topic_probe_timeout_sec = 5.0
 topic_freshness_window_sec = 2.0
 external_nav_yaw_required = true
 external_nav_yaw_status_topics = ["/external_nav/status", "/navlab/slam/status"]
-external_nav_yaw_ready_fields = ["external_nav_yaw_ready", "yaw_ready", "orientation_ready"]
+external_nav_yaw_ready_fields = ["external_nav_yaw_ready", "yaw_ready", "orientation_ready", "ready"]
 mavlink_router_serial_port = "/dev/ttyUSB1"
 mavlink_router_baud = 115200
 mavlink_router_local_endpoint = "127.0.0.1:14550"
-fcu_bridge_state_topic = "/mavros/state"
+fcu_bridge_state_topic = "/navlab/mavlink/status"
 required_upstream_topics = [
     "/scan",
+    "/imu/data",
+    "/imu",
     "/tf",
     "/tf_static",
     "/slam/odom",
     "/navlab/slam/status",
-    "/ap/v1/status",
-    "/ap/v1/pose/filtered",
-    "/ap/v1/twist/filtered",
-    "/mavros/state",
 ]
 forbidden_simulation_topics = [
     "/gazebo/*",
@@ -37,10 +36,29 @@ startup_timeout_sec = 5.0
 health_topics = []
 shutdown_policy = "stop_on_wrapper_exit"
 
-[real_prepare.mavros]
+[real_prepare.navlab_mavlink_bridge]
 enabled = true
 required = true
-command = ["ros2", "launch", "mavros", "apm.launch.py", "fcu_url:=udp://@127.0.0.1:14550"]
+command = [
+    "uv",
+    "run",
+    "--project",
+    "orchestration",
+    "python",
+    "orchestration/src/tasks/fcu_bridge/navlab_mavlink_bridge.py",
+    "--ros-distro",
+    "humble",
+    "--mavlink-endpoint",
+    "tcp:127.0.0.1:5760",
+]
+startup_timeout_sec = 8.0
+health_topics = ["/navlab/mavlink/status", "/navlab/fcu/local_position_pose", "/mavlink_external_nav/status", "/imu/data", "/imu/status"]
+shutdown_policy = "stop_on_wrapper_exit"
+
+[real_prepare.mavros]
+enabled = false
+required = false
+command = ["ros2", "launch", "mavros", "apm.launch", "fcu_url:=udp://@127.0.0.1:14550"]
 startup_timeout_sec = 12.0
 health_topics = ["/mavros/state", "/ap/v1/status"]
 shutdown_policy = "stop_on_wrapper_exit"
@@ -49,7 +67,11 @@ direct_serial_access_allowed = false
 [real_prepare.lidar]
 enabled = true
 required = true
-command = ["ros2", "launch", "ydlidar_ros2_driver", "ydlidar_launch.py"]
+command = [
+    "bash",
+    "-lc",
+    "source /opt/ros/humble/setup.bash && source install/setup.bash && PYTHONPATH=.:$PYTHONPATH /usr/bin/python3 orchestration/src/tasks/lidar_bridge/ydlidar_x2_scan_bridge.py --port /dev/ttyUSB0 --baud 115200 --scan-topic /scan --frame-id laser_frame",
+]
 startup_timeout_sec = 10.0
 health_topics = ["/scan"]
 shutdown_policy = "stop_on_wrapper_exit"
@@ -57,9 +79,30 @@ shutdown_policy = "stop_on_wrapper_exit"
 [real_prepare.slam]
 enabled = true
 required = true
-command = ["ros2", "launch", "navlab_slam_bringup", "cartographer.launch.py", "use_sim_time:=false"]
+command = [
+    "ros2",
+    "launch",
+    "navlab_slam_bringup",
+    "navlab_slam_bringup.launch.py",
+    "use_sim_time:=false",
+    "launch_fake_odom:=false",
+    "launch_cartographer_backend:=true",
+    "publish_placeholder_odom:=false",
+    "cartographer_configuration_basename:=navlab_cartographer_2d_real.lua",
+    "scan_topic:=/scan",
+    "imu_source_topic:=/imu/data",
+    "imu_topic:=/imu",
+    "cartographer_odometry_topic:=/odometry",
+    "odom_topic:=/slam/odom",
+    "external_nav_input_odom_topic:=/slam/odom",
+    "require_imu_for_external_nav:=false",
+    "require_height_for_external_nav:=false",
+    "laser_frame:=laser_frame",
+    "imu_frame:=imu_link",
+    "base_frame:=base_link",
+]
 startup_timeout_sec = 15.0
-health_topics = ["/slam/odom", "/navlab/slam/status"]
+health_topics = ["/imu", "/slam/odom", "/navlab/slam/status", "/external_nav/status"]
 shutdown_policy = "stop_on_wrapper_exit"
 
 [real_prepare.rangefinder_bridge]

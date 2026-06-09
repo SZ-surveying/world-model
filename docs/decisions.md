@@ -491,3 +491,35 @@ Decision: require `external_nav_yaw_ready=true` in real task doctor for indoor S
 Basis: the real hover/P8/P12 path is an indoor SLAM flight path, so the relevant yaw source is the SLAM/ExternalNav pipeline consumed by the FCU, not GPS-era compass readiness.
 
 Reason: treating compass calibration or manual override as equivalent yaw evidence would let a real autonomous task proceed without proving that the ExternalNav yaw used by the controller is ready. Uncalibrated compass is not a standalone blocker, but it also does not remove the requirement for ExternalNav yaw readiness.
+
+## 2026-06-09: Real Stage 2 uses fcu_bridge_mode registry
+
+Decision: start real Stage 2 with `fcu_bridge_mode = "navlab_mavlink"` in an orchestration `fcu_bridge` registry, and derive preflight dependencies plus prepare/task-doctor required topics from the selected mode.
+
+Basis: the working simulation FCU chain uses NavLab MAVLink router/bridge topics (`/navlab/mavlink/status`, `/navlab/fcu/local_position_pose`, `/mavlink_external_nav/status`, `/external_nav/status`) instead of MAVROS.
+
+Reason: requiring MAVROS, GeographicLib geoid data, or `/ap/v1/*` topics for every real prepare path blocks a valid NavLab MAVLink bridge mode. A registry keeps the current mode simple while making future `mavros` or `ardupilot_dds` modes additive rather than hard-coded into preflight and prepare.
+
+## 2026-06-09: Real Stage 2 keeps rangefinder height separate from 2D lidar SLAM
+
+Decision: define the real Stage 2 sensor contract as three separate chains: FCU MAVLink/bridge, 2D lidar -> SLAM/ExternalNav yaw, and height/rangefinder evidence.
+
+Basis: simulation already has a rangefinder/altitude evidence path in addition to the 2D lidar `/scan` path, while the real drone's 2D lidar is only a horizontal scan source.
+
+Reason: `/scan` can prove horizontal geometry, SLAM odometry, and yaw readiness, but it cannot prove hover altitude or landing height. If a real ROS rangefinder bridge exists, it must publish the same contract as simulation, `/rangefinder/down/range` and `/rangefinder/down/status`; otherwise prepare/task doctor must explicitly record FCU telemetry evidence such as MAVLink `RANGEFINDER` / `DISTANCE_SENSOR`, baro, or EKF height instead of silently treating 2D lidar as a height source.
+
+## 2026-06-10: Real height bridge prefers FCU DISTANCE_SENSOR over RANGEFINDER
+
+Decision: use ArduPilot MAVLink `DISTANCE_SENSOR` with down-facing orientation as the primary real height evidence for hover/landing gates and for the future `/rangefinder/down/range` bridge.
+
+Basis: a tabletop lift test on `/dev/ttyUSB1 @ 115200` showed `DISTANCE_SENSOR.current_distance` changing from 0 to about 45 cm as the vehicle was lifted, with `orientation=25` (`MAV_SENSOR_ROTATION_PITCH_270`). `RANGEFINDER.distance` changed consistently most of the time but showed an isolated 6.53 m spike while `DISTANCE_SENSOR` remained near 42 cm.
+
+Reason: real Stage 2 needs the same ROS topic contract as simulation, but not the same source. Simulation generates `/rangefinder/down/range` from Gazebo scan data; real should generate it from FCU telemetry. `DISTANCE_SENSOR` carries min/max distance and orientation fields, making it safer for validity filtering. `RANGEFINDER`, baro, and EKF height remain useful diagnostics or secondary evidence, but they should not by themselves unlock hover or landing readiness.
+
+## 2026-06-10: Real SLAM yaw uses the simulation contract with real hardware sources
+
+Decision: make RTD.5A real prepare run the same `scan + IMU + Cartographer TF/odom + ExternalNav` yaw contract as simulation, with `/dev/ttyUSB0` publishing real `/scan`, `/dev/ttyUSB1` MAVLink IMU publishing `/imu/data` -> `/imu`, Cartographer publishing TF-backed `/slam/odom`, and `/external_nav/status.ready=true` as the accepted yaw gate.
+
+Basis: `just navlab-doctor` passed with `Status OK`; `NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real uv run --project orchestration python orchestration/main.py run hover --dry-run` passed preflight, prepare, and task doctor on 2026-06-10. The latest prepare summary `artifacts/ros/navlab_real_prepare/20260610_023033/summary.json` records real scan and IMU samples, `/navlab/slam/status.ready=true`, `/external_nav/status.ready=true`, `accepted_topic=/external_nav/status`, and no prepare blockers.
+
+Reason: the yaw gate must prove the real SLAM/ExternalNav chain rather than accept placeholder odom, fake odom, FCU pose TF, or simulation topics. The real Cartographer config disables the missing odometry input while keeping backend TF output, the pose mirror no longer injects replay TF into the real TF tree, and prepare probes actual samples/status JSON instead of only topic names.
