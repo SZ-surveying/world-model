@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from typer.testing import CliRunner
-
 from src.cli import app
+from typer.testing import CliRunner
 
 
 def test_cli_exposes_only_build_doctor_and_run_wrapper() -> None:
@@ -56,6 +55,31 @@ def test_runtime_doctor_dispatches_real_preflight(monkeypatch) -> None:  # noqa:
 
     assert result.exit_code == 7
     assert calls
+    assert calls[0]["prompt_install"] is True
+    assert calls[0]["force_install"] is False
+    assert calls[0]["soft_dependency_warnings"] is True
+
+
+def test_runtime_doctor_force_dispatches_install_request(monkeypatch) -> None:  # noqa: ANN001
+    from src.tasks.real_preflight import RealPreflightDoctorTask
+
+    calls: list[dict[str, object]] = []
+
+    def fake_run(self, **kwargs):  # noqa: ANN001
+        calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr(RealPreflightDoctorTask, "run", fake_run)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["doctor", "--force"],
+        env={"NAVLAB_RUNTIME_BACKEND": "process", "NAVLAB_RUNTIME_MODE": "real"},
+    )
+
+    assert result.exit_code == 0
+    assert calls[0]["force_install"] is True
 
 
 def test_run_wrapper_dispatches_hover(monkeypatch) -> None:  # noqa: ANN001

@@ -3,14 +3,17 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
+import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -20,6 +23,37 @@ from src.project_config import RuntimeConfig as ProjectRuntimeConfig
 from src.project_config import load_orchestration_runtime_backend_config, load_runtime_config
 from src.tasks.base import OrchestrationTask
 from src.tasks.registry import TaskRegistry
+
+DEFAULT_REAL_ROS_DISTRO = "jazzy"
+APT_ROS_PACKAGE_MAP = {
+    "mavros": "ros-{distro}-mavros",
+    "mavros_msgs": "ros-{distro}-mavros-msgs",
+}
+ROS_DISTRO_BASE_PACKAGES = ("ros-{distro}-ros-base",)
+LOCAL_ROS_BUILD_PACKAGE_TEMPLATES = (
+    "ros-{distro}-ament-cmake",
+    "ros-{distro}-geometry-msgs",
+    "ros-{distro}-nav-msgs",
+    "ros-{distro}-rclcpp",
+    "ros-{distro}-sensor-msgs",
+    "ros-{distro}-std-msgs",
+    "ros-{distro}-tf2-msgs",
+)
+LOCAL_ROS_PACKAGES = {
+    "navlab_slam_bringup",
+    "navlab_cartographer_adapter",
+    "navlab_external_nav_bridge",
+    "navlab_slam_imu_bridge",
+}
+LOCAL_ROS_BUILD_PACKAGES = (
+    "navlab_cartographer_adapter",
+    "navlab_external_nav_bridge",
+    "navlab_fake_odom",
+    "navlab_slam_bringup",
+    "navlab_slam_imu_bridge",
+    "ydlidar_interfaces",
+)
+LOCAL_ROS_PACKAGE_BASE_PATHS = ("navlab/interfaces", "navlab/slam/ros")
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +94,7 @@ def _build_real_preflight_summary(
     if dependency_probe is None:
         dependency_probe = _probe_real_preflight_dependencies(
             config.orchestration.real_preflight.dependencies,
+            ros_distro=config.orchestration.real_preflight.ros_distro,
             process_service_names=(),
         )
     checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -77,6 +112,7 @@ def _build_real_preflight_summary(
             "landing_claim": "not_evaluated",
             "checked_at": checked_at,
             "valid_for_sec": config.orchestration.real_preflight.valid_for_sec,
+            "ros_distro": config.orchestration.real_preflight.ros_distro,
             "real_preflight": {
                 "serial_mavlink": serial_mavlink_probe.summary,
                 "dependencies": dependency_probe.summary,
@@ -91,6 +127,7 @@ def _build_real_preflight_summary(
     if not dependency_probe.summary.get("configured_process_services") and selected.process.services:
         dependency_probe = _probe_real_preflight_dependencies(
             config.orchestration.real_preflight.dependencies,
+            ros_distro=config.orchestration.real_preflight.ros_distro,
             process_service_names=tuple(selected.process.services),
         )
     blockers.extend(dependency_probe.blockers)
@@ -107,6 +144,7 @@ def _build_real_preflight_summary(
         "landing_claim": "not_evaluated",
         "checked_at": checked_at,
         "valid_for_sec": config.orchestration.real_preflight.valid_for_sec,
+        "ros_distro": config.orchestration.real_preflight.ros_distro,
         "real_preflight": {
             "serial_mavlink": serial_mavlink_probe.summary,
             "dependencies": dependency_probe.summary,
@@ -117,21 +155,29 @@ def _build_real_preflight_summary(
 def _probe_real_preflight_dependencies(
     settings: RealPreflightDependencyConfig,
     *,
+    ros_distro: str,
     process_service_names: tuple[str, ...],
 ) -> DependencyProbe:
     blockers: list[str] = []
     command_groups: list[dict[str, Any]] = []
     for group in settings.required_command_groups:
-        found = next((command for command in group if shutil.which(command)), "")
+        selected = ""
+        selected_path = ""
+        for command in group:
+            candidate_path = _command_path_for_distro(command, ros_distro)
+            if candidate_path:
+                selected = command
+                selected_path = candidate_path
+                break
         command_groups.append(
             {
                 "candidates": list(group),
-                "found": bool(found),
-                "selected": found,
-                "path": shutil.which(found) if found else "",
+                "found": bool(selected),
+                "selected": selected,
+                "path": selected_path,
             }
         )
-        if not found:
+        if not selected:
             blockers.append(f"required_command_missing:{'|'.join(group)}")
 
     python_modules: dict[str, bool] = {}
@@ -142,21 +188,16 @@ def _probe_real_preflight_dependencies(
             blockers.append(f"required_python_module_missing:{module}")
 
     ros_packages: dict[str, dict[str, Any]] = {}
-    ros2 = shutil.which("ros2")
+    ros2 = _command_path_for_distro("ros2", ros_distro)
     if settings.required_ros_packages and not ros2:
         blockers.append("required_command_missing:ros2")
         for package in settings.required_ros_packages:
-            ros_packages[package] = {"present": False, "error": "ros2_not_found"}
+            ros_packages[package] = {"present": False, "error": f"ros2_distro_not_found:{ros_distro}"}
+            blockers.append(f"required_ros_package_missing:{package}")
     else:
         for package in settings.required_ros_packages:
             try:
-                result = subprocess.run(
-                    ["ros2", "pkg", "prefix", package],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=4.0,
-                )
+                result = _run_ros2_pkg_prefix(package, ros_distro=ros_distro)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 ros_packages[package] = {"present": False, "error": str(exc)}
                 blockers.append(f"required_ros_package_probe_failed:{package}")
@@ -181,6 +222,7 @@ def _probe_real_preflight_dependencies(
 
     return DependencyProbe(
         summary={
+            "ros_distro": ros_distro,
             "required_command_groups": command_groups,
             "required_python_modules": python_modules,
             "required_ros_packages": ros_packages,
@@ -188,6 +230,49 @@ def _probe_real_preflight_dependencies(
             "configured_process_services": configured_services,
         },
         blockers=tuple(dict.fromkeys(blockers)),
+    )
+
+
+def _command_path_for_distro(command: str, ros_distro: str) -> str:
+    if command == "ros2":
+        path = _ros2_path_for_distro(ros_distro)
+        return str(path) if path.exists() else ""
+    return shutil.which(command) or ""
+
+
+def _ros2_path_for_distro(ros_distro: str) -> Path:
+    return Path("/opt/ros") / ros_distro / "bin" / "ros2"
+
+
+def _run_ros2_pkg_prefix(package: str, *, ros_distro: str) -> subprocess.CompletedProcess[str]:
+    ros2_command = shlex.quote(str(_ros2_path_for_distro(ros_distro)))
+    workspace_setup = Path("install/setup.bash")
+    source_commands = _ros_source_commands(ros_distro)
+    if workspace_setup.exists():
+        source_commands.append(f"source {shlex.quote(str(workspace_setup))}")
+        command = " && ".join([*source_commands, f"{ros2_command} pkg prefix {shlex.quote(package)}"])
+        return subprocess.run(
+            ["bash", "-lc", command],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=4.0,
+        )
+    if source_commands:
+        command = " && ".join([*source_commands, f"{ros2_command} pkg prefix {shlex.quote(package)}"])
+        return subprocess.run(
+            ["bash", "-lc", command],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=4.0,
+        )
+    return subprocess.run(
+        [str(_ros2_path_for_distro(ros_distro)), "pkg", "prefix", package],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=4.0,
     )
 
 
@@ -292,6 +377,9 @@ def _probe_serial_mavlink(settings: SerialMavlinkConfig) -> SerialMavlinkProbe:
         if settings.require_mode_observed and not summary["mode"]:
             blockers.append("serial_mavlink_mode_missing")
 
+        _request_mavlink_telemetry_streams(master, mavutil)
+        summary["telemetry_request_sent"] = True
+
         deadline = time.monotonic() + settings.telemetry_window_sec
         wanted_messages = set(settings.required_messages) | set(settings.optional_messages)
         while time.monotonic() < deadline:
@@ -324,6 +412,19 @@ def _probe_serial_mavlink(settings: SerialMavlinkConfig) -> SerialMavlinkProbe:
                 pass
 
     return SerialMavlinkProbe(summary=summary, blockers=tuple(blockers))
+
+
+def _request_mavlink_telemetry_streams(master: Any, mavutil: Any) -> None:
+    target_system = int(getattr(master, "target_system", 0) or 0)
+    target_component = int(getattr(master, "target_component", 0) or 0)
+    for stream_id in (
+        mavutil.mavlink.MAV_DATA_STREAM_ALL,
+        mavutil.mavlink.MAV_DATA_STREAM_EXTENDED_STATUS,
+        mavutil.mavlink.MAV_DATA_STREAM_EXTRA1,
+        mavutil.mavlink.MAV_DATA_STREAM_POSITION,
+        mavutil.mavlink.MAV_DATA_STREAM_RAW_SENSORS,
+    ):
+        master.mav.request_data_stream_send(target_system, target_component, stream_id, 4, 1)
 
 
 def _looks_like_network_mavlink_endpoint(value: str) -> bool:
@@ -369,6 +470,9 @@ class RealPreflightDoctorTask(OrchestrationTask):
         config_path: str | Path | None = None,
         task_config_path: str | Path | None = None,
         console: Console | None = None,
+        prompt_install: bool = False,
+        force_install: bool = False,
+        soft_dependency_warnings: bool = False,
     ) -> int:
         console = console or Console()
         config = RunConfig.from_config(
@@ -376,7 +480,9 @@ class RealPreflightDoctorTask(OrchestrationTask):
             task_name="real-preflight-doctor",
             task_config_path=task_config_path,
         )
-        artifact_dir = Path(os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_real_preflight_doctor/{config.run_id}"))
+        artifact_dir = Path(
+            os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_real_preflight_doctor/{config.run_id}")
+        )
         config = RunConfig.from_config(
             config_path=config_path,
             task_name="real-preflight-doctor",
@@ -391,11 +497,36 @@ class RealPreflightDoctorTask(OrchestrationTask):
             serial_mavlink_probe=serial_probe,
         )
         summary["config_sources"] = config.config_sources_summary()
+        if soft_dependency_warnings:
+            _soften_installable_dependency_blockers(summary)
         artifact_dir.mkdir(parents=True, exist_ok=True)
         (artifact_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
         color = "green" if summary["ok"] else "red"
         console.print(f"[{color}]Real preflight doctor rc={0 if summary['ok'] else 20}[/{color}]")
         _print_real_preflight_console_summary(console, summary=summary, summary_path=artifact_dir / "summary.json")
+        missing_ros_packages = _missing_ros_packages(summary)
+        if missing_ros_packages and (force_install or prompt_install):
+            should_install = force_install or typer.confirm(
+                "Install missing real-preflight ROS dependencies now?",
+                default=False,
+            )
+            if should_install:
+                install_result = _install_missing_real_preflight_dependencies(
+                    missing_ros_packages,
+                    ros_distro=config.orchestration.real_preflight.ros_distro,
+                    console=console,
+                )
+                summary["dependency_install"] = install_result
+                (artifact_dir / "summary.json").write_text(
+                    json.dumps(summary, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+                if not install_result["ok"]:
+                    return 20
+            else:
+                console.print(
+                    "[yellow]Skipped dependency install; run `just navlab-doctor --force` to install them.[/yellow]"
+                )
         return 0 if summary["ok"] else 20
 
 
@@ -410,13 +541,15 @@ def _print_real_preflight_console_summary(
     dependencies = real_preflight.get("dependencies", {})
     runtime_backend = summary.get("runtime_backend", "unknown")
     runtime_mode = summary.get("runtime_mode", "unknown")
-    status = "OK" if summary.get("ok") else "BLOCKED"
-    border_style = "green" if summary.get("ok") else "red"
+    warnings = [str(item) for item in summary.get("warnings", [])]
+    status = "WARNING" if summary.get("ok") and warnings else ("OK" if summary.get("ok") else "BLOCKED")
+    border_style = "yellow" if summary.get("ok") and warnings else ("green" if summary.get("ok") else "red")
     table = Table.grid(padding=(0, 2))
     table.add_column(style="bold")
     table.add_column()
     table.add_row("Status", status)
     table.add_row("Runtime", f"{runtime_backend}+{runtime_mode}")
+    table.add_row("ROS distro", str(summary.get("ros_distro", dependencies.get("ros_distro", "unknown"))))
     table.add_row("Serial", f"{serial_mavlink.get('port', '')} @ {serial_mavlink.get('baud', '')}")
     table.add_row(
         "Serial state",
@@ -452,6 +585,15 @@ def _print_real_preflight_console_summary(
             blocker_table.add_row(f"- ... {len(blockers) - 8} more")
         console.print(Panel(blocker_table, title="Blockers", border_style="red"))
 
+    if warnings:
+        warning_table = Table.grid()
+        warning_table.add_column()
+        for warning in warnings[:8]:
+            warning_table.add_row(f"- {warning}")
+        if len(warnings) > 8:
+            warning_table.add_row(f"- ... {len(warnings) - 8} more")
+        console.print(Panel(warning_table, title="Warnings", border_style="yellow"))
+
 
 def _dependency_group_state(groups: list[dict[str, Any]]) -> str:
     if not groups:
@@ -465,3 +607,148 @@ def _dependency_map_state(items: dict[str, Any]) -> str:
         return "none"
     present = sum(1 for value in items.values() if value is True or (isinstance(value, dict) and value.get("present")))
     return f"{present}/{len(items)}"
+
+
+def _installable_dependency_blockers(summary: dict[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    missing_ros_packages = set(_missing_ros_packages(summary))
+    for blocker in summary.get("blockers", []):
+        text = str(blocker)
+        if text == "required_command_missing:ros2" and missing_ros_packages:
+            warnings.append(text)
+        if text.startswith("required_ros_package_missing:"):
+            package = text.split(":", 1)[1]
+            if package in missing_ros_packages:
+                warnings.append(text)
+    return warnings
+
+
+def _soften_installable_dependency_blockers(summary: dict[str, Any]) -> None:
+    dependency_warnings = _installable_dependency_blockers(summary)
+    hard_blockers = [
+        str(blocker) for blocker in summary.get("blockers", []) if str(blocker) not in dependency_warnings
+    ]
+    if dependency_warnings and not hard_blockers:
+        summary["preflight_blockers"] = list(summary.get("blockers", []))
+        summary["warnings"] = dependency_warnings
+        summary["blockers"] = []
+        summary["blocked"] = False
+        summary["ok"] = True
+
+
+def _missing_ros_packages(summary: dict[str, Any]) -> list[str]:
+    dependencies = summary.get("real_preflight", {}).get("dependencies", {})
+    packages = dependencies.get("required_ros_packages", {})
+    return [name for name, item in packages.items() if isinstance(item, dict) and not item.get("present")]
+
+
+def _install_missing_real_preflight_dependencies(
+    missing_ros_packages: list[str],
+    *,
+    ros_distro: str,
+    console: Console,
+) -> dict[str, Any]:
+    apt_packages = [
+        APT_ROS_PACKAGE_MAP[package].format(distro=ros_distro)
+        for package in missing_ros_packages
+        if package in APT_ROS_PACKAGE_MAP
+    ]
+    local_packages = [package for package in missing_ros_packages if package in LOCAL_ROS_PACKAGES]
+    unknown_packages = [
+        package
+        for package in missing_ros_packages
+        if package not in APT_ROS_PACKAGE_MAP and package not in LOCAL_ROS_PACKAGES
+    ]
+    if not (Path("/opt/ros") / ros_distro / "setup.bash").exists():
+        apt_packages = [*(template.format(distro=ros_distro) for template in ROS_DISTRO_BASE_PACKAGES), *apt_packages]
+    if local_packages:
+        apt_packages.extend(template.format(distro=ros_distro) for template in LOCAL_ROS_BUILD_PACKAGE_TEMPLATES)
+    apt_packages = list(dict.fromkeys(apt_packages))
+    result: dict[str, Any] = {
+        "ok": False,
+        "ros_distro": ros_distro,
+        "apt_packages": apt_packages,
+        "local_packages": local_packages,
+        "unknown_packages": unknown_packages,
+        "commands": [],
+        "errors": [],
+    }
+    try:
+        if apt_packages:
+            _run_install_command(
+                [*_elevated_command("apt-get"), "install", "-y", "--no-install-recommends", *apt_packages],
+                console=console,
+                result=result,
+            )
+        if local_packages:
+            if shutil.which("colcon") is None:
+                _run_install_command(
+                    [
+                        *_elevated_command("apt-get"),
+                        "install",
+                        "-y",
+                        "--no-install-recommends",
+                        "python3-colcon-common-extensions",
+                    ],
+                    console=console,
+                    result=result,
+                )
+            source_commands = [*_python_venv_deactivation_commands(), *_ros_source_commands(ros_distro)]
+            build_command = " && ".join(
+                [
+                    *source_commands,
+                    "rm -rf "
+                    + " ".join(shlex.quote(str(Path("build") / package)) for package in LOCAL_ROS_BUILD_PACKAGES)
+                    + " && /usr/bin/colcon build --symlink-install "
+                    "--cmake-args -DPython3_EXECUTABLE=/usr/bin/python3 "
+                    "-DPYTHON_EXECUTABLE=/usr/bin/python3 "
+                    "--base-paths "
+                    + " ".join(shlex.quote(path) for path in LOCAL_ROS_PACKAGE_BASE_PATHS),
+                ]
+            )
+            _run_install_command(["bash", "-lc", build_command], console=console, result=result)
+        if unknown_packages:
+            result["errors"].append(f"no install recipe for ROS packages: {', '.join(unknown_packages)}")
+    except Exception as exc:  # noqa: BLE001 - install path should return a concise summary to the CLI.
+        result["errors"].append(str(exc))
+    result["ok"] = not result["errors"]
+    if result["ok"]:
+        console.print("[green]Dependency install completed. Re-run `just navlab-doctor` to verify.[/green]")
+    else:
+        console.print("[red]Dependency install failed:[/red] " + "; ".join(result["errors"]))
+    return result
+
+
+def _python_venv_deactivation_commands() -> list[str]:
+    blocked_bins = {
+        str(Path(sys.executable).resolve().parent),
+        os.environ.get("CONDA_PREFIX", "") + "/bin" if os.environ.get("CONDA_PREFIX") else "",
+        os.environ.get("VIRTUAL_ENV", "") + "/bin" if os.environ.get("VIRTUAL_ENV") else "",
+    }
+    grep_filters = " ".join(f"| grep -v -F {shlex.quote(path)}" for path in sorted(blocked_bins) if path)
+    return [
+        "unset VIRTUAL_ENV CONDA_PREFIX CONDA_DEFAULT_ENV PYTHONHOME PYTHONPATH",
+        f'export PATH="$(printf %s \"$PATH\" | tr : \"\\n\" {grep_filters} | paste -sd:)"',
+        'export PATH="/usr/bin:/usr/sbin:/bin:/sbin:$PATH"',
+    ]
+
+
+def _run_install_command(command: list[str], *, console: Console, result: dict[str, Any]) -> None:
+    result["commands"].append(command)
+    console.print("[yellow]running:[/yellow] " + shlex.join(command))
+    subprocess.run(command, check=True)
+
+
+def _elevated_command(command: str) -> list[str]:
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return [command]
+    sudo = shutil.which("sudo")
+    if sudo:
+        return [sudo, command]
+    raise RuntimeError(f"{command} needs root privileges or sudo")
+
+
+def _ros_source_commands(distro: str | None = None) -> list[str]:
+    resolved = distro or DEFAULT_REAL_ROS_DISTRO
+    setup = Path("/opt/ros") / resolved / "setup.bash"
+    return [f"source {shlex.quote(str(setup))}"] if setup.exists() else []

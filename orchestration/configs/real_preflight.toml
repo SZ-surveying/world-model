@@ -3,6 +3,7 @@ duration_sec = 45.0
 
 [real_preflight]
 valid_for_sec = 300.0
+ros_distro = "humble"
 
 [real_preflight.dependencies]
 required_command_groups = [
@@ -25,10 +26,10 @@ required_process_services = []
 
 [serial_mavlink]
 enabled = true
-port = "/dev/ttyACM0"
+port = "/dev/ttyUSB1"
 baud = 115200
 connection_timeout_sec = 3.0
-heartbeat_timeout_sec = 5.0
+heartbeat_timeout_sec = 15.0
 telemetry_window_sec = 8.0
 require_autopilot_heartbeat = true
 require_system_status = true

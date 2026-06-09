@@ -114,9 +114,9 @@ real preflight doctor 只做真机起飞前最基础的非执行性检查：
 - [x] 串口权限不对时 summary `ok=false`。
 - [x] baud 打不开时 summary `ok=false`。
 - [x] 收不到真实 autopilot HEARTBEAT 时 summary `ok=false`。
-- [ ] MAVLink HEARTBEAT 来自 invalid autopilot 时 summary `ok=false`。
-- [ ] required MAVLink message 缺失时 summary `ok=false`。
-- [ ] preflight 时 FCU 已 armed 且未显式允许时 summary `ok=false`。
+- [x] MAVLink HEARTBEAT 来自 invalid autopilot 时 summary `ok=false`。
+- [x] required MAVLink message 缺失时 summary `ok=false`。
+- [x] preflight 时 FCU 已 armed 且未显式允许时 summary `ok=false`。
 - [x] serial probe 不启动 `mavlink-router`，也不长期持有串口。
 
 ## RFD.4 Summary、artifact 和 console 输出
@@ -176,17 +176,17 @@ real preflight doctor 只做真机起飞前最基础的非执行性检查：
 
 RFD 全部完成必须满足：
 
-- [ ] real preflight 只检查 runtime boundary、依赖存在性和真实串口 MAVLink。
-- [ ] real preflight summary `ok=true`。
-- [ ] real preflight summary `runtime_backend=process`。
-- [ ] real preflight summary `runtime_mode=real`。
-- [ ] required command / ROS package / Python module 都存在。
-- [ ] 真实串口 MAVLink 可打开并收到 FCU HEARTBEAT。
-- [ ] summary 记录 MAVLink system/component id、mode、armed 和 message_counts。
-- [ ] doctor 不 arm、不 takeoff、不 land、不发布 movement setpoint。
-- [ ] doctor 不启动 `mavlink-router`、MAVROS、SLAM、lidar driver 或 companion。
-- [ ] doctor summary 标记 `flight_claim=not_evaluated`。
-- [ ] doctor summary 标记 `landing_claim=not_evaluated`。
+- [x] real preflight 只检查 runtime boundary、依赖存在性和真实串口 MAVLink。
+- [x] real preflight summary `ok=true`。
+- [x] real preflight summary `runtime_backend=process`。
+- [x] real preflight summary `runtime_mode=real`。
+- [x] required command / ROS package / Python module 都存在。
+- [x] 真实串口 MAVLink 可打开并收到 FCU HEARTBEAT。
+- [x] summary 记录 MAVLink system/component id、mode、armed 和 message_counts。
+- [x] doctor 不 arm、不 takeoff、不 land、不发布 movement setpoint。
+- [x] doctor 不启动 `mavlink-router`、MAVROS、SLAM、lidar driver 或 companion。
+- [x] doctor summary 标记 `flight_claim=not_evaluated`。
+- [x] doctor summary 标记 `landing_claim=not_evaluated`。
 
 ## 验证记录
 
@@ -213,3 +213,10 @@ RFD 全部完成必须满足：
 - 命令：`uv run --project orchestration pytest orchestration/tests/test_cli.py orchestration/tests/test_runtime_backend.py orchestration/tests/test_config.py -q`
 - 结果：133 个 CLI / runtime / config 测试通过；CLI 只暴露 `build`、`doctor`、`run <task>`，public registry 不再暴露 per-task doctor，real preflight 不再采集或 gate ROS topic/source claim。
 - blocker：真机 prepare、task doctor 和 real task flight wrapper 仍在 `real_prepare_and_task_doctor_todo.md` 中继续跟踪。
+
+
+### 2026-06-09 RFD real hardware doctor pass
+
+- 命令：`just navlab-doctor`
+- 结果：real preflight doctor 在 `process+real`、`ros_distro=humble` 下通过；`Deps cmd=2/2, ros=6/6, py=2/2`，`/dev/ttyUSB1` 可打开并收到 ArduPilot HEARTBEAT，summary 记录 system/component、mode、armed 和 message_counts。
+- blocker：无；后续真机 prepare、task doctor 和 flight wrapper 继续在 `real_prepare_and_task_doctor_todo.md` 跟踪。

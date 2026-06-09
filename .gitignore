@@ -17,4 +17,6 @@ core
 .vscode/
 
 artifacts/
+install/
+log/
 scripts/command/logs

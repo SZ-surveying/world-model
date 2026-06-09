@@ -32,6 +32,9 @@ class DoctorTask(OrchestrationTask):
         config_path: str | Path | None = None,
         task_config_path: str | Path | None = None,
         console: Console | None = None,
+        prompt_install: bool = False,
+        force_install: bool = False,
+        soft_dependency_warnings: bool = False,
     ) -> int:
         console = console or Console()
         backend, mode = _runtime_backend_mode_from_env()
@@ -43,6 +46,9 @@ class DoctorTask(OrchestrationTask):
                 config_path=config_path,
                 task_config_path=task_config_path,
                 console=console,
+                prompt_install=prompt_install,
+                force_install=force_install,
+                soft_dependency_warnings=soft_dependency_warnings,
             )
         if backend != "docker" or mode != "simulation":
             console.print("[red]Unsupported runtime doctor combination:[/red] " f"{backend}+{mode}")

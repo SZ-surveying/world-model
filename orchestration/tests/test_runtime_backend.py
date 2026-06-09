@@ -561,9 +561,11 @@ def test_real_preflight_loads_serial_mavlink_task_config() -> None:
 
     serial_mavlink = config.orchestration.real_preflight.serial_mavlink
     assert config.orchestration.real_preflight.valid_for_sec == 300.0
+    assert config.orchestration.real_preflight.ros_distro == "humble"
     assert serial_mavlink.enabled is True
-    assert serial_mavlink.port == "/dev/ttyACM0"
+    assert serial_mavlink.port == "/dev/ttyUSB1"
     assert serial_mavlink.baud == 115200
+    assert serial_mavlink.heartbeat_timeout_sec == 15.0
     assert serial_mavlink.required_messages == ("HEARTBEAT", "SYS_STATUS", "ATTITUDE")
     assert "DISTANCE_SENSOR" in serial_mavlink.optional_messages
     dependencies = config.orchestration.real_preflight.dependencies
@@ -590,12 +592,17 @@ def test_real_preflight_dependency_probe_checks_host_real_hover_chain(monkeypatc
         required_process_services=("companion", "slam"),
     )
 
-    probe = real_preflight._probe_real_preflight_dependencies(settings, process_service_names=("companion",))
+    probe = real_preflight._probe_real_preflight_dependencies(
+        settings,
+        ros_distro="humble",
+        process_service_names=("companion",),
+    )
 
     assert probe.summary["required_command_groups"][0]["found"] is True
     assert probe.summary["required_command_groups"][1]["found"] is False
     assert probe.summary["required_python_modules"]["navlab.companion.cli"] is True
-    assert probe.summary["required_ros_packages"]["mavros"]["error"] == "ros2_not_found"
+    assert probe.summary["ros_distro"] == "humble"
+    assert probe.summary["required_ros_packages"]["mavros"]["error"] == "ros2_distro_not_found:humble"
     assert "required_command_missing:ros2" in probe.blockers
     assert "required_process_service_missing:slam" in probe.blockers
 
@@ -722,7 +729,7 @@ takeoff_alt_m = 0.4
 
     serial_summary = {
         "enabled": True,
-        "port": "/dev/ttyACM0",
+        "port": "/dev/ttyUSB1",
         "baud": 115200,
         "serial_open_ok": True,
         "heartbeat_seen": True,
@@ -755,6 +762,59 @@ takeoff_alt_m = 0.4
     assert summary["real_preflight"]["serial_mavlink"]["heartbeat_seen"] is True
 
 
+def test_real_preflight_softens_installable_ros_dependency_warnings() -> None:
+    from src.tasks.real_preflight import _soften_installable_dependency_blockers
+
+    summary = {
+        "ok": False,
+        "blocked": True,
+        "blockers": ["required_command_missing:ros2", "required_ros_package_missing:mavros"],
+        "real_preflight": {
+            "dependencies": {
+                "required_ros_packages": {"mavros": {"present": False}},
+            },
+        },
+    }
+
+    _soften_installable_dependency_blockers(summary)
+
+    assert summary["ok"] is True
+    assert summary["blocked"] is False
+    assert summary["blockers"] == []
+    assert summary["warnings"] == ["required_command_missing:ros2", "required_ros_package_missing:mavros"]
+    assert summary["preflight_blockers"] == ["required_command_missing:ros2", "required_ros_package_missing:mavros"]
+
+
+def test_real_preflight_dependency_install_uses_configured_ros_distro(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.tasks import real_preflight
+
+    commands: list[list[str]] = []
+
+    def fake_run_install_command(command, *, console, result):  # noqa: ANN001
+        commands.append(command)
+        result["commands"].append(command)
+
+    monkeypatch.setattr(real_preflight, "_run_install_command", fake_run_install_command)
+    monkeypatch.setattr(real_preflight, "_elevated_command", lambda command: [command])
+    monkeypatch.setattr(
+        real_preflight.shutil,
+        "which",
+        lambda command: "/usr/bin/colcon" if command == "colcon" else None,
+    )
+
+    result = real_preflight._install_missing_real_preflight_dependencies(
+        ["mavros", "mavros_msgs", "navlab_slam_bringup"],
+        ros_distro="humble",
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+
+    assert result["ok"] is True
+    assert result["ros_distro"] == "humble"
+    assert any("ros-humble-mavros" in command for command in commands)
+    assert any("ros-humble-mavros-msgs" in command for command in commands)
+    assert not any("ros-jazzy" in item for command in commands for item in command)
+
+
 def test_real_preflight_console_summary_prints_operator_keys(tmp_path: Path) -> None:
     from src.tasks.real_preflight import _print_real_preflight_console_summary
 
@@ -763,6 +823,7 @@ def test_real_preflight_console_summary_prints_operator_keys(tmp_path: Path) -> 
     summary = {
         "runtime_backend": "process",
         "runtime_mode": "real",
+        "ros_distro": "humble",
         "blockers": ["serial_mavlink_heartbeat_missing"],
         "real_preflight": {
             "dependencies": {
@@ -771,7 +832,7 @@ def test_real_preflight_console_summary_prints_operator_keys(tmp_path: Path) -> 
                 "required_python_modules": {"navlab.companion.cli": True, "navlab.slam.cli": True},
             },
             "serial_mavlink": {
-                "port": "/dev/ttyACM0",
+                "port": "/dev/ttyUSB1",
                 "baud": 115200,
                 "serial_open_ok": True,
                 "heartbeat_seen": False,
@@ -789,9 +850,11 @@ def test_real_preflight_console_summary_prints_operator_keys(tmp_path: Path) -> 
     text = output.getvalue()
     assert "Real Preflight Doctor" in text
     assert "Runtime" in text
+    assert "ROS distro" in text
+    assert "humble" in text
     assert "process+real" in text
     assert "Serial" in text
-    assert "/dev/ttyACM0 @ 115200" in text
+    assert "/dev/ttyUSB1 @ 115200" in text
     assert "heartbeat=False" in text
     assert "system=1, component=1" in text
     assert "Deps" in text
@@ -1017,9 +1080,9 @@ def test_p11_rosbag_start_uses_runtime_backend(tmp_path: Path, monkeypatch: pyte
 
 
 def test_p10_p11_p12_doctor_summaries_include_runtime_backend(tmp_path: Path) -> None:
-    from src.tasks.workflows.scan_robustness import _build_p12_doctor_summary
     from src.tasks.helpers.scan_integrity import _build_p10_doctor_summary
     from src.tasks.helpers.scan_stabilization import _build_p11_doctor_summary
+    from src.tasks.workflows.scan_robustness import _build_p12_doctor_summary
 
     config = RunConfig.from_config(
         config_path="orchestration/config.simulation.toml",

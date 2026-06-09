@@ -11,7 +11,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from src import mavlink_serial, maze
+from src import mavlink_serial, maze, ros_setup
 from src.command_logging import configure_command_logging
 from src.foxglove import replay, upload
 
@@ -19,6 +19,7 @@ app = typer.Typer(add_completion=False, help="Unified command entrypoint for fox
 foxglove_app = typer.Typer(add_completion=False, help="Foxglove replay build and upload commands.")
 serial_app = typer.Typer(add_completion=False, help="Serial bridge commands.")
 maze_app = typer.Typer(add_completion=False, help="Official maze utility commands.")
+ros_app = typer.Typer(add_completion=False, help="Real YDLidar ROS setup doctor and installer.")
 console = Console()
 error_console = Console(stderr=True)
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -207,6 +208,63 @@ def plot_topdown_command(
     console.print(str(output_file))
 
 
+@ros_app.command("doctor")
+def ros_doctor_command(
+    distro: Annotated[
+        str | None,
+        typer.Option("--distro", help="ROS distro to check; defaults to ROS_DISTRO, installed /opt/ros, or jazzy."),
+    ] = None,
+) -> None:
+    resolved_distro = ros_setup.resolve_ros_distro(distro)
+    checks = ros_setup.run_checks(resolved_distro)
+    ros_setup.render_checks(console, resolved_distro, checks)
+    if ros_setup.missing_packages(checks):
+        raise typer.Exit(1)
+
+
+@ros_app.command("install")
+def ros_install_command(
+    distro: Annotated[
+        str | None,
+        typer.Option("--distro", help="ROS distro to install; defaults to ROS_DISTRO, installed /opt/ros, or jazzy."),
+    ] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Install without prompting for confirmation.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print apt commands without installing.")] = False,
+) -> None:
+    resolved_distro = ros_setup.resolve_ros_distro(distro)
+    checks = ros_setup.run_checks(resolved_distro)
+    ros_setup.render_checks(console, resolved_distro, checks)
+
+    missing = ros_setup.missing_packages(checks)
+    sdk_missing = ros_setup.sdk_missing(checks)
+    if not missing and not sdk_missing:
+        console.print("[green]all real YDLidar ROS requirements are installed[/green]")
+        return
+
+    if missing:
+        console.print(f"[yellow]will install {len(missing)} missing apt packages[/yellow]")
+    if sdk_missing:
+        console.print("[yellow]will build and install YDLidar-SDK from third_party/YDLidar-SDK[/yellow]")
+    if not yes and not dry_run:
+        typer.confirm("Continue with install?", abort=True)
+
+    try:
+        if missing:
+            ros_setup.install_packages(missing, dry_run=dry_run)
+        if sdk_missing:
+            ros_setup.install_ydlidar_sdk(dry_run=dry_run)
+    except Exception as exc:  # noqa: BLE001 - CLI should emit concise blockers.
+        error_console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(2) from exc
+
+    if not dry_run:
+        followup_checks = ros_setup.run_checks(resolved_distro)
+        ros_setup.render_checks(console, resolved_distro, followup_checks)
+        if ros_setup.missing_packages(followup_checks):
+            raise typer.Exit(1)
+
+
 app.add_typer(foxglove_app, name="foxglove")
 app.add_typer(serial_app, name="serial")
 app.add_typer(maze_app, name="maze")
+app.add_typer(ros_app, name="ros")

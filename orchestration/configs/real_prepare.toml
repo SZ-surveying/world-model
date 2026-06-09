@@ -7,7 +7,7 @@ topic_freshness_window_sec = 2.0
 external_nav_yaw_required = true
 external_nav_yaw_status_topics = ["/external_nav/status", "/navlab/slam/status"]
 external_nav_yaw_ready_fields = ["external_nav_yaw_ready", "yaw_ready", "orientation_ready"]
-mavlink_router_serial_port = "/dev/ttyACM0"
+mavlink_router_serial_port = "/dev/ttyUSB1"
 mavlink_router_baud = 115200
 mavlink_router_local_endpoint = "127.0.0.1:14550"
 fcu_bridge_state_topic = "/mavros/state"
@@ -32,7 +32,7 @@ forbidden_simulation_topics = [
 [real_prepare.mavlink_router]
 enabled = true
 required = true
-command = ["mavlink-routerd", "-e", "127.0.0.1:14550", "/dev/ttyACM0:115200"]
+command = ["mavlink-routerd", "-e", "127.0.0.1:14550", "/dev/ttyUSB1:115200"]
 startup_timeout_sec = 5.0
 health_topics = []
 shutdown_policy = "stop_on_wrapper_exit"

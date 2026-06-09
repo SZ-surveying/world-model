@@ -102,6 +102,7 @@ class SerialMavlinkConfig:
 @dataclass(frozen=True, slots=True)
 class RealPreflightConfig:
     valid_for_sec: float
+    ros_distro: str
     serial_mavlink: SerialMavlinkConfig
     dependencies: RealPreflightDependencyConfig
 
@@ -1674,6 +1675,7 @@ class OrchestrationConfig:
                     real_preflight.get("valid_for_sec", task.get("valid_for_sec")),
                     300.0,
                 ),
+                ros_distro=_as_str(real_preflight.get("ros_distro"), "jazzy"),
                 serial_mavlink=SerialMavlinkConfig(
                     enabled=_as_bool(serial_mavlink.get("enabled"), False),
                     port=_as_str(serial_mavlink.get("port"), "/dev/ttyACM0"),

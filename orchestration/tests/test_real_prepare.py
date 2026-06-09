@@ -30,10 +30,10 @@ def test_real_prepare_config_parser_loads_router_serial_and_services() -> None:
     config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
     prepare = config.orchestration.real_prepare
 
-    assert prepare.mavlink_router_serial_port == "/dev/ttyACM0"
+    assert prepare.mavlink_router_serial_port == "/dev/ttyUSB1"
     assert prepare.mavlink_router_baud == 115200
     assert prepare.mavlink_router_local_endpoint == "127.0.0.1:14550"
-    assert prepare.mavlink_router.command[-1] == "/dev/ttyACM0:115200"
+    assert prepare.mavlink_router.command[-1] == "/dev/ttyUSB1:115200"
     assert prepare.mavros.command[-1] == "fcu_url:=udp://@127.0.0.1:14550"
     assert prepare.lidar.health_topics == ("/scan",)
     assert prepare.slam.health_topics == ("/slam/odom", "/navlab/slam/status")
@@ -49,7 +49,7 @@ def test_real_prepare_serial_provenance_requires_router_command_serial() -> None
     provenance = real_prepare._serial_provenance(config)
 
     assert provenance["ok"] is True
-    assert provenance["serial"] == "/dev/ttyACM0"
+    assert provenance["serial"] == "/dev/ttyUSB1"
     assert provenance["command_has_serial"] is True
 
 
@@ -57,8 +57,11 @@ def test_real_prepare_blocks_mavros_direct_serial_access(tmp_path: Path) -> None
     task_config = tmp_path / "real_prepare.toml"
     task_config.write_text(
         """
+[real_prepare]
+mavlink_router_serial_port = "/dev/ttyUSB1"
+
 [real_prepare.mavros]
-command = ["ros2", "launch", "mavros", "apm.launch.py", "fcu_url:=/dev/ttyACM0:115200"]
+command = ["ros2", "launch", "mavros", "apm.launch.py", "fcu_url:=/dev/ttyUSB1:115200"]
 direct_serial_access_allowed = false
 """.strip(),
         encoding="utf-8",
@@ -71,7 +74,7 @@ direct_serial_access_allowed = false
 
     blockers = real_prepare._validate_prepare_services(config, real_prepare._prepare_services(config))
 
-    assert "prepare_service_direct_fcu_serial_forbidden:mavros:/dev/ttyACM0" in blockers
+    assert "prepare_service_direct_fcu_serial_forbidden:mavros:/dev/ttyUSB1" in blockers
 
 
 def test_real_prepare_blocks_simulation_service_tokens(tmp_path: Path) -> None:

@@ -42,9 +42,22 @@ def runtime_doctor_command(
         str | None,
         typer.Option("--task-config", help="Real preflight task TOML path when backend/mode is process+real"),
     ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Install missing doctor dependencies without confirmation."),
+    ] = False,
 ) -> None:
     task = cast(DoctorTask, TaskRegistry.create("doctor"))
-    raise typer.Exit(task.run(config_path=orchestration_config, task_config_path=task_config, console=console))
+    raise typer.Exit(
+        task.run(
+            config_path=orchestration_config,
+            task_config_path=task_config,
+            console=console,
+            prompt_install=True,
+            force_install=force,
+            soft_dependency_warnings=True,
+        )
+    )
 
 
 @app.command("run")
