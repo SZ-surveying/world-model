@@ -18,7 +18,7 @@ from rich.console import Console
 
 from src import host
 from src.artifacts import finalize_navlab_artifact
-from src.config import RunConfig
+from src.config import RunConfig, load_task_invocation_config
 from src.foxglove_upload import upload_acceptance_rosbag
 from src.tasks.base import OrchestrationTask
 from src.tasks.helpers.artifacts import _write_json
@@ -248,14 +248,29 @@ class HoverAcceptanceTask(OrchestrationTask):
         self,
         *,
         config_path: str | Path | None = None,
-        duration_sec: float = 90.0,
-        simulation_profile: str = "ideal",
+        task_config_path: str | Path | None = None,
+        duration_sec: float | None = None,
+        simulation_profile: str | None = None,
         console: Console | None = None,
     ) -> int:
         console = console or Console()
-        simulation_profile = _normalize_simulation_profile(simulation_profile)
+        task_config = load_task_invocation_config(
+            "hover",
+            task_config_path=task_config_path,
+            cli_duration_sec=duration_sec,
+            default_duration_sec=90.0,
+            cli_simulation_profile=simulation_profile,
+            default_simulation_profile="ideal",
+        )
+        duration_sec = task_config.duration_sec
+        simulation_profile = _normalize_simulation_profile(task_config.simulation_profile)
         airframe_profile = _airframe_profile_for_simulation_profile(simulation_profile)
-        config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
+        config = RunConfig.from_config(
+            config_path=config_path,
+            task_name="hover",
+            task_config_path=task_config_path,
+            duration_sec=duration_sec,
+        )
         config.artifact_dir.mkdir(parents=True, exist_ok=True)
         host._render_run_config(console, config)
         baseline = config.orchestration.official_baseline
@@ -466,6 +481,8 @@ class HoverAcceptanceTask(OrchestrationTask):
                 "blockers": blockers,
                 "acceptance_stage": "simulation",
                 "simulation_profile": simulation_profile,
+                "config_sources": config.config_sources_summary(),
+                "task_parameters": task_config.to_summary(),
                 "hover_gate": {
                     "runtime_config": p6_runtime_summary,
                     "hover_probe_script": hover_probe_script_summary,
@@ -530,6 +547,8 @@ class HoverAcceptanceTask(OrchestrationTask):
                 "blockers": ["hover acceptance did not produce a summary"],
                 "acceptance_stage": "simulation",
                 "simulation_profile": simulation_profile,
+                "config_sources": config.config_sources_summary(),
+                "task_parameters": task_config.to_summary(),
             }
             summary = apply_landing_gate(summary, config, task_name="hover", landing=None)
             _write_json(config.artifact_dir / "summary.json", summary)

@@ -314,10 +314,6 @@ def test_load_runtime_backend_config_parses_process_service(tmp_path: Path, monk
     config_file = tmp_path / "config.toml"
     config_file.write_text(
         """
-[orchestration.runtime]
-backend = "process"
-mode = "real"
-
 [orchestration.runtime.process]
 require_explicit_services = true
 log_dir = "logs"
@@ -339,8 +335,8 @@ forbidden_simulation_input_topics = ["/gazebo/*"]
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.delenv("NAVLAB_RUNTIME_BACKEND", raising=False)
-    monkeypatch.delenv("NAVLAB_RUNTIME_MODE", raising=False)
+    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
     runtime = RuntimeConfig(
         lab_root=tmp_path,
         ardupilot_root=tmp_path / "ardupilot",
@@ -388,15 +384,11 @@ def test_load_runtime_backend_config_rejects_process_simulation_combo(
 ) -> None:
     config_file = tmp_path / "config.toml"
     config_file.write_text(
-        """
-[orchestration.runtime]
-backend = "process"
-mode = "simulation"
-""".strip(),
+        "",
         encoding="utf-8",
     )
-    monkeypatch.delenv("NAVLAB_RUNTIME_BACKEND", raising=False)
-    monkeypatch.delenv("NAVLAB_RUNTIME_MODE", raising=False)
+    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "simulation")
     runtime = RuntimeConfig(
         lab_root=tmp_path,
         ardupilot_root=tmp_path / "ardupilot",
@@ -420,8 +412,6 @@ def test_runtime_mode_policy_blocks_simulation_service_in_real_mode(
     config_file.write_text(
         """
 [orchestration.runtime]
-backend = "process"
-mode = "real"
 fail_on_mode_violation = true
 
 [orchestration.runtime.process]
@@ -429,8 +419,8 @@ require_explicit_services = false
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.delenv("NAVLAB_RUNTIME_BACKEND", raising=False)
-    monkeypatch.delenv("NAVLAB_RUNTIME_MODE", raising=False)
+    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
     config = RunConfig.from_config(
         config_path=config_file,
         duration_sec=45.0,
@@ -453,8 +443,6 @@ def test_real_mode_blocks_simulation_overlay_and_official_baseline(
     config_file.write_text(
         """
 [orchestration.runtime]
-backend = "process"
-mode = "real"
 fail_on_mode_violation = true
 
 [orchestration.runtime.process]
@@ -462,8 +450,8 @@ require_explicit_services = false
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.delenv("NAVLAB_RUNTIME_BACKEND", raising=False)
-    monkeypatch.delenv("NAVLAB_RUNTIME_MODE", raising=False)
+    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
     config = RunConfig.from_config(
         config_path=config_file,
         duration_sec=45.0,
@@ -486,10 +474,6 @@ def test_real_preflight_summary_checks_required_and_forbidden_topics(
     config_file = tmp_path / "real.toml"
     config_file.write_text(
         """
-[orchestration.runtime]
-backend = "process"
-mode = "real"
-
 [orchestration.runtime.process]
 require_explicit_services = false
 
@@ -499,8 +483,8 @@ forbidden_simulation_input_topics = ["/gazebo/*"]
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.delenv("NAVLAB_RUNTIME_BACKEND", raising=False)
-    monkeypatch.delenv("NAVLAB_RUNTIME_MODE", raising=False)
+    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
     config = RunConfig.from_config(
         config_path=config_file,
         duration_sec=45.0,
@@ -568,7 +552,7 @@ def test_capture_compose_service_log_uses_runtime_backend(tmp_path: Path, monkey
 
 def test_p10_rosbag_start_uses_runtime_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         duration_sec=45.0,
         run_id="20260608_000000",
         artifact_dir=tmp_path,
@@ -622,7 +606,7 @@ def test_host_ros_shell_capture_uses_probe_spec(monkeypatch: pytest.MonkeyPatch,
     from src import host
 
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         duration_sec=45.0,
         run_id="20260608_000000",
         artifact_dir=tmp_path,
@@ -661,7 +645,7 @@ def test_p11_rosbag_start_uses_runtime_backend(tmp_path: Path, monkeypatch: pyte
     from src.tasks.helpers import scan_stabilization as scan_stabilization_gate
 
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         duration_sec=45.0,
         run_id="20260608_000000",
         artifact_dir=tmp_path,
@@ -692,7 +676,7 @@ def test_p10_p11_p12_doctor_summaries_include_runtime_backend(tmp_path: Path) ->
     from src.tasks.helpers.scan_stabilization import _build_p11_doctor_summary
 
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         duration_sec=45.0,
         run_id="20260608_000000",
         artifact_dir=tmp_path,
@@ -707,6 +691,6 @@ def test_p10_p11_p12_doctor_summaries_include_runtime_backend(tmp_path: Path) ->
         assert summary["runtime_mode"] == "simulation"
         assert summary["runtime_backend_summary"]["backend"] == "docker"
         assert summary["runtime_backend_summary"]["mode"] == "simulation"
-        assert summary["runtime_backend_summary"]["backend_config_path"] == "orchestration/config.toml"
+        assert summary["runtime_backend_summary"]["backend_config_path"] == "orchestration/config.simulation.toml"
         assert summary["source_claims"]["scan"] == "gazebo_lidar_via_x2"
         assert summary["source_claims"]["scan_topic"] == "/scan"

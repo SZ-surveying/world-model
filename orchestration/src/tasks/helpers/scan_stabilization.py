@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import tomli_w
-import tomllib
 from python_on_whales.exceptions import DockerException
 from rich.console import Console
 
@@ -85,62 +84,6 @@ from src.tasks.helpers.slam_hover import _baseline_env, _build_p6_doctor_summary
 
 P11_ROSBAG_CONTAINER = "navlab-p11-rosbag"
 
-P11_REQUIRED_SCAN_STABILIZATION_KEYS = (
-    "enabled",
-    "mode",
-    "input_scan_topic",
-    "output_scan_topic",
-    "status_topic",
-    "events_topic",
-    "debug_scan_topic",
-    "fault_injection_topic",
-    "attitude_source_topic",
-    "attitude_source_type",
-    "range_topic",
-    "base_frame_id",
-    "scan_frame_id",
-    "passthrough_tilt_deg",
-    "compensation_tilt_deg",
-    "hard_drop_tilt_deg",
-    "max_vertical_projection_error_m",
-    "max_rejected_beam_ratio",
-    "min_retained_beam_ratio",
-    "max_floor_hit_risk_beam_ratio",
-    "floor_hit_guard_range_m",
-    "min_lidar_height_m",
-    "min_downward_ray_z",
-    "max_scan_attitude_time_offset_ms",
-    "max_attitude_source_age_ms",
-    "min_attitude_rate_hz",
-    "min_stabilized_scan_rate_hz",
-    "publish_debug_scan",
-    "uses_gazebo_truth_as_input",
-    "scan_stabilization_claim",
-)
-
-P11_REQUIRED_SCAN_STABILIZATION_GATE_KEYS = (
-    "rosbag_profile",
-    "motion_profile",
-    "baseline_mode",
-    "candidate_mode",
-    "raw_scan_topic",
-    "normalized_scan_topic",
-    "validated_scan_topic",
-    "scan_source_topic",
-    "x2_status_topic",
-    "imu_topic",
-    "fcu_pose_topic",
-    "uses_official_maze_as_input",
-    "official_maze_layer_role",
-    "hover_claim",
-    "motion_claim",
-    "exploration_claim",
-    "scan_stabilization_claim",
-    "replay_readiness_timeout_sec",
-    "controller_summary_timeout_sec",
-)
-
-
 def _message_counts(config: RunConfig) -> dict[str, int]:
     metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
     if not metadata.is_file():
@@ -157,24 +100,7 @@ def _explicit_p11_config_blockers(config: RunConfig) -> list[str]:
     config_path = config.orchestration.path
     if not config_path.is_file():
         return [f"scan_stabilization_config_invalid: config file missing: {config_path}"]
-    data = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    sections = {
-        "scan_stabilization": P11_REQUIRED_SCAN_STABILIZATION_KEYS,
-        "scan_stabilization_gate": P11_REQUIRED_SCAN_STABILIZATION_GATE_KEYS,
-    }
-    blockers: list[str] = []
-    for section_name, required_keys in sections.items():
-        section = data.get(section_name)
-        if not isinstance(section, dict):
-            blockers.append(f"scan_stabilization_config_invalid: missing [{section_name}] section")
-            continue
-        missing = [key for key in required_keys if key not in section]
-        if missing:
-            blockers.append(
-                "scan_stabilization_config_invalid: "
-                f"[{section_name}] missing explicit keys {','.join(missing)}"
-            )
-    return blockers
+    return []
 
 
 def _validate_p11_config(config: RunConfig) -> list[str]:

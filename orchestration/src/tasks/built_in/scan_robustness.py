@@ -16,10 +16,20 @@ class BuiltInScanRobustnessDoctorTask(OrchestrationTask):
     TASK_NAME: ClassVar[str] = "scan-robustness-doctor"
     TASK_DESCRIPTION: ClassVar[str] = "Check built-in tilted-scan robustness prerequisites."
 
-    def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
+    def run(
+        self,
+        *,
+        config_path: str | Path | None = None,
+        task_config_path: str | Path | None = None,
+        console: Console | None = None,
+    ) -> int:
         from src.tasks.workflows.scan_robustness import run_airframe_disturbance_gate_doctor
 
-        return run_airframe_disturbance_gate_doctor(config_path=config_path, console=console)
+        return run_airframe_disturbance_gate_doctor(
+            config_path=config_path,
+            task_config_path=task_config_path,
+            console=console,
+        )
 
 
 @TaskRegistry.register
@@ -32,15 +42,17 @@ class BuiltInScanRobustnessTask(OrchestrationTask):
         self,
         *,
         config_path: str | Path | None = None,
-        duration_sec: float = 240.0,
-        live_replay: bool = True,
-        live_profiles: tuple[str, ...] = (),
+        task_config_path: str | Path | None = None,
+        duration_sec: float | None = None,
+        live_replay: bool | None = None,
+        live_profiles: tuple[str, ...] | None = None,
         console: Console | None = None,
     ) -> int:
         from src.tasks.workflows.scan_robustness import run_airframe_disturbance_gate_acceptance
 
         return run_airframe_disturbance_gate_acceptance(
             config_path=config_path,
+            task_config_path=task_config_path,
             duration_sec=duration_sec,
             live_replay=live_replay,
             live_profiles=live_profiles,

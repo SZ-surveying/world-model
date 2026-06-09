@@ -451,3 +451,11 @@ Decision: extend built-in P8 exploration with the same `ideal` / `mild_disturban
 Basis: P8 `ideal` passed in `artifacts/ros/navlab_companion_sitl_gazebo/20260609_122759/summary.json`; P8 `mild_disturbance` passed in `artifacts/ros/navlab_companion_sitl_gazebo/20260609_125158/summary.json` with `/lidar=1433`, `/scan=1677`, `/sim/x2/status=479`, `/navlab/airframe_disturbance/status=479`, `landing.policy=return_home_then_land`, `landing.state=landing_complete`, `simulation_landing_claim=evaluated`, and `real_landing_claim=not_evaluated`.
 
 Reason: P8 is the movement/exploration bridge between hover and P12, so it cannot pass Stage 1 only under ideal motors or by using X2 static fallback. The new P8 lidar/X2 preflight catches missing Gazebo ideal scan before the long acceptance window, and Stage 2 remains blocked until process+real preflight, manual takeover/kill-switch readiness, and a real-machine return-home landing run are performed.
+
+## 2026-06-09: Orchestration config is split by runtime mode and task
+
+Decision: derive the default orchestration config from `NAVLAB_RUNTIME_MODE` (`config.simulation.toml` or `config.real.toml`), keep runtime backend/mode controlled only by `NAVLAB_RUNTIME_BACKEND` and `NAVLAB_RUNTIME_MODE`, and move built-in task defaults into `orchestration/configs/<task>.toml`.
+
+Basis: the real/simulation boundary must be visible at command time, while hover/P8/P12 task parameters need to evolve independently without turning one root `config.toml` into an unreadable mixed system/task file.
+
+Reason: TOML should not silently turn a run into real flight or switch the backend. Runtime backend/mode are therefore environment-or-default only, with valid combinations still limited to `docker+simulation` and `process+real`. Built-in task invocation now resolves `CLI option > task config > hard-code default`, and task config overlays internal sections such as FCU, landing, exploration, and disturbance thresholds. The legacy root `orchestration/config.toml` has been deleted; default execution no longer uses `NAVLAB_ORCHESTRATION_CONFIG` or any legacy root config.

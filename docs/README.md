@@ -40,6 +40,7 @@
 - `docs/scenarios/indoor/navlab_p12_airframe_disturbance_scan_robustness_design.md`: P12 机体扰动下的 2D lidar / SLAM 水平复原鲁棒性设计
 - `docs/scenarios/indoor/navlab_unified_landing_sequence_design.md`: hover/P8/P12 统一降落流程设计
 - `docs/scenarios/indoor/navlab_real_flight_preflight_doctor_design.md`: 真机飞行前 real preflight doctor 设计
+- `docs/scenarios/indoor/todos/real_flight_preflight_doctor_todo.md`: 真机飞行前 real preflight doctor TODO 和验收标准
 - `docs/scenarios/indoor/todos/unified_landing_sequence_todo.md`: 统一降落流程 TODO 和两阶段验收标准
 - `docs/scenarios/indoor/todos/P12_airframe_disturbance_scan_robustness_todo.md`: P12 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`: 当前系统与官方路线的对齐审计
@@ -60,6 +61,7 @@
 - `docs/general/orchestration_runtime_backend_refactor_todo.md`: orchestration runtime backend 抽象和迁移 TODO
 - `docs/general/orchestration_runtime_backend_guide.md`: DockerBackend / ProcessBackend 使用说明和排障口径
 - `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`: simulation/real runtime mode 分流设计
+- `docs/general/orchestration_config_precedence_split_design.md`: orchestration 配置优先级和按 mode/task 拆分设计
 - `docs/general/orchestration_runtime_backend_inventory.md`: runtime backend 迁移清单和当前样板
 - `docs/general/orchestration_legacy_helper_deep_split_todo.md`: legacy helper 深拆和最终删除 TODO
 
@@ -93,17 +95,19 @@
 26. `docs/scenarios/indoor/navlab_p12_airframe_disturbance_scan_robustness_design.md`
 27. `docs/scenarios/indoor/navlab_unified_landing_sequence_design.md`
 28. `docs/scenarios/indoor/navlab_real_flight_preflight_doctor_design.md`
-29. `docs/scenarios/indoor/todos/unified_landing_sequence_todo.md`
-30. `docs/scenarios/indoor/todos/P12_airframe_disturbance_scan_robustness_todo.md`
-31. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
-32. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
-33. `docs/sim/x2_lidar_simulation_design.md`
-34. `docs/sim/x2_lidar_protocol_todo.md`
-35. `docs/general/lab_env_service_refactor_todo.md`
-36. `docs/general/orchestration_runtime_backend_refactor_todo.md`
-37. `docs/general/orchestration_runtime_backend_guide.md`
-38. `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`
-39. `docs/general/orchestration_legacy_helper_deep_split_todo.md`
+29. `docs/scenarios/indoor/todos/real_flight_preflight_doctor_todo.md`
+30. `docs/scenarios/indoor/todos/unified_landing_sequence_todo.md`
+31. `docs/scenarios/indoor/todos/P12_airframe_disturbance_scan_robustness_todo.md`
+32. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
+33. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
+34. `docs/sim/x2_lidar_simulation_design.md`
+35. `docs/sim/x2_lidar_protocol_todo.md`
+36. `docs/general/lab_env_service_refactor_todo.md`
+37. `docs/general/orchestration_runtime_backend_refactor_todo.md`
+38. `docs/general/orchestration_runtime_backend_guide.md`
+39. `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`
+40. `docs/general/orchestration_config_precedence_split_design.md`
+41. `docs/general/orchestration_legacy_helper_deep_split_todo.md`
 
 ## 当前目录结构
 
@@ -117,6 +121,7 @@ docs/
     orchestration_runtime_backend_guide.md
     orchestration_runtime_backend_inventory.md
     orchestration_runtime_mode_real_vs_sim_design.md
+    orchestration_config_precedence_split_design.md
     orchestration_legacy_helper_deep_split_todo.md
   scenarios/
     indoor/
@@ -153,6 +158,7 @@ docs/
         P10_body_fixed_lidar_scan_integrity_todo.md
         P11_bounded_2d_lidar_scan_stabilization_todo.md
         P12_airframe_disturbance_scan_robustness_todo.md
+        real_flight_preflight_doctor_todo.md
         unified_landing_sequence_todo.md
   sim/
     README.md

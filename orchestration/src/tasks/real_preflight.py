@@ -114,14 +114,31 @@ class RealPreflightDoctorTask(OrchestrationTask):
     TASK_NAME: ClassVar[str] = "real-preflight-doctor"
     TASK_DESCRIPTION: ClassVar[str] = "Check process+real runtime topic and source preflight contract."
 
-    def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
+    def run(
+        self,
+        *,
+        config_path: str | Path | None = None,
+        task_config_path: str | Path | None = None,
+        console: Console | None = None,
+    ) -> int:
         console = console or Console()
-        config = RunConfig.from_config(config_path=config_path)
+        config = RunConfig.from_config(
+            config_path=config_path,
+            task_name="real-preflight-doctor",
+            task_config_path=task_config_path,
+        )
         artifact_dir = Path(os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_real_preflight_doctor/{config.run_id}"))
-        config = RunConfig.from_config(config_path=config_path, run_id=config.run_id, artifact_dir=artifact_dir)
+        config = RunConfig.from_config(
+            config_path=config_path,
+            task_name="real-preflight-doctor",
+            task_config_path=task_config_path,
+            run_id=config.run_id,
+            artifact_dir=artifact_dir,
+        )
         console.print("Checking real runtime preflight contract")
         topics, topic_error = _collect_ros2_topics()
         summary = _build_real_preflight_summary(config, topics=topics, topic_probe_error=topic_error)
+        summary["config_sources"] = config.config_sources_summary()
         artifact_dir.mkdir(parents=True, exist_ok=True)
         (artifact_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
         color = "green" if summary["ok"] else "red"

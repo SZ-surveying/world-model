@@ -80,7 +80,9 @@ def evaluate_scan_quality(
         if ray_z >= -abs(min_downward_ray_z):
             continue
         floor_intersection = lidar_height_m / max(abs(ray_z), 1e-6)
-        guard_range = min(float(floor_hit_guard_range_m), float(range_max) if range_max > 0 else floor_hit_guard_range_m)
+        guard_range = min(
+            float(floor_hit_guard_range_m), float(range_max) if range_max > 0 else floor_hit_guard_range_m
+        )
         if floor_intersection <= guard_range and floor_intersection <= value:
             unsafe.append(index)
 
@@ -260,7 +262,9 @@ def run() -> int:
                 roll, pitch, yaw = quaternion_to_rpy_deg(float(q.x), float(q.y), float(q.z), float(q.w))
             except ValueError:
                 return
-            self._record_attitude(roll_deg=roll, pitch_deg=pitch, yaw_deg=yaw, stamp_sec=self._stamp_sec(message.header.stamp))
+            self._record_attitude(
+                roll_deg=roll, pitch_deg=pitch, yaw_deg=yaw, stamp_sec=self._stamp_sec(message.header.stamp)
+            )
 
         def _pose_cb(self, message: PoseStamped) -> None:
             q = message.pose.orientation
@@ -268,7 +272,9 @@ def run() -> int:
                 roll, pitch, yaw = quaternion_to_rpy_deg(float(q.x), float(q.y), float(q.z), float(q.w))
             except ValueError:
                 return
-            self._record_attitude(roll_deg=roll, pitch_deg=pitch, yaw_deg=yaw, stamp_sec=self._stamp_sec(message.header.stamp))
+            self._record_attitude(
+                roll_deg=roll, pitch_deg=pitch, yaw_deg=yaw, stamp_sec=self._stamp_sec(message.header.stamp)
+            )
 
         def _attitude_rate(self) -> float:
             now = time.monotonic()
@@ -304,8 +310,12 @@ def run() -> int:
             time_offset_ms: float | None = None,
         ) -> dict[str, Any]:
             attitude = self._attitude or {}
-            roll = float(attitude.get("roll_deg") or 0.0) + (self._fault["roll_bias_deg"] if self._fault["enabled"] else 0.0)
-            pitch = float(attitude.get("pitch_deg") or 0.0) + (self._fault["pitch_bias_deg"] if self._fault["enabled"] else 0.0)
+            roll = float(attitude.get("roll_deg") or 0.0) + (
+                self._fault["roll_bias_deg"] if self._fault["enabled"] else 0.0
+            )
+            pitch = float(attitude.get("pitch_deg") or 0.0) + (
+                self._fault["pitch_bias_deg"] if self._fault["enabled"] else 0.0
+            )
             tilt = quality.tilt_deg if quality else math.hypot(roll, pitch)
             dropped_ratio = self._dropped / max(self._count, 1)
             all_blockers = list(blockers)
@@ -393,7 +403,11 @@ def run() -> int:
                 self._hard_tilt += 1
             if quality.state == "drop":
                 self._dropped += 1
-                self._publish_status(self._status_payload(message, "drop", quality=quality, blockers=quality.blockers, time_offset_ms=time_offset_ms))
+                self._publish_status(
+                    self._status_payload(
+                        message, "drop", quality=quality, blockers=quality.blockers, time_offset_ms=time_offset_ms
+                    )
+                )
                 return
 
             output = copy.deepcopy(message)
@@ -409,7 +423,9 @@ def run() -> int:
                 self._warned += 1
             self._accepted += 1
             self._publisher.publish(output)
-            self._publish_status(self._status_payload(output, quality.state, quality=quality, time_offset_ms=time_offset_ms))
+            self._publish_status(
+                self._status_payload(output, quality.state, quality=quality, time_offset_ms=time_offset_ms)
+            )
 
         def _log_status(self) -> None:
             elapsed = max(time.monotonic() - self._started, 0.001)

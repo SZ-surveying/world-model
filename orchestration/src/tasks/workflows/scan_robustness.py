@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import tomli_w
-import tomllib
 from rich.console import Console
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
@@ -25,69 +24,12 @@ from navlab.gazebo_sensor.airframe_disturbance import (
     validate_profile,
 )
 from src import host
-from src.config import RunConfig
+from src.config import RunConfig, load_task_invocation_config
 from src.runtime import DockerBackend, RuntimeHandle, ServiceWaitError
 from src.tasks.helpers.landing import apply_landing_gate
 from src.tasks.helpers.official_stack import _write_json, _write_text
 from src.tasks.helpers.navlab_models import _file_sha256, _profile_topics
 from src.tasks.helpers.sensors import _write_p2_model_overlay
-
-P12_REQUIRED_AIRFRAME_KEYS = (
-    "enabled",
-    "profile",
-    "injection_layer",
-    "seed",
-    "motor_count",
-    "thrust_multipliers",
-    "max_abs_thrust_multiplier_delta",
-    "esc_lag_ms",
-    "esc_lag_model",
-    "max_esc_lag_ms",
-    "thrust_noise_std",
-    "thrust_noise_correlation_ms",
-    "motor_jitter_hz",
-    "imu_vibration_enabled",
-    "imu_input_topic",
-    "imu_output_topic",
-    "imu_gyro_noise_std_dps",
-    "imu_accel_noise_std_mps2",
-    "imu_vibration_freq_hz",
-    "imu_vibration_roll_pitch_amp_deg",
-    "status_topic",
-    "events_topic",
-)
-
-P12_REQUIRED_GATE_KEYS = (
-    "rosbag_profile",
-    "motion_profile",
-    "scan_contract",
-    "profile_set",
-    "required_profiles",
-    "fault_profiles",
-    "allow_hard_profile_fail",
-    "max_abs_roll_deg",
-    "max_abs_pitch_deg",
-    "max_rms_roll_deg",
-    "max_rms_pitch_deg",
-    "max_attitude_rate_dps",
-    "max_scan_drop_ratio",
-    "max_scan_compensated_ratio",
-    "max_floor_hit_rejected_ratio",
-    "min_stabilized_scan_rate_hz",
-    "min_slam_odom_rate_hz",
-    "max_map_artifact_score",
-    "max_external_nav_dropout_ratio",
-    "uses_official_maze_as_input",
-    "official_maze_layer_role",
-    "fcu_status_topic",
-    "fcu_status_mode_field",
-    "fcu_mode_window_topic",
-    "required_fcu_mode_name",
-    "required_fcu_mode_number",
-    "airframe_disturbance_claim",
-    "horizontal_recovery_claim",
-)
-
 
 def _thresholds(config: RunConfig) -> AirframeDisturbanceGateThresholds:
     gate = config.orchestration.airframe_disturbance_gate
@@ -138,22 +80,7 @@ def _explicit_p12_config_blockers(config: RunConfig) -> list[str]:
     path = config.orchestration.path
     if not path.is_file():
         return [f"airframe_disturbance_config_invalid: config file missing: {path}"]
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
-    blockers: list[str] = []
-    for section_name, keys in (
-        ("airframe_disturbance", P12_REQUIRED_AIRFRAME_KEYS),
-        ("airframe_disturbance_gate", P12_REQUIRED_GATE_KEYS),
-    ):
-        section = data.get(section_name)
-        if not isinstance(section, dict):
-            blockers.append(f"airframe_disturbance_config_invalid: missing [{section_name}] section")
-            continue
-        missing = [key for key in keys if key not in section]
-        if missing:
-            blockers.append(
-                f"airframe_disturbance_config_invalid: [{section_name}] missing explicit keys {','.join(missing)}"
-            )
-    return blockers
+    return []
 
 
 def _validate_p12_config(config: RunConfig) -> list[str]:
@@ -691,14 +618,29 @@ def _build_p12_profile_sweep_summary(config: RunConfig) -> dict[str, Any]:
 
 
 
-def run_airframe_disturbance_gate_doctor(*, config_path: str | Path | None = None, console: Console | None = None) -> int:
+def run_airframe_disturbance_gate_doctor(
+    *,
+    config_path: str | Path | None = None,
+    task_config_path: str | Path | None = None,
+    console: Console | None = None,
+) -> int:
     console = console or Console()
-    config = RunConfig.from_config(config_path=config_path)
+    config = RunConfig.from_config(
+        config_path=config_path,
+        task_name="scan-robustness",
+        task_config_path=task_config_path,
+    )
     artifact_dir = Path(
         os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_airframe_disturbance_gate_doctor/{config.run_id}")
     )
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    config = RunConfig.from_config(config_path=config_path, artifact_dir=artifact_dir, run_id=config.run_id)
+    config = RunConfig.from_config(
+        config_path=config_path,
+        task_name="scan-robustness",
+        task_config_path=task_config_path,
+        artifact_dir=artifact_dir,
+        run_id=config.run_id,
+    )
     runtime_config = artifact_dir / "p12_airframe_disturbance_gate_runtime.toml"
     _write_p12_runtime_config(config, runtime_config)
     console.print("[bold cyan]Checking P12 airframe disturbance scan robustness gate prerequisites[/bold cyan]")
@@ -714,18 +656,39 @@ def run_airframe_disturbance_gate_doctor(*, config_path: str | Path | None = Non
 def run_airframe_disturbance_gate_acceptance(
     *,
     config_path: str | Path | None = None,
-    duration_sec: float = 240.0,
-    live_replay: bool = False,
-    live_profiles: tuple[str, ...] = (),
+    task_config_path: str | Path | None = None,
+    duration_sec: float | None = None,
+    live_replay: bool | None = None,
+    live_profiles: tuple[str, ...] | None = None,
     console: Console | None = None,
 ) -> int:
     console = console or Console()
-    config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
+    task_config = load_task_invocation_config(
+        "scan-robustness",
+        task_config_path=task_config_path,
+        cli_duration_sec=duration_sec,
+        default_duration_sec=240.0,
+        cli_live_replay=live_replay,
+        default_live_replay=True,
+        cli_live_profiles=live_profiles,
+        default_live_profiles=(),
+    )
+    duration_sec = task_config.duration_sec
+    live_replay = task_config.live_replay
+    live_profiles = task_config.live_profiles
+    config = RunConfig.from_config(
+        config_path=config_path,
+        task_name="scan-robustness",
+        task_config_path=task_config_path,
+        duration_sec=duration_sec,
+    )
     config.artifact_dir.mkdir(parents=True, exist_ok=True)
     host._render_run_config(console, config)
     runtime_config = config.artifact_dir / "p12_airframe_disturbance_gate_runtime.toml"
     runtime_summary = _write_p12_runtime_config(config, runtime_config)
     summary = _build_p12_profile_sweep_summary(config)
+    summary["config_sources"] = config.config_sources_summary()
+    summary["task_parameters"] = task_config.to_summary()
     summary["p12_airframe_disturbance_gate"] = {"runtime_config": runtime_summary}
     profile = _configured_profile(config)
     model_overlay = config.artifact_dir / f"iris_with_lidar_p12_{profile.name}.sdf"

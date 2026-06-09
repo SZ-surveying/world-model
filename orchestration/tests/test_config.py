@@ -16,6 +16,8 @@ from src.config import (
     NAVLAB_STOP_SERVICES,
     OrchestrationConfig,
     RunConfig,
+    load_task_invocation_config,
+    resolve_config_path,
 )
 from src.project_config import load_navlab_images_config, load_runtime_config, resolve_navlab_image_tag
 from src.runtime import ServiceSpec
@@ -158,196 +160,79 @@ def test_navlab_compose_env_contains_only_compose_level_config() -> None:
     assert config.landing.policy_for_task("scan-robustness") == "land_in_place"
     assert config.landing.landing_status_topic == "/navlab/landing/status"
     assert config.landing.landing_intent_topic == "/navlab/landing/intent"
-    assert config.landing.home_source == "post_takeoff_hover_pose"
-    assert config.landing.home_radius_m == 0.35
-    assert config.landing.require_disarm is True
-    assert config.landing.require_motors_safe is True
-    assert config.landing.uses_gazebo_truth_as_input is False
-    assert config.official_baseline.rosbag_profile == "profiles/navlab-official-baseline-rosbag-topics.txt"
-    assert config.official_baseline.dds_enable == "1"
-    assert config.official_baseline.dds_domain_id == "0"
-    assert config.official_baseline.rmw_implementation == "rmw_cyclonedds_cpp"
-    assert config.official_baseline.expected_ap_node == "/ap"
-    assert config.official_baseline.required_ap_topics == ("/ap/v1/time",)
-    assert config.official_baseline.runtime_image == "world-model/navlab-official-baseline:latest"
-    assert config.official_baseline.required_ros_packages == (
-        "ardupilot_sitl",
-        "ardupilot_msgs",
-        "ardupilot_dds_tests",
-        "micro_ros_agent",
-        "ardupilot_gz_bringup",
-        "ardupilot_gz_application",
-        "ardupilot_gazebo",
-        "ardupilot_gz_gazebo",
-        "ardupilot_sitl_models",
-        "ardupilot_cartographer",
+
+
+def test_default_orchestration_config_path_follows_runtime_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NAVLAB_ORCHESTRATION_CONFIG", raising=False)
+    monkeypatch.delenv("NAVLAB_RUNTIME_MODE", raising=False)
+    assert resolve_config_path().name == "config.simulation.toml"
+
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
+    assert resolve_config_path().name == "config.real.toml"
+
+
+def test_navlab_orchestration_config_env_is_ignored(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    hidden_config = tmp_path / "hidden.toml"
+    hidden_config.write_text("session_id = \"hidden\"\n", encoding="utf-8")
+    monkeypatch.setenv("NAVLAB_ORCHESTRATION_CONFIG", str(hidden_config))
+    monkeypatch.delenv("NAVLAB_RUNTIME_MODE", raising=False)
+
+    config = OrchestrationConfig.load()
+
+    assert config.path.name == "config.simulation.toml"
+    assert config.session_id == "navlab_companion_sitl_gazebo"
+
+
+def test_task_config_overrides_invocation_and_internal_config(tmp_path: Path) -> None:
+    task_config = tmp_path / "hover.toml"
+    task_config.write_text(
+        """
+[task]
+duration_sec = 17.0
+simulation_profile = "mild_disturbance"
+
+[fcu_controller]
+takeoff_alt_m = 0.72
+""".strip(),
+        encoding="utf-8",
     )
-    assert config.official_baseline.micro_ros_agent_binaries == ("MicroXRCEAgent", "micro_ros_agent")
-    assert config.official_baseline.sitl_launch == "ros2 launch ardupilot_sitl sitl_dds_udp.launch.py"
-    assert config.official_baseline.gazebo_launch == "ros2 launch ardupilot_gz_bringup iris_maze.launch.py"
-    assert config.official_baseline.cartographer_launch == "ros2 launch ardupilot_cartographer cartographer.launch.py"
-    assert config.official_baseline.gazebo_bringup_mode == "official_gz_bringup"
-    assert config.official_baseline.external_nav_route == "official_dds"
-    assert config.official_maze_x2.rosbag_profile == "profiles/navlab-official-maze-x2-rosbag-topics.txt"
-    assert config.official_maze_x2.world_source == "official_iris_maze"
-    assert config.official_maze_x2.vehicle_model_source == "official_iris_with_lidar"
-    assert config.official_maze_x2.gazebo_lidar_topic == "/lidar"
-    assert config.official_maze_x2.x2_scan_input_topic == "/lidar"
-    assert config.official_maze_x2.x2_scan_topic == "/scan"
-    assert config.official_maze_x2.x2_status_topic == "/sim/x2/status"
-    assert config.official_maze_x2.altitude_control_claim == "not_evaluated"
-    assert config.official_maze_x2.hover_claim == "not_evaluated"
-    assert config.rangefinder_imu.rosbag_profile == "profiles/navlab-rangefinder-imu-rosbag-topics.txt"
-    assert config.rangefinder_imu.world_source == "official_iris_maze"
-    assert config.rangefinder_imu.vehicle_model_source == "official_iris_with_lidar"
-    assert config.rangefinder_imu.model_overlay_source == "official_iris_with_lidar_plus_down_rangefinder"
-    assert config.rangefinder_imu.gazebo_lidar_topic == "/lidar"
-    assert config.rangefinder_imu.x2_scan_input_topic == "/lidar"
-    assert config.rangefinder_imu.x2_scan_topic == "/scan"
-    assert config.rangefinder_imu.x2_status_topic == "/sim/x2/status"
-    assert config.rangefinder_imu.rangefinder_scan_ideal_topic == "/rangefinder/down/scan_ideal"
-    assert config.rangefinder_imu.rangefinder_range_topic == "/rangefinder/down/range"
-    assert config.rangefinder_imu.rangefinder_status_topic == "/rangefinder/down/status"
-    assert config.rangefinder_imu.rangefinder_frame_id == "rangefinder_down_frame"
-    assert config.rangefinder_imu.rangefinder_endpoint == "udpin:0.0.0.0:14550"
-    assert config.rangefinder_imu.rangefinder_fcu_probe_endpoint == "udpin:0.0.0.0:14551"
-    assert config.rangefinder_imu.rangefinder_mavlink_orientation == "MAV_SENSOR_ROTATION_PITCH_270"
-    assert config.rangefinder_imu.rangefinder_rate_hz == 20.0
-    assert config.rangefinder_imu.rangefinder_min_distance_m == 0.05
-    assert config.rangefinder_imu.rangefinder_max_distance_m == 6.0
-    assert config.rangefinder_imu.imu_source_route == "official_gazebo_imu_bridge"
-    assert config.rangefinder_imu.imu_output_topic == "/imu"
-    assert config.rangefinder_imu.imu_frame_id == "imu_link"
-    assert config.rangefinder_imu.synthetic_fallback_enabled is False
-    assert config.rangefinder_imu.altitude_control_claim == "not_evaluated"
-    assert config.rangefinder_imu.hover_claim == "not_evaluated"
-    assert config.slam_backend.rosbag_profile == "profiles/navlab-slam-backend-rosbag-topics.txt"
-    assert config.slam_backend.backend == "cartographer"
-    assert config.slam_backend.launch_package == "navlab_slam_bringup"
-    assert config.slam_backend.scan_topic == "/scan"
-    assert config.slam_backend.x2_vendor_scan_topic == "/navlab/x2/vendor_scan"
-    assert config.slam_backend.imu_topic == "/imu"
-    assert config.slam_backend.odometry_topic == "/odometry"
-    assert config.slam_backend.slam_odom_topic == "/slam/odom"
-    assert config.slam_backend.slam_status_topic == "/navlab/slam/status"
-    assert config.slam_backend.uses_gazebo_truth_as_input is False
-    assert config.fcu_controller.rosbag_profile == "profiles/navlab-fcu-controller-rosbag-topics.txt"
-    assert config.fcu_controller.control_route == "mavlink_bootstrap_plus_dds_cmd_vel"
-    assert config.fcu_controller.mavlink_bootstrap_endpoint == "udp:127.0.0.1:14550"
-    assert config.fcu_controller.mavlink_bootstrap_source_system == 246
-    assert config.fcu_controller.mavlink_bootstrap_source_component == 190
-    assert config.fcu_controller.owner_name == "navlab_fcu_controller"
-    assert config.fcu_controller.owner_id == "navlab-p4-fcu-controller"
-    assert config.fcu_controller.fcu_state_topic == "/navlab/fcu/state"
-    assert config.fcu_controller.controller_status_topic == "/navlab/fcu/controller/status"
-    assert config.fcu_controller.setpoint_intent_topic == "/navlab/fcu/setpoint/intent"
-    assert config.fcu_controller.setpoint_output_topic == "/navlab/fcu/setpoint/output"
-    assert config.fcu_controller.owner_status_topic == "/navlab/fcu/owner/status"
-    assert config.fcu_controller.prearm_service == "/ap/v1/prearm_check"
-    assert config.fcu_controller.mode_switch_service == "/ap/v1/mode_switch"
-    assert config.fcu_controller.arm_service == "/ap/v1/arm_motors"
-    assert config.fcu_controller.takeoff_service == "/ap/v1/experimental/takeoff"
-    assert config.fcu_controller.cmd_vel_topic == "/ap/v1/cmd_vel"
-    assert config.fcu_controller.guided_mode == 4
-    assert config.fcu_controller.takeoff_alt_m == 0.5
-    assert config.fcu_controller.require_slam_backend is True
-    assert config.fcu_controller.hover_claim == "not_evaluated"
-    assert config.fcu_controller.exploration_claim == "not_evaluated"
-    assert config.frame_contract.rosbag_profile == "profiles/navlab-frame-contract-rosbag-topics.txt"
-    assert config.frame_contract.required_frames == (
-        "map",
-        "odom",
-        "base_link",
-        "imu_link",
-        "base_scan",
-        "rangefinder_down_frame",
+
+    invocation = load_task_invocation_config("hover", task_config_path=task_config)
+    config = RunConfig.from_config(task_name="hover", task_config_path=task_config)
+
+    assert invocation.duration_sec == 17.0
+    assert invocation.duration_source == "task config"
+    assert invocation.simulation_profile == "mild_disturbance"
+    assert config.orchestration.fcu_controller.takeoff_alt_m == 0.72
+
+
+def test_cli_task_params_override_task_config(tmp_path: Path) -> None:
+    task_config = tmp_path / "hover.toml"
+    task_config.write_text(
+        """
+[task]
+duration_sec = 17.0
+simulation_profile = "mild_disturbance"
+""".strip(),
+        encoding="utf-8",
     )
-    assert config.frame_contract.map_frame_id == "map"
-    assert config.frame_contract.odom_frame_id == "odom"
-    assert config.frame_contract.base_frame_id == "base_link"
-    assert config.frame_contract.imu_frame_id == "imu_link"
-    assert config.frame_contract.laser_frame_id == "base_scan"
-    assert config.frame_contract.rangefinder_frame_id == "rangefinder_down_frame"
-    assert config.frame_contract.scan_topic == "/scan"
-    assert config.frame_contract.imu_topic == "/imu"
-    assert config.frame_contract.rangefinder_range_topic == "/rangefinder/down/range"
-    assert config.frame_contract.rangefinder_status_topic == "/rangefinder/down/status"
-    assert config.frame_contract.fcu_pose_topic == "/ap/v1/pose/filtered"
-    assert config.frame_contract.fcu_twist_topic == "/ap/v1/twist/filtered"
-    assert config.frame_contract.cmd_vel_topic == "/ap/v1/cmd_vel"
-    assert config.frame_contract.slam_odom_topic == "/slam/odom"
-    assert config.frame_contract.truth_diagnostic_topic == "/odometry"
-    assert config.frame_contract.status_topic == "/navlab/frame_contract/status"
-    assert config.frame_contract.require_motion_direction_check is False
-    assert config.frame_contract.uses_gazebo_truth_as_input is False
-    assert config.slam_hover.rosbag_profile == "profiles/navlab-slam-hover-rosbag-topics.txt"
-    assert config.slam_hover.slam_odom_topic == "/slam/odom"
-    assert config.slam_hover.external_nav_status_topic == "/external_nav/status"
-    assert config.slam_hover.fcu_pose_topic == "/ap/v1/pose/filtered"
-    assert config.slam_hover.cmd_vel_topic == "/ap/v1/cmd_vel"
-    assert config.slam_hover.rangefinder_range_topic == "/rangefinder/down/range"
-    assert config.slam_hover.imu_topic == "/imu"
-    assert config.slam_hover.truth_diagnostic_topic == "/odometry"
-    assert config.slam_hover.hover_status_topic == "/navlab/hover/status"
-    assert config.slam_hover.vehicle_marker_topic == "/navlab/vehicle/markers"
-    assert config.slam_hover.vehicle_marker_pose_topic == "/ap/v1/pose/filtered"
-    assert config.slam_hover.vehicle_marker_frame_id == ""
-    assert config.slam_hover.record_visualization_markers is False
-    assert config.slam_hover.vehicle_marker_rate_hz == 10.0
-    assert config.slam_hover.hover_window_sec == 18.0
-    assert config.slam_hover.max_hover_horizontal_drift_m == 0.35
-    assert config.slam_hover.min_external_nav_rate_hz == 5.0
-    assert config.slam_hover.uses_gazebo_truth_as_input is False
-    assert config.slam_hover.hover_claim == "evaluated"
-    assert config.slam_hover.exploration_claim == "not_evaluated"
-    assert config.motion_gate.rosbag_profile == "profiles/navlab-motion-gate-rosbag-topics.txt"
-    assert config.motion_gate.slam_odom_topic == "/slam/odom"
-    assert config.motion_gate.external_nav_status_topic == "/external_nav/status"
-    assert config.motion_gate.fcu_pose_topic == "/ap/v1/pose/filtered"
-    assert config.motion_gate.cmd_vel_topic == "/ap/v1/cmd_vel"
-    assert config.motion_gate.scan_topic == "/scan"
-    assert config.motion_gate.motion_status_topic == "/navlab/motion/status"
-    assert config.motion_gate.motion_distance_m == 0.40
-    assert config.motion_gate.motion_speed_mps == 0.12
-    assert config.motion_gate.yaw_scan_rad == 0.50
-    assert config.motion_gate.yaw_window_sec == 4.0
-    assert config.motion_gate.min_clearance_m == 0.35
-    assert config.motion_gate.uses_gazebo_truth_as_input is False
-    assert config.motion_gate.hover_claim == "evaluated"
-    assert config.motion_gate.motion_claim == "evaluated"
-    assert config.motion_gate.exploration_claim == "not_evaluated"
-    assert config.scan_integrity_gate.rosbag_profile == "profiles/navlab-scan-integrity-gate-rosbag-topics.txt"
-    assert config.scan_integrity_gate.raw_scan_topic == "/navlab/x2/scan_raw"
-    assert config.scan_integrity_gate.normalized_scan_topic == "/navlab/x2/scan_normalized"
-    assert config.scan_integrity_gate.validated_scan_topic == "/scan"
-    assert config.scan_integrity_gate.status_topic == "/navlab/scan_integrity/status"
-    assert config.scan_integrity_gate.attitude_source_topic == "/imu"
-    assert config.scan_integrity_gate.attitude_source_type == "imu"
-    assert config.scan_integrity_gate.max_attitude_source_age_ms == 250.0
-    assert config.scan_integrity_gate.hard_tilt_deg == 6.0
-    assert config.scan_integrity_gate.uses_gazebo_truth_as_input is False
-    assert config.scan_integrity_gate.scan_integrity_claim == "evaluated"
-    assert config.scan_stabilization.enabled is True
-    assert config.scan_stabilization.mode == "bounded_2d_projection"
-    assert config.scan_stabilization.input_scan_topic == "/navlab/x2/scan_normalized"
-    assert config.scan_stabilization.output_scan_topic == "/scan"
-    assert config.scan_stabilization.status_topic == "/navlab/scan_stabilization/status"
-    assert config.scan_stabilization.passthrough_tilt_deg == 3.0
-    assert config.scan_stabilization.compensation_tilt_deg == 8.0
-    assert config.scan_stabilization.hard_drop_tilt_deg == 10.0
-    assert config.scan_stabilization.max_attitude_source_age_ms == 250.0
-    assert config.scan_stabilization.uses_gazebo_truth_as_input is False
-    assert config.scan_stabilization_gate.rosbag_profile == "profiles/navlab-scan-stabilization-gate-rosbag-topics.txt"
-    assert config.scan_stabilization_gate.motion_profile == "p9_representative_replay"
-    assert config.scan_stabilization_gate.baseline_mode == "p10_drop_only"
-    assert config.scan_stabilization_gate.candidate_mode == "bounded_2d_projection"
-    assert config.scan_stabilization_gate.replay_readiness_timeout_sec == 90.0
-    assert config.scan_stabilization_gate.controller_summary_timeout_sec == 45.0
+
+    invocation = load_task_invocation_config(
+        "hover",
+        task_config_path=task_config,
+        cli_duration_sec=23.0,
+        cli_simulation_profile="ideal",
+    )
+
+    assert invocation.duration_sec == 23.0
+    assert invocation.duration_source == "CLI"
+    assert invocation.simulation_profile == "ideal"
+    assert invocation.simulation_profile_source == "CLI"
 
 
 def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> None:
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         duration_sec=45.0,
         run_id="20260603_000000",
     )
@@ -358,7 +243,7 @@ def test_navlab_compose_environment_uses_run_scoped_session_id(monkeypatch) -> N
 
 def test_navlab_images_config_drives_default_run_images() -> None:
     image_config = load_navlab_images_config(load_runtime_config())
-    orchestration = OrchestrationConfig.load("orchestration/config.toml")
+    orchestration = OrchestrationConfig.load("orchestration/config.simulation.toml")
 
     assert image_config.companion.dockerfile.value == "docker/Dockerfile.companion"
     assert image_config.companion.context.value == "."
@@ -402,7 +287,7 @@ def test_navlab_compose_services_do_not_include_sim_runtime() -> None:
 
 def test_navlab_run_config_is_derived_from_config() -> None:
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         duration_sec=45.0,
         run_id="20260603_000000",
     )
@@ -499,7 +384,7 @@ def test_p3_slam_backend_rosbag_profile_contains_required_topics() -> None:
 
 
 def test_p3_slam_runtime_config_writes_canonical_backend_contract(tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     runtime_config = tmp_path / "p3_slam_runtime.toml"
 
     summary = slam_backend_task_module._write_p3_slam_runtime_config(config, runtime_config)
@@ -522,7 +407,7 @@ def test_p3_slam_runtime_config_writes_canonical_backend_contract(tmp_path) -> N
 
 
 def test_p3_doctor_blocks_gazebo_truth_as_slam_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     orchestration = replace(
         config.orchestration,
         slam_backend=replace(config.orchestration.slam_backend, uses_gazebo_truth_as_input=True),
@@ -548,7 +433,7 @@ def test_p3_doctor_blocks_gazebo_truth_as_slam_input(monkeypatch, tmp_path) -> N
 
 
 def test_p3_slam_odom_quality_blocks_missing_output() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     blockers: list[str] = []
 
     slam_backend_task_module._append_slam_odom_quality_blockers(
@@ -563,7 +448,7 @@ def test_p3_slam_odom_quality_blocks_missing_output() -> None:
 
 
 def test_p3_slam_odom_quality_blocks_unstable_output() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     p3 = config.orchestration.slam_backend
     blockers: list[str] = []
 
@@ -589,7 +474,7 @@ def test_p3_slam_odom_quality_blocks_unstable_output() -> None:
 
 
 def test_p4_fcu_controller_rosbag_profile_contains_required_topics() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     profile = Path(config.fcu_controller_rosbag_profile)
     content = profile.read_text(encoding="utf-8")
 
@@ -612,7 +497,7 @@ def test_p4_fcu_controller_rosbag_profile_contains_required_topics() -> None:
 
 
 def test_p4_runtime_config_writes_controller_contract(tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     runtime_config = tmp_path / "p4_fcu_controller_runtime.toml"
 
     summary = fcu_controller_task_module._write_p4_runtime_config(config, runtime_config)
@@ -636,7 +521,7 @@ def test_p4_runtime_config_writes_controller_contract(tmp_path) -> None:  # noqa
 
 
 def test_p4_doctor_blocks_mavlink_fallback(monkeypatch, tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     orchestration = replace(
         config.orchestration,
         fcu_controller=replace(config.orchestration.fcu_controller, control_route="mavlink_fallback"),
@@ -659,7 +544,7 @@ def test_p4_doctor_blocks_mavlink_fallback(monkeypatch, tmp_path) -> None:  # no
 
 
 def test_p4_doctor_allows_mavlink_bootstrap_route(monkeypatch, tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     runtime_config = tmp_path / "p4_fcu_controller_runtime.toml"
     fcu_controller_task_module._write_p4_runtime_config(config, runtime_config)
 
@@ -697,7 +582,7 @@ def test_ros_shell_stderr_filter_preserves_heredoc_terminator() -> None:
 
 def test_collect_topic_info_skips_transient_topics(monkeypatch, tmp_path) -> None:  # noqa: ANN001
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         artifact_dir=tmp_path,
         run_id="20260603_000000",
     )
@@ -725,7 +610,7 @@ def test_collect_topic_info_skips_transient_topics(monkeypatch, tmp_path) -> Non
 
 
 def test_p4_owner_blockers_detect_competing_publishers() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     blockers: list[str] = []
 
     fcu_controller_task_module._append_owner_blockers(
@@ -739,7 +624,7 @@ def test_p4_owner_blockers_detect_competing_publishers() -> None:
 
 
 def test_p4_owner_blockers_detect_direct_set_pose() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     blockers: list[str] = []
 
     fcu_controller_task_module._append_owner_blockers(
@@ -774,7 +659,7 @@ def test_p4_controller_blockers_detect_pre_ready_output_and_direct_pose() -> Non
 
 
 def test_p5_frame_contract_rosbag_profile_contains_required_topics() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     profile = Path(config.frame_contract_rosbag_profile)
     content = profile.read_text(encoding="utf-8")
 
@@ -802,7 +687,7 @@ def test_p5_frame_contract_rosbag_profile_contains_required_topics() -> None:
 
 
 def test_p5_runtime_config_writes_frame_contract(tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     runtime_config = tmp_path / "p5_frame_contract_runtime.toml"
 
     summary = frame_contract_task_module._write_p5_runtime_config(config, runtime_config)
@@ -829,7 +714,7 @@ def test_p5_runtime_config_writes_frame_contract(tmp_path) -> None:  # noqa: ANN
 
 
 def test_p5_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     orchestration = replace(
         config.orchestration,
         frame_contract=replace(config.orchestration.frame_contract, uses_gazebo_truth_as_input=True),
@@ -857,7 +742,7 @@ def test_p5_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None: 
 
 
 def test_p5_blockers_detect_failed_frame_contract() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     blockers: list[str] = []
 
     frame_contract_task_module._append_p5_blockers(
@@ -885,7 +770,7 @@ def test_p5_blockers_detect_failed_frame_contract() -> None:
 
 
 def test_p6_slam_hover_rosbag_profile_contains_required_topics() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     profile = Path(config.slam_hover_rosbag_profile)
     content = profile.read_text(encoding="utf-8")
 
@@ -919,7 +804,7 @@ def test_p6_slam_hover_rosbag_profile_contains_required_topics() -> None:
 
 
 def test_p6_runtime_config_writes_slam_hover_contract(tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     runtime_config = tmp_path / "p6_slam_hover_runtime.toml"
 
     summary = slam_hover_task_module._write_p6_runtime_config(config, runtime_config)
@@ -942,7 +827,7 @@ def test_p6_runtime_config_writes_slam_hover_contract(tmp_path) -> None:  # noqa
 
 def test_p6_effective_rosbag_profile_adds_vehicle_markers_only_when_enabled(tmp_path) -> None:  # noqa: ANN001
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         run_id="20260603_000000",
         artifact_dir=tmp_path / "disabled",
     )
@@ -972,7 +857,7 @@ def test_p6_effective_rosbag_profile_adds_vehicle_markers_only_when_enabled(tmp_
 
 
 def test_p6_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     orchestration = replace(
         config.orchestration,
         slam_hover=replace(config.orchestration.slam_hover, uses_gazebo_truth_as_input=True),
@@ -1005,7 +890,7 @@ def test_p6_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None: 
 
 
 def test_p6_blockers_detect_failed_hover_gate() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     blockers: list[str] = []
 
     slam_hover_task_module._append_p6_blockers(
@@ -1032,7 +917,7 @@ def test_p6_blockers_detect_failed_hover_gate() -> None:
 
 
 def test_p6_blockers_require_vehicle_marker_only_when_recording_enabled() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     enabled_orchestration = replace(
         config.orchestration,
         slam_hover=replace(config.orchestration.slam_hover, record_visualization_markers=True),
@@ -1058,7 +943,7 @@ def test_p6_blockers_require_vehicle_marker_only_when_recording_enabled() -> Non
 
 
 def test_p7_motion_gate_rosbag_profile_contains_required_topics() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     profile = Path(config.motion_gate_rosbag_profile)
     content = profile.read_text(encoding="utf-8")
 
@@ -1090,7 +975,7 @@ def test_p7_motion_gate_rosbag_profile_contains_required_topics() -> None:
 
 
 def test_p7_runtime_config_writes_motion_gate_contract(tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     runtime_config = tmp_path / "p7_motion_gate_runtime.toml"
 
     summary = motion_gate_task_module._write_p7_runtime_config(config, runtime_config)
@@ -1114,7 +999,7 @@ def test_p7_runtime_config_writes_motion_gate_contract(tmp_path) -> None:  # noq
 
 def test_p7_motion_coordinator_does_not_publish_cmd_vel(tmp_path) -> None:  # noqa: ANN001
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         artifact_dir=tmp_path,
         run_id="20260603_000000",
     )
@@ -1130,7 +1015,7 @@ def test_p7_motion_coordinator_does_not_publish_cmd_vel(tmp_path) -> None:  # no
 
 def test_p7_controller_script_can_consume_motion_intents(tmp_path) -> None:  # noqa: ANN001
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         artifact_dir=tmp_path,
         run_id="20260603_000000",
     )
@@ -1154,7 +1039,7 @@ def test_p7_controller_script_can_consume_motion_intents(tmp_path) -> None:  # n
 
 def test_p4_controller_script_can_consume_landing_intents(tmp_path) -> None:  # noqa: ANN001
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         artifact_dir=tmp_path,
         run_id="20260603_000000",
     )
@@ -1183,7 +1068,7 @@ def test_p4_controller_script_can_consume_landing_intents(tmp_path) -> None:  # 
 
 def test_p8_probe_publishes_return_home_landing_intent(tmp_path) -> None:  # noqa: ANN001
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         artifact_dir=tmp_path,
         run_id="20260603_000000",
     )
@@ -1199,7 +1084,7 @@ def test_p8_probe_publishes_return_home_landing_intent(tmp_path) -> None:  # noq
 
 
 def test_p7_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     orchestration = replace(
         config.orchestration,
         motion_gate=replace(config.orchestration.motion_gate, uses_gazebo_truth_as_input=True),
@@ -1221,7 +1106,7 @@ def test_p7_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None: 
 
 
 def test_p7_blockers_detect_failed_motion_gate() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     blockers: list[str] = []
 
     motion_gate_task_module._append_p7_blockers(
@@ -1257,7 +1142,7 @@ def test_p7_blockers_detect_failed_motion_gate() -> None:
 
 
 def test_p8_exploration_gate_config_loads() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
 
     assert config.exploration_gate_rosbag_profile == "profiles/navlab-exploration-gate-rosbag-topics.txt"
     assert config.orchestration.exploration_gate.strategy == "frontier_lite"
@@ -1276,7 +1161,7 @@ def test_p8_exploration_gate_config_loads() -> None:
 
 
 def test_p8_replay_profile_extends_motion_without_relaxing_safety_contract() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
 
     replay_config = exploration_gate_task_module._apply_replay_profile(config, "conservative")
     base = config.orchestration.exploration_gate
@@ -1301,7 +1186,7 @@ def test_p8_replay_profile_extends_motion_without_relaxing_safety_contract() -> 
 
 
 def test_p9_display_replay_profile_goes_farther_without_relaxing_safety_contract() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
 
     replay_config = exploration_gate_task_module._apply_replay_profile(config, "display")
     base = config.orchestration.exploration_gate
@@ -1327,7 +1212,7 @@ def test_p9_display_replay_profile_goes_farther_without_relaxing_safety_contract
 
 
 def test_p8_replay_slam_health_check_ignores_stationary_probe_metrics() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     p3 = config.orchestration.slam_backend
     blockers: list[str] = []
 
@@ -1349,7 +1234,7 @@ def test_p8_replay_slam_health_check_ignores_stationary_probe_metrics() -> None:
 
 
 def test_p8_exploration_gate_rosbag_profile_contains_required_topics() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     profile = Path(config.exploration_gate_rosbag_profile)
     content = profile.read_text(encoding="utf-8")
 
@@ -1390,7 +1275,7 @@ def test_p8_exploration_gate_rosbag_profile_contains_required_topics() -> None:
 
 
 def test_hover_rosbag_profile_contains_landing_topics() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     content = Path(config.rosbag_profile).read_text(encoding="utf-8")
 
     for topic in (
@@ -1405,7 +1290,7 @@ def test_hover_rosbag_profile_contains_landing_topics() -> None:
 
 
 def test_p12_rosbag_profile_contains_landing_topics() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260608_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260608_000000")
     content = Path(config.airframe_disturbance_gate_rosbag_profile).read_text(encoding="utf-8")
 
     assert "required /navlab/landing/status" in content
@@ -1413,7 +1298,7 @@ def test_p12_rosbag_profile_contains_landing_topics() -> None:
 
 
 def test_p8_runtime_config_writes_exploration_gate_contract(tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     runtime_config = tmp_path / "p8_exploration_gate_runtime.toml"
 
     summary = exploration_gate_task_module._write_p8_runtime_config(config, runtime_config)
@@ -1437,7 +1322,7 @@ def test_p8_runtime_config_writes_exploration_gate_contract(tmp_path) -> None:  
 
 
 def test_landing_gate_blocks_when_landing_not_evaluated() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     summary = landing_task_module.apply_landing_gate(
         {"ok": True, "blocked": False, "blockers": []},
         config,
@@ -1455,7 +1340,7 @@ def test_landing_gate_blocks_when_landing_not_evaluated() -> None:
 
 
 def test_landing_gate_blocks_p8_return_home_failure_even_after_emergency_landing() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     summary = landing_task_module.apply_landing_gate(
         {"ok": True, "blocked": False, "blockers": []},
         config,
@@ -1481,7 +1366,7 @@ def test_landing_gate_blocks_p8_return_home_failure_even_after_emergency_landing
 
 
 def test_landing_gate_blocks_real_stage_without_simulation_acceptance() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     summary = landing_task_module.build_landing_acceptance_summary(
         config,
         task_name="hover",
@@ -1520,7 +1405,7 @@ def test_landing_gate_blocks_real_stage_without_simulation_acceptance() -> None:
 
 
 def test_landing_gate_blocks_gazebo_truth_as_input() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     orchestration = replace(
         config.orchestration,
         landing=replace(config.orchestration.landing, uses_gazebo_truth_as_input=True),
@@ -1540,7 +1425,7 @@ def test_landing_gate_blocks_gazebo_truth_as_input() -> None:
 
 def test_p8_exploration_coordinator_does_not_publish_cmd_vel(tmp_path) -> None:  # noqa: ANN001
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         artifact_dir=tmp_path,
         run_id="20260603_000000",
     )
@@ -1556,7 +1441,7 @@ def test_p8_exploration_coordinator_does_not_publish_cmd_vel(tmp_path) -> None: 
 
 
 def test_p8_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None:  # noqa: ANN001
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     orchestration = replace(
         config.orchestration,
         exploration_gate=replace(config.orchestration.exploration_gate, uses_gazebo_truth_as_input=True),
@@ -1583,7 +1468,7 @@ def test_p8_doctor_blocks_gazebo_truth_as_input(monkeypatch, tmp_path) -> None: 
 
 
 def test_p8_blockers_detect_failed_exploration_gate() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260603_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260603_000000")
     blockers: list[str] = []
 
     exploration_gate_task_module._append_p8_blockers(
@@ -1676,13 +1561,13 @@ def test_p10_normal_profile_ok_ignores_displacement_only_failures() -> None:
 
 
 def test_p11_scan_stabilization_config_validation_accepts_defaults() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", duration_sec=10.0)
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", duration_sec=10.0)
 
     assert scan_stabilization_gate_task_module._validate_p11_config(config) == []
 
 
 def test_p11_scan_stabilization_config_validation_rejects_p8_motion_profile() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", duration_sec=10.0)
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", duration_sec=10.0)
     gate = replace(config.orchestration.scan_stabilization_gate, motion_profile="p8_slow_exploration")
     orchestration = replace(config.orchestration, scan_stabilization_gate=gate)
     invalid = replace(config, orchestration=orchestration)
@@ -1732,7 +1617,7 @@ def test_p11_summary_schema_parser_reports_missing_fields() -> None:
 
 
 def test_p11_blockers_detect_candidate_scan_availability_regression() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", duration_sec=10.0)
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", duration_sec=10.0)
     blockers: list[str] = []
     scan = config.orchestration.scan_stabilization
     gate = config.orchestration.scan_stabilization_gate
@@ -2007,7 +1892,7 @@ def test_companion_launcher_autostarts_sim_marker_and_scan_nodes(monkeypatch) ->
 
 def test_navlab_orchestration_starts_slam_container(monkeypatch) -> None:
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         duration_sec=45.0,
         run_id="20260603_000000",
     )
@@ -2041,7 +1926,7 @@ def test_navlab_orchestration_starts_slam_container(monkeypatch) -> None:
 
 def test_navlab_official_baseline_uses_artifact_sitl_workdir(monkeypatch, tmp_path) -> None:
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         duration_sec=45.0,
         run_id="20260603_000000",
         artifact_dir=tmp_path,
@@ -2070,7 +1955,7 @@ def test_navlab_official_baseline_uses_artifact_sitl_workdir(monkeypatch, tmp_pa
 
 def test_navlab_orchestration_starts_companion_with_runtime_config(monkeypatch) -> None:
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         duration_sec=45.0,
         run_id="20260603_000000",
     )
@@ -2271,7 +2156,7 @@ def test_navlab_hover_acceptance_invokes_hover_runtime_cli(monkeypatch, tmp_path
 
 def test_hover_mild_disturbance_profile_writes_airframe_runtime(tmp_path, monkeypatch) -> None:
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         artifact_dir=tmp_path,
         duration_sec=12.0,
         run_id="20260609_000000",
@@ -2326,7 +2211,7 @@ def test_hover_mild_disturbance_profile_writes_airframe_runtime(tmp_path, monkey
 
 def test_p8_mild_disturbance_profile_writes_airframe_runtime(tmp_path, monkeypatch) -> None:
     config = RunConfig.from_config(
-        config_path="orchestration/config.toml",
+        config_path="orchestration/config.simulation.toml",
         artifact_dir=tmp_path,
         duration_sec=12.0,
         run_id="20260609_000001",

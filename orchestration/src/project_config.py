@@ -126,7 +126,6 @@ PACKAGE_PATH = Path(__file__).parent
 PROJECT_PATH = PACKAGE_PATH.parent
 REPO_PATH = PROJECT_PATH.parent
 
-DEFAULT_CONFIG_FILE = PROJECT_PATH / "config.toml"
 DEFAULT_ROUTER_LISTEN = "0.0.0.0:14550"
 DEFAULT_ROUTER_TCP_PORT = "0"
 DEFAULT_COMPOSE_FILE = REPO_PATH / "compose" / "docker-compose.yaml"
@@ -206,7 +205,7 @@ def load_project_config(path: Path) -> dict[str, Any]:
 
 def load_runtime_config() -> RuntimeConfig:
     root = repo_root()
-    config_file = DEFAULT_CONFIG_FILE
+    config_file = default_project_config_file()
 
     return RuntimeConfig(
         lab_root=root,
@@ -216,6 +215,11 @@ def load_runtime_config() -> RuntimeConfig:
         config_file=config_file,
         config_loaded=config_file.is_file(),
     )
+
+
+def default_project_config_file() -> Path:
+    mode = _resolve_runtime_mode({}).value
+    return PROJECT_PATH / f"config.{mode}.toml"
 
 
 def load_router_config(runtime: RuntimeConfig) -> RouterConfig:
@@ -360,9 +364,6 @@ def _resolve_runtime_backend(raw_runtime: dict[str, Any]) -> ValueWithSource:
     if env_backend:
         backend = env_backend.strip().lower()
         source = "NAVLAB_RUNTIME_BACKEND"
-    elif raw_runtime.get("backend") not in (None, ""):
-        backend = str(raw_runtime["backend"]).strip().lower()
-        source = "config.toml"
     else:
         backend = DEFAULT_RUNTIME_BACKEND
         source = "default"
@@ -376,9 +377,6 @@ def _resolve_runtime_mode(raw_runtime: dict[str, Any]) -> ValueWithSource:
     if env_mode:
         mode = env_mode.strip().lower()
         source = "NAVLAB_RUNTIME_MODE"
-    elif raw_runtime.get("mode") not in (None, ""):
-        mode = str(raw_runtime["mode"]).strip().lower()
-        source = "config.toml"
     else:
         mode = DEFAULT_RUNTIME_MODE
         source = "default"

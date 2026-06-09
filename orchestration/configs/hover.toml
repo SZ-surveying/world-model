@@ -1,0 +1,23 @@
+[task]
+duration_sec = 90.0
+simulation_profile = "ideal"
+
+[fcu_controller]
+takeoff_alt_m = 0.5
+readiness_timeout_sec = 45.0
+hold_after_ready_sec = 8.0
+
+[slam_hover]
+settle_window_sec = 8.0
+hover_window_sec = 18.0
+final_hold_window_sec = 5.0
+max_hover_horizontal_drift_m = 0.35
+max_hover_altitude_error_m = 0.30
+
+[landing]
+hover_policy = "land_in_place"
+pre_land_hold_sec = 2.0
+max_landing_duration_sec = 35.0
+touchdown_altitude_m = 0.12
+require_disarm = true
+require_motors_safe = true

@@ -21,7 +21,7 @@ from python_on_whales.exceptions import DockerException
 from rich.console import Console
 
 from src import host
-from src.config import RunConfig
+from src.config import RunConfig, load_task_invocation_config
 from src.tasks.helpers.landing import apply_landing_gate
 from src.tasks.helpers.fcu import (
     P4_CONTROLLER_CONTAINER,
@@ -1109,12 +1109,23 @@ def _write_foxglove_notes(config: RunConfig) -> None:
 
 
 
-def run_exploration_gate_doctor(*, config_path: str | Path | None = None, console: Console | None = None) -> int:
+def run_exploration_gate_doctor(
+    *,
+    config_path: str | Path | None = None,
+    task_config_path: str | Path | None = None,
+    console: Console | None = None,
+) -> int:
     console = console or Console()
-    config = RunConfig.from_config(config_path=config_path)
+    config = RunConfig.from_config(config_path=config_path, task_name="exploration", task_config_path=task_config_path)
     artifact_dir = Path(os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_exploration_gate_doctor/{config.run_id}"))
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    config = RunConfig.from_config(config_path=config_path, artifact_dir=artifact_dir, run_id=config.run_id)
+    config = RunConfig.from_config(
+        config_path=config_path,
+        task_name="exploration",
+        task_config_path=task_config_path,
+        artifact_dir=artifact_dir,
+        run_id=config.run_id,
+    )
     runtime_config = artifact_dir / "p8_exploration_gate_runtime.toml"
     _write_p8_runtime_config(config, runtime_config)
     console.print("[bold cyan]Checking P8 official maze exploration gate prerequisites[/bold cyan]")
@@ -1130,15 +1141,30 @@ def run_exploration_gate_doctor(*, config_path: str | Path | None = None, consol
 def run_exploration_gate_acceptance(
     *,
     config_path: str | Path | None = None,
-    duration_sec: float = 150.0,
+    task_config_path: str | Path | None = None,
+    duration_sec: float | None = None,
     console: Console | None = None,
     replay_profile: str | None = None,
-    simulation_profile: str = "ideal",
+    simulation_profile: str | None = None,
 ) -> int:
     console = console or Console()
-    simulation_profile = _normalize_simulation_profile(simulation_profile)
+    task_config = load_task_invocation_config(
+        "exploration",
+        task_config_path=task_config_path,
+        cli_duration_sec=duration_sec,
+        default_duration_sec=150.0,
+        cli_simulation_profile=simulation_profile,
+        default_simulation_profile="ideal",
+    )
+    duration_sec = task_config.duration_sec
+    simulation_profile = _normalize_simulation_profile(task_config.simulation_profile)
     airframe_profile = _airframe_profile_for_simulation_profile(simulation_profile)
-    config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
+    config = RunConfig.from_config(
+        config_path=config_path,
+        task_name="exploration",
+        task_config_path=task_config_path,
+        duration_sec=duration_sec,
+    )
     config = _apply_replay_profile(config, replay_profile)
     config.artifact_dir.mkdir(parents=True, exist_ok=True)
     host._render_run_config(console, config)
@@ -1453,6 +1479,8 @@ def run_exploration_gate_acceptance(
             "blocked": bool(blockers),
             "blockers": blockers,
             "simulation_profile": simulation_profile,
+            "config_sources": config.config_sources_summary(),
+            "task_parameters": task_config.to_summary(),
             "p8_exploration_gate": {
                 "runtime_config": p8_runtime_summary,
                 "exploration_probe_script": exploration_probe_script_summary,
@@ -1532,6 +1560,8 @@ def run_exploration_gate_acceptance(
             "ok": False,
             "blocked": True,
             "blockers": ["P8 exploration gate acceptance did not produce a summary"],
+            "config_sources": config.config_sources_summary(),
+            "task_parameters": task_config.to_summary(),
         }
         _write_json(config.artifact_dir / "summary.json", summary)
     color = "green" if summary["ok"] else "red"

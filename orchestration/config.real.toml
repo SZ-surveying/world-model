@@ -1,0 +1,18 @@
+[orchestration.runtime]
+fail_on_missing_backend_config = true
+fail_on_mode_violation = true
+
+[orchestration.runtime.process]
+workspace_host_path = "."
+log_dir = "artifacts/runtime_logs"
+require_explicit_services = true
+
+[orchestration.runtime.real.sources]
+scan_source_claim = "real_lidar_driver"
+scan_source_topic = "/scan"
+fcu_source_claim = "real_ardupilot_dds"
+imu_source_claim = "real_fcu_or_sensor"
+rangefinder_source_claim = "real_or_not_required"
+slam_source_claim = "real_slam"
+required_real_topics = ["/scan", "/tf", "/tf_static", "/slam/odom", "/ap/v1/status", "/ap/v1/pose/filtered"]
+forbidden_simulation_input_topics = ["/gazebo/*", "/scan_ideal", "/sim/x2/status", "/rangefinder/down/scan_ideal"]

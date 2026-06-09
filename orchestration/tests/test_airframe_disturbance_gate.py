@@ -8,7 +8,7 @@ from src.tasks.workflows import scan_robustness as p12
 
 
 def test_p12_config_loads_airframe_disturbance_sections() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260608_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260608_000000")
 
     assert config.orchestration.airframe_disturbance.profile == "nominal_realistic"
     assert config.orchestration.airframe_disturbance.thrust_multipliers == (0.97, 1.03, 1.0, 0.98)
@@ -26,7 +26,7 @@ def test_p12_config_loads_airframe_disturbance_sections() -> None:
 
 
 def test_p12_doctor_summary_is_green_for_default_config(tmp_path: Path) -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260608_000000", artifact_dir=tmp_path)
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260608_000000", artifact_dir=tmp_path)
     runtime = tmp_path / "p12_runtime.toml"
     p12._write_p12_runtime_config(config, runtime)
 
@@ -38,7 +38,7 @@ def test_p12_doctor_summary_is_green_for_default_config(tmp_path: Path) -> None:
 
 
 def test_p12_runtime_config_writes_landing_contract(tmp_path: Path) -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260608_000000", artifact_dir=tmp_path)
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260608_000000", artifact_dir=tmp_path)
     runtime = tmp_path / "p12_runtime.toml"
 
     summary = p12._write_p12_runtime_config(config, runtime)
@@ -51,7 +51,7 @@ def test_p12_runtime_config_writes_landing_contract(tmp_path: Path) -> None:
 
 
 def test_p12_config_validation_blocks_invalid_motor_array() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260608_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260608_000000")
     bad_airframe = replace(config.orchestration.airframe_disturbance, thrust_multipliers=(1.0, 1.0))
     bad = replace(config, orchestration=replace(config.orchestration, airframe_disturbance=bad_airframe))
 
@@ -61,7 +61,7 @@ def test_p12_config_validation_blocks_invalid_motor_array() -> None:
 
 
 def test_p12_profile_sweep_keeps_hard_bias_as_expected_fault() -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260608_000000")
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260608_000000")
 
     summary = p12._build_p12_profile_sweep_summary(config)
 
@@ -130,7 +130,7 @@ def test_p12_fcu_mode_gate_blocks_missing_mode_number() -> None:
 
 
 def test_p12_sensor_config_enables_airframe_runtime_and_raw_imu_bridge(tmp_path: Path) -> None:
-    config = RunConfig.from_config(config_path="orchestration/config.toml", run_id="20260608_000000", artifact_dir=tmp_path)
+    config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260608_000000", artifact_dir=tmp_path)
     vendor = tmp_path / "vendor.yaml"
     vendor.write_text("x: y\n", encoding="utf-8")
     sensor_config = tmp_path / "sensor.toml"

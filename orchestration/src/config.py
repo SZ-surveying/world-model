@@ -9,9 +9,16 @@ from typing import Any
 
 import tomllib
 
-from src.project_config import load_navlab_images_config, load_runtime_config
+from src.project_config import (
+    DEFAULT_RUNTIME_MODE,
+    PROJECT_PATH,
+    REPO_PATH,
+    load_navlab_images_config,
+    load_runtime_config,
+)
 
-DEFAULT_CONFIG = Path("orchestration/config.toml")
+DEFAULT_ORCHESTRATION_CONFIG_DIR = PROJECT_PATH
+DEFAULT_TASK_CONFIG_DIR = PROJECT_PATH / "configs"
 NAVLAB_PROFILES = ("base_env", "x2_sensor")
 NAVLAB_SERVICES = (
     "gazebo",
@@ -25,6 +32,41 @@ NAVLAB_STOP_SERVICES = (
     "sitl",
     "mavlink-router",
 )
+
+TASK_CONFIG_NAMES = {
+    "hover": "hover",
+    "exploration": "exploration",
+    "exploration-doctor": "exploration",
+    "scan-robustness": "scan_robustness",
+    "scan-robustness-doctor": "scan_robustness",
+    "real-preflight-doctor": "real_preflight",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class TaskInvocationConfig:
+    task_name: str
+    path: Path | None
+    path_source: str
+    duration_sec: float
+    duration_source: str
+    simulation_profile: str
+    simulation_profile_source: str
+    live_replay: bool
+    live_replay_source: str
+    live_profiles: tuple[str, ...]
+    live_profiles_source: str
+
+    def to_summary(self) -> dict[str, Any]:
+        return {
+            "duration_sec": {"value": self.duration_sec, "source": self.duration_source},
+            "simulation_profile": {
+                "value": self.simulation_profile,
+                "source": self.simulation_profile_source,
+            },
+            "live_replay": {"value": self.live_replay, "source": self.live_replay_source},
+            "live_profiles": {"value": list(self.live_profiles), "source": self.live_profiles_source},
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -609,11 +651,25 @@ class OrchestrationConfig:
     airframe_disturbance_gate: AirframeDisturbanceGateConfig
     landing: LandingConfig
     foxglove_upload: FoxgloveUploadConfig
+    orchestration_config_source: str = "mode default"
+    task_name: str | None = None
+    task_config_path: Path | None = None
+    task_config_source: str = "none"
 
     @classmethod
-    def load(cls, path: str | Path | None = None) -> OrchestrationConfig:
+    def load(
+        cls,
+        path: str | Path | None = None,
+        *,
+        task_name: str | None = None,
+        task_config_path: str | Path | None = None,
+    ) -> OrchestrationConfig:
         config_path = resolve_config_path(path)
+        task_path, task_source = resolve_task_config_path(task_name, task_config_path)
         data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        task_data = load_task_config_data(task_name, task_config_path=task_config_path)
+        if task_data:
+            data = _deep_merge_dicts(data, task_data)
         runtime_config = load_runtime_config()
         image_config = load_navlab_images_config(runtime_config)
         sitl = _section(data, "sitl")
@@ -1544,6 +1600,10 @@ class OrchestrationConfig:
                 key_prefix=_as_str(foxglove_upload.get("key_prefix"), "navlab"),
                 filename_prefix=_as_str(foxglove_upload.get("filename_prefix"), "navlab"),
             ),
+            orchestration_config_source="CLI --orchestration-config" if path else "mode default",
+            task_name=task_name,
+            task_config_path=task_path if task_path and task_path.is_file() else None,
+            task_config_source=task_source,
         )
 
     def compose_env(self) -> dict[str, str]:
@@ -1653,16 +1713,42 @@ class RunConfig:
     def airframe_disturbance_gate_rosbag_profile(self) -> str:
         return self.orchestration.airframe_disturbance_gate.rosbag_profile
 
+    def config_sources_summary(self) -> dict[str, Any]:
+        task_config = {
+            "task_name": self.orchestration.task_name,
+            "path": str(self.orchestration.task_config_path) if self.orchestration.task_config_path else None,
+            "source": self.orchestration.task_config_source,
+        }
+        return {
+            "orchestration_config": {
+                "path": str(self.orchestration.path),
+                "source": self.orchestration.orchestration_config_source,
+            },
+            "task_config": task_config,
+            "runtime": {
+                "backend": os.environ.get("NAVLAB_RUNTIME_BACKEND") or "docker",
+                "backend_source": "NAVLAB_RUNTIME_BACKEND" if os.environ.get("NAVLAB_RUNTIME_BACKEND") else "default",
+                "mode": os.environ.get("NAVLAB_RUNTIME_MODE") or DEFAULT_RUNTIME_MODE,
+                "mode_source": "NAVLAB_RUNTIME_MODE" if os.environ.get("NAVLAB_RUNTIME_MODE") else "default",
+            },
+        }
+
     @classmethod
     def from_config(
         cls,
         *,
         config_path: str | Path | None = None,
+        task_name: str | None = None,
+        task_config_path: str | Path | None = None,
         duration_sec: float = 90.0,
         artifact_dir: str | Path | None = None,
         run_id: str | None = None,
     ) -> RunConfig:
-        orchestration = OrchestrationConfig.load(config_path)
+        orchestration = OrchestrationConfig.load(
+            config_path,
+            task_name=task_name,
+            task_config_path=task_config_path,
+        )
         final_run_id = run_id or os.environ.get("RUN_ID") or datetime.now().strftime("%Y%m%d_%H%M%S")
         final_artifact_dir = Path(
             artifact_dir or os.environ.get("ARTIFACT_DIR") or f"artifacts/ros/{orchestration.session_id}/{final_run_id}"
@@ -1676,8 +1762,176 @@ class RunConfig:
 
 
 def resolve_config_path(path: str | Path | None = None) -> Path:
-    raw = path or os.environ.get("NAVLAB_ORCHESTRATION_CONFIG") or DEFAULT_CONFIG
-    return Path(raw).expanduser()
+    if path:
+        return Path(path).expanduser()
+    return default_orchestration_config_path()
+
+
+def default_orchestration_config_path() -> Path:
+    return DEFAULT_ORCHESTRATION_CONFIG_DIR / f"config.{_runtime_mode_for_default_config()}.toml"
+
+
+def _runtime_mode_for_default_config() -> str:
+    raw_mode = os.environ.get("NAVLAB_RUNTIME_MODE")
+    if raw_mode in (None, ""):
+        return DEFAULT_RUNTIME_MODE
+    mode = raw_mode.strip().lower()
+    if mode not in {"simulation", "real"}:
+        raise ValueError(f"Invalid orchestration runtime mode '{mode}': expected simulation or real")
+    return mode
+
+
+def default_task_config_path(task_name: str) -> Path:
+    return DEFAULT_TASK_CONFIG_DIR / f"{TASK_CONFIG_NAMES.get(task_name, task_name.replace('-', '_'))}.toml"
+
+
+def resolve_task_config_path(task_name: str | None, path: str | Path | None = None) -> tuple[Path | None, str]:
+    if path:
+        return Path(path).expanduser(), "CLI --task-config"
+    if not task_name:
+        return None, "none"
+    return default_task_config_path(task_name), "task default"
+
+
+def load_task_config_data(task_name: str | None, *, task_config_path: str | Path | None = None) -> dict[str, Any]:
+    path, source = resolve_task_config_path(task_name, task_config_path)
+    if path is None:
+        return {}
+    if not path.is_file():
+        if source == "CLI --task-config":
+            raise FileNotFoundError(f"Task config does not exist: {path}")
+        return {}
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid task config in {path}")
+    return data
+
+
+def load_task_invocation_config(
+    task_name: str,
+    *,
+    task_config_path: str | Path | None = None,
+    cli_duration_sec: float | None = None,
+    default_duration_sec: float = 90.0,
+    cli_simulation_profile: str | None = None,
+    default_simulation_profile: str = "ideal",
+    cli_live_replay: bool | None = None,
+    default_live_replay: bool = True,
+    cli_live_profiles: tuple[str, ...] | None = None,
+    default_live_profiles: tuple[str, ...] = (),
+) -> TaskInvocationConfig:
+    path, path_source = resolve_task_config_path(task_name, task_config_path)
+    data = load_task_config_data(task_name, task_config_path=task_config_path)
+    task = _optional_task_table(data, path)
+    duration_sec, duration_source = _resolve_task_float(
+        task,
+        "duration_sec",
+        cli_duration_sec,
+        default_duration_sec,
+    )
+    simulation_profile, simulation_profile_source = _resolve_task_str(
+        task,
+        "simulation_profile",
+        cli_simulation_profile,
+        default_simulation_profile,
+    )
+    live_replay, live_replay_source = _resolve_task_bool(
+        task,
+        "live",
+        cli_live_replay,
+        default_live_replay,
+    )
+    live_profiles, live_profiles_source = _resolve_task_str_tuple(
+        task,
+        "live_profiles",
+        cli_live_profiles,
+        default_live_profiles,
+    )
+    return TaskInvocationConfig(
+        task_name=task_name,
+        path=path if path and path.is_file() else None,
+        path_source=path_source,
+        duration_sec=duration_sec,
+        duration_source=duration_source,
+        simulation_profile=simulation_profile,
+        simulation_profile_source=simulation_profile_source,
+        live_replay=live_replay,
+        live_replay_source=live_replay_source,
+        live_profiles=live_profiles,
+        live_profiles_source=live_profiles_source,
+    )
+
+
+def _deep_merge_dicts(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _optional_task_table(data: dict[str, Any], path: Path | None) -> dict[str, Any]:
+    raw_task = data.get("task", {})
+    if raw_task is None:
+        raw_task = {}
+    if not isinstance(raw_task, dict):
+        location = str(path) if path else "task config"
+        raise ValueError(f"Invalid [task] section in {location}")
+    return raw_task
+
+
+def _resolve_task_float(
+    task: dict[str, Any],
+    key: str,
+    cli_value: float | None,
+    default: float,
+) -> tuple[float, str]:
+    if cli_value is not None:
+        return float(cli_value), "CLI"
+    if task.get(key) not in (None, ""):
+        return float(task[key]), "task config"
+    return default, "default"
+
+
+def _resolve_task_str(
+    task: dict[str, Any],
+    key: str,
+    cli_value: str | None,
+    default: str,
+) -> tuple[str, str]:
+    if cli_value not in (None, ""):
+        return str(cli_value), "CLI"
+    if task.get(key) not in (None, ""):
+        return str(task[key]), "task config"
+    return default, "default"
+
+
+def _resolve_task_bool(
+    task: dict[str, Any],
+    key: str,
+    cli_value: bool | None,
+    default: bool,
+) -> tuple[bool, str]:
+    if cli_value is not None:
+        return bool(cli_value), "CLI"
+    if task.get(key) not in (None, ""):
+        return _as_bool(task[key], default), "task config"
+    return default, "default"
+
+
+def _resolve_task_str_tuple(
+    task: dict[str, Any],
+    key: str,
+    cli_value: tuple[str, ...] | None,
+    default: tuple[str, ...],
+) -> tuple[tuple[str, ...], str]:
+    if cli_value is not None:
+        return tuple(cli_value), "CLI"
+    if task.get(key) not in (None, ""):
+        return _as_str_tuple(task[key], default), "task config"
+    return default, "default"
 
 
 def _as_str(value: Any, default: str = "") -> str:

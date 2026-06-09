@@ -7,6 +7,7 @@
 设计文档：
 
 - `docs/scenarios/indoor/navlab_unified_landing_sequence_design.md`
+- `docs/scenarios/indoor/navlab_real_flight_preflight_doctor_design.md`
 
 适用 built-in flight task：
 
@@ -23,6 +24,7 @@
 - [x] Gazebo/SITL Stage 1 通过后，才能进入真机 Stage 2 验收。
 - [x] 真机未验收时必须标记 `real_landing_claim=not_evaluated`。
 - [x] Stage 1 通过不等于 Stage 2 通过。
+- [ ] 每次真机 Stage 2 flight task 进入 arm/takeoff 前，必须引用通过且未过期的 real preflight summary。
 - [x] landing 失败时，任务主体即使成功，summary 也必须 `ok=false`。
 - [x] P8 return home 失败但 emergency landing 成功时，summary 仍必须 `ok=false`。
 - [x] 不允许 Gazebo reset / direct set pose / truth-control shortcut。
@@ -232,7 +234,9 @@
 - [ ] Stage 2 入口检查对应 task 的 Stage 1 `ideal` 和 `mild_disturbance` profile 都 `ok=true`。
 - [ ] Stage 2 入口检查 Stage 1 artifact 已归档。
 - [x] P8 Stage 2 入口所需 Stage 1 `ideal` / `mild_disturbance` artifacts 已归档。
-- [ ] Stage 2 入口检查 real runtime preflight 通过。
+- [ ] Stage 2 入口检查 real preflight doctor summary `ok=true`。
+- [ ] Stage 2 入口检查 real preflight doctor summary 未超过有效窗口。
+- [ ] Stage 2 入口记录 real preflight artifact path。
 - [ ] Stage 2 入口检查 manual takeover / kill switch 已确认。
 - [ ] 真机 hover landing acceptance。
 - [ ] 真机 P8 return-home landing acceptance。

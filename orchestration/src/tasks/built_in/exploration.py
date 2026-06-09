@@ -16,10 +16,16 @@ class BuiltInExplorationDoctorTask(OrchestrationTask):
     TASK_NAME: ClassVar[str] = "exploration-doctor"
     TASK_DESCRIPTION: ClassVar[str] = "Check built-in P8 movement/exploration prerequisites."
 
-    def run(self, *, config_path: str | Path | None = None, console: Console | None = None) -> int:
+    def run(
+        self,
+        *,
+        config_path: str | Path | None = None,
+        task_config_path: str | Path | None = None,
+        console: Console | None = None,
+    ) -> int:
         from src.tasks.workflows.exploration import run_exploration_gate_doctor
 
-        return run_exploration_gate_doctor(config_path=config_path, console=console)
+        return run_exploration_gate_doctor(config_path=config_path, task_config_path=task_config_path, console=console)
 
 
 @TaskRegistry.register
@@ -32,14 +38,16 @@ class BuiltInExplorationTask(OrchestrationTask):
         self,
         *,
         config_path: str | Path | None = None,
-        duration_sec: float = 150.0,
-        simulation_profile: str = "ideal",
+        task_config_path: str | Path | None = None,
+        duration_sec: float | None = None,
+        simulation_profile: str | None = None,
         console: Console | None = None,
     ) -> int:
         from src.tasks.workflows.exploration import run_exploration_gate_acceptance
 
         return run_exploration_gate_acceptance(
             config_path=config_path,
+            task_config_path=task_config_path,
             duration_sec=duration_sec,
             simulation_profile=simulation_profile,
             console=console,

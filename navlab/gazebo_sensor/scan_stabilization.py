@@ -114,21 +114,31 @@ def stabilize_scan_ranges(
         max_floor_hit_risk_beam_ratio=max_floor_hit_risk_beam_ratio,
     )
     if config_blockers:
-        return StabilizedScanQuality("blocked", 0.0, tuple(ranges), 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, tuple(config_blockers))
+        return StabilizedScanQuality(
+            "blocked", 0.0, tuple(ranges), 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, tuple(config_blockers)
+        )
 
     roll = math.radians(roll_deg)
     pitch = math.radians(pitch_deg)
     tilt_deg = math.degrees(math.hypot(roll, pitch))
     if lidar_height_m <= 0.0:
-        return StabilizedScanQuality("blocked", tilt_deg, tuple(ranges), 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, ("missing_lidar_height",))
+        return StabilizedScanQuality(
+            "blocked", tilt_deg, tuple(ranges), 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, ("missing_lidar_height",)
+        )
     if tilt_deg > hard_drop_tilt_deg:
-        return StabilizedScanQuality("drop", tilt_deg, tuple(ranges), 0.0, 1.0, 0.0, 0.0, 0.0, len(ranges), 0, ("hard_tilt_exceeded",))
+        return StabilizedScanQuality(
+            "drop", tilt_deg, tuple(ranges), 0.0, 1.0, 0.0, 0.0, 0.0, len(ranges), 0, ("hard_tilt_exceeded",)
+        )
     if tilt_deg <= passthrough_tilt_deg:
         finite_count = sum(1 for value in ranges if math.isfinite(float(value)) and float(value) > 0.0)
         ratio = 1.0 if finite_count else 0.0
-        return StabilizedScanQuality("passthrough", tilt_deg, tuple(float(v) for v in ranges), ratio, 0.0, 0.0, 0.0, 0.0, 0, 0, ())
+        return StabilizedScanQuality(
+            "passthrough", tilt_deg, tuple(float(v) for v in ranges), ratio, 0.0, 0.0, 0.0, 0.0, 0, 0, ()
+        )
     if tilt_deg > compensation_tilt_deg:
-        return StabilizedScanQuality("drop", tilt_deg, tuple(ranges), 0.0, 1.0, 0.0, 0.0, 0.0, len(ranges), 0, ("tilt_above_compensation_limit",))
+        return StabilizedScanQuality(
+            "drop", tilt_deg, tuple(ranges), 0.0, 1.0, 0.0, 0.0, 0.0, len(ranges), 0, ("tilt_above_compensation_limit",)
+        )
 
     output = [float("inf")] * len(ranges)
     finite_count = 0
@@ -235,7 +245,11 @@ def run() -> int:
             self._publisher = self.create_publisher(LaserScan, config.output_scan_topic, qos_profile_sensor_data)
             self._status_publisher = self.create_publisher(String, config.status_topic, 10)
             self._event_publisher = self.create_publisher(String, config.events_topic, 10)
-            self._debug_publisher = self.create_publisher(LaserScan, config.debug_scan_topic, qos_profile_sensor_data) if config.publish_debug_scan else None
+            self._debug_publisher = (
+                self.create_publisher(LaserScan, config.debug_scan_topic, qos_profile_sensor_data)
+                if config.publish_debug_scan
+                else None
+            )
             self._attitude: dict[str, Any] | None = None
             self._range_height_m: float | None = None
             self._base_scan_tf_ok = False
@@ -279,7 +293,10 @@ def run() -> int:
 
         def _tf_static_cb(self, message: TFMessage) -> None:
             for transform in message.transforms:
-                if transform.header.frame_id == config.base_frame_id and transform.child_frame_id == config.scan_frame_id:
+                if (
+                    transform.header.frame_id == config.base_frame_id
+                    and transform.child_frame_id == config.scan_frame_id
+                ):
                     self._base_scan_tf_ok = True
 
         def _range_cb(self, message: Range) -> None:
@@ -301,7 +318,13 @@ def run() -> int:
 
         def _record_attitude(self, *, roll_deg: float, pitch_deg: float, yaw_deg: float, stamp_sec: float) -> None:
             now = time.monotonic()
-            self._attitude = {"roll_deg": roll_deg, "pitch_deg": pitch_deg, "yaw_deg": yaw_deg, "stamp_sec": stamp_sec, "monotonic": now}
+            self._attitude = {
+                "roll_deg": roll_deg,
+                "pitch_deg": pitch_deg,
+                "yaw_deg": yaw_deg,
+                "stamp_sec": stamp_sec,
+                "monotonic": now,
+            }
             self._attitude_times.append(now)
             cutoff = now - 5.0
             self._attitude_times = [item for item in self._attitude_times if item >= cutoff]
@@ -312,7 +335,9 @@ def run() -> int:
                 roll, pitch, yaw = quaternion_to_rpy_deg(float(q.x), float(q.y), float(q.z), float(q.w))
             except ValueError:
                 return
-            self._record_attitude(roll_deg=roll, pitch_deg=pitch, yaw_deg=yaw, stamp_sec=self._stamp_sec(message.header.stamp))
+            self._record_attitude(
+                roll_deg=roll, pitch_deg=pitch, yaw_deg=yaw, stamp_sec=self._stamp_sec(message.header.stamp)
+            )
 
         def _pose_cb(self, message: PoseStamped) -> None:
             q = message.pose.orientation
@@ -320,7 +345,9 @@ def run() -> int:
                 roll, pitch, yaw = quaternion_to_rpy_deg(float(q.x), float(q.y), float(q.z), float(q.w))
             except ValueError:
                 return
-            self._record_attitude(roll_deg=roll, pitch_deg=pitch, yaw_deg=yaw, stamp_sec=self._stamp_sec(message.header.stamp))
+            self._record_attitude(
+                roll_deg=roll, pitch_deg=pitch, yaw_deg=yaw, stamp_sec=self._stamp_sec(message.header.stamp)
+            )
 
         def _attitude_rate(self) -> float:
             now = time.monotonic()
@@ -340,7 +367,14 @@ def run() -> int:
             if payload.get("state") in {"compensate", "drop", "blocked"}:
                 self._event_publisher.publish(self._json_msg(payload))
 
-        def _status_payload(self, message: LaserScan, quality: StabilizedScanQuality, *, blockers: Sequence[str] = (), time_offset_ms: float | None = None) -> dict[str, Any]:
+        def _status_payload(
+            self,
+            message: LaserScan,
+            quality: StabilizedScanQuality,
+            *,
+            blockers: Sequence[str] = (),
+            time_offset_ms: float | None = None,
+        ) -> dict[str, Any]:
             attitude = self._attitude or {}
             all_blockers = [*quality.blockers, *blockers]
             candidate_count = self._passthrough + self._compensated
@@ -354,8 +388,10 @@ def run() -> int:
                 "attitude_source": config.attitude_source_topic,
                 "attitude_source_type": config.attitude_source_type,
                 "attitude_source_is_truth": False,
-                "roll_deg": float(attitude.get("roll_deg") or 0.0) + (self._fault["roll_bias_deg"] if self._fault["enabled"] else 0.0),
-                "pitch_deg": float(attitude.get("pitch_deg") or 0.0) + (self._fault["pitch_bias_deg"] if self._fault["enabled"] else 0.0),
+                "roll_deg": float(attitude.get("roll_deg") or 0.0)
+                + (self._fault["roll_bias_deg"] if self._fault["enabled"] else 0.0),
+                "pitch_deg": float(attitude.get("pitch_deg") or 0.0)
+                + (self._fault["pitch_bias_deg"] if self._fault["enabled"] else 0.0),
                 "tilt_deg": quality.tilt_deg,
                 "scan_attitude_time_offset_ms": time_offset_ms,
                 "attitude_source_age_ms": self._attitude_source_age_ms(),
@@ -390,7 +426,9 @@ def run() -> int:
         def _blocked(self, message: LaserScan, blockers: Sequence[str]) -> None:
             self._count += 1
             self._blocked_count += 1
-            quality = StabilizedScanQuality("blocked", 0.0, tuple(message.ranges), 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, tuple(blockers))
+            quality = StabilizedScanQuality(
+                "blocked", 0.0, tuple(message.ranges), 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, tuple(blockers)
+            )
             self._publish_status(self._status_payload(message, quality))
 
         def _scan_cb(self, message: LaserScan) -> None:
@@ -444,7 +482,9 @@ def run() -> int:
             self._rejected_beam_count += quality.rejected_beam_count
             self._floor_hit_rejected_count += quality.floor_hit_rejected_count
             self._max_observed_tilt_deg = max(self._max_observed_tilt_deg, quality.tilt_deg)
-            self._max_vertical_projection_error_m = max(self._max_vertical_projection_error_m, quality.max_vertical_projection_error_m)
+            self._max_vertical_projection_error_m = max(
+                self._max_vertical_projection_error_m, quality.max_vertical_projection_error_m
+            )
             if quality.state == "drop":
                 self._dropped += 1
                 if "hard_tilt_exceeded" in quality.blockers:
