@@ -475,3 +475,19 @@ Decision: remove public per-task subcommands from `orchestration/src/cli.py` and
 Basis: codebase research and operator-entry cleanup for real/simulation runtime mode.
 
 Reason: the former per-task doctor subcommands made the real path ambiguous because the operator could confuse task-specific internal checks with the real preflight/prepare/run wrapper. The unified wrapper now reads `NAVLAB_RUNTIME_BACKEND` and `NAVLAB_RUNTIME_MODE`; in `docker+simulation` it dispatches the built-in simulation task, while in `process+real` it first runs the runtime doctor and then blocks until real prepare/task doctor/flight phases are implemented. The public task registry mirrors that surface by hiding per-task doctor entries.
+
+## 2026-06-09: Real prepare starts helpers before task doctor but owns cleanup
+
+Decision: implement real Stage 2 wrapper phases as `preflight -> prepare -> task doctor -> flight boundary`, where prepare starts only non-companion helper processes and returns process handles to the wrapper for cleanup.
+
+Basis: `docs/scenarios/indoor/todos/real_prepare_and_task_doctor_todo.md` requires prepare to own side effects, task doctor to remain non-flight, and companion/arm/takeoff to start only after both phases pass.
+
+Reason: MAVLink router, MAVROS, lidar, and SLAM must be live before task doctor can verify the ROS surface that companion will consume. At the same time, the current implementation still stops at the flight boundary, so losing helper process handles after a successful prepare would leave orphan host processes if task doctor fails or the wrapper blocks before companion startup. The wrapper therefore keeps prepare handles and stops them on exit until the real flight runner owns the full process lifecycle.
+
+## 2026-06-09: Indoor real-flight yaw evidence must come from ExternalNav
+
+Decision: require `external_nav_yaw_ready=true` in real task doctor for indoor SLAM tasks; compass calibration and manual override are recorded only as context and cannot satisfy the yaw gate.
+
+Basis: the real hover/P8/P12 path is an indoor SLAM flight path, so the relevant yaw source is the SLAM/ExternalNav pipeline consumed by the FCU, not GPS-era compass readiness.
+
+Reason: treating compass calibration or manual override as equivalent yaw evidence would let a real autonomous task proceed without proving that the ExternalNav yaw used by the controller is ready. Uncalibrated compass is not a standalone blocker, but it also does not remove the requirement for ExternalNav yaw readiness.

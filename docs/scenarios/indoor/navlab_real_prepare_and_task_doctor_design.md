@@ -137,6 +137,9 @@ check_real_task_upstream_topics(task_name, config)
 - `/slam/odom` 存在、新鲜、frame 符合配置。
 - `/navlab/slam/status` ready。
 - 需要下视测距时，rangefinder topic 或 FCU telemetry evidence 存在。
+- 室内 SLAM 真机任务必须有 `external_nav_yaw_ready=true` 的 yaw source evidence；
+  未校准磁罗盘本身不单独 blocked，但罗盘校准和 manual override 都不能替代
+  ExternalNav/SLAM yaw readiness。
 - 没有 forbidden simulation topic/source。
 
 各 task 再追加自己的要求：

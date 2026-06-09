@@ -53,7 +53,7 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 - [x] design 文档只写边界和 contract，不承载 implementation checklist。
 - [x] TODO 文档单独承载任务拆分和验收标准。
 - [x] README 中能从室内主线导航到 design 和 TODO。
-- [ ] 后续真机 wrapper 实现必须引用本 TODO。
+- [x] 后续真机 wrapper 实现必须引用本 TODO。
 
 ## RTD.1 Wrapper-only 入口收敛
 
@@ -66,8 +66,8 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 - [x] wrapper 不接受 `--stage real`。
 - [x] wrapper 不要求 operator 手动执行 `doctor`。
 - [x] wrapper 不要求 operator 手动执行 `prepare`。
-- [ ] simulation mode 仍走 Gazebo/SITL Stage 1 路径。
-- [ ] real mode 走 preflight -> prepare -> task doctor -> task run 路径。
+- [x] simulation mode 仍走 Gazebo/SITL Stage 1 路径。
+- [x] real mode 走 preflight -> prepare -> task doctor -> task run 路径。
 
 验收：
 
@@ -80,60 +80,60 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 
 任务：
 
-- [ ] 新增或固化 `orchestration/configs/real_prepare.toml`。
-- [ ] 配置 `mavlink-router` executable、serial、baud、local endpoint。
-- [ ] 配置 MAVROS executable / launch file / FCU URL。
-- [ ] 配置 real lidar driver executable / launch file / output scan topic。
-- [ ] 配置 SLAM runtime executable / launch file / input scan / IMU / odom topic。
-- [ ] 配置 optional rangefinder bridge。
-- [ ] 配置每个辅助进程的 startup timeout、health topic 和 shutdown policy。
-- [ ] 配置 process log、pid file 和 summary artifact 路径。
-- [ ] real prepare 配置不能引用 Gazebo/SITL/gazebo-sensor 服务。
+- [x] 新增或固化 `orchestration/configs/real_prepare.toml`。
+- [x] 配置 `mavlink-router` executable、serial、baud、local endpoint。
+- [x] 配置 MAVROS executable / launch file / FCU URL。
+- [x] 配置 real lidar driver executable / launch file / output scan topic。
+- [x] 配置 SLAM runtime executable / launch file / input scan / IMU / odom topic。
+- [x] 配置 optional rangefinder bridge。
+- [x] 配置每个辅助进程的 startup timeout、health topic 和 shutdown policy。
+- [x] 配置 process log、pid file 和 summary artifact 路径。
+- [x] real prepare 配置不能引用 Gazebo/SITL/gazebo-sensor 服务。
 
 验收：
 
-- [ ] 缺少 required prepare 配置时 wrapper blocked。
+- [x] 缺少 required prepare 配置时 wrapper blocked。
 - [ ] real prepare 配置加载失败时 summary `ok=false`。
-- [ ] real prepare 配置中的 FCU endpoint 可追溯到真实 serial。
-- [ ] real prepare 配置不允许使用 SITL endpoint 冒充 FCU。
+- [x] real prepare 配置中的 FCU endpoint 可追溯到真实 serial。
+- [x] real prepare 配置不允许使用 SITL endpoint 冒充 FCU。
 
 ## RTD.3 MAVLink Router bringup
 
 任务：
 
-- [ ] prepare 启动 `mavlink-routerd` 或 `mavlink-router`。
-- [ ] `mavlink-router` 独占真实 FCU serial，例如 `/dev/ttyACM0:115200`。
-- [ ] `mavlink-router` 暴露本机 MAVLink endpoint 给 MAVROS / probe / GCS。
-- [ ] prepare 记录 router command、pid、serial、baud、endpoint。
-- [ ] prepare 通过 pymavlink endpoint probe 确认 HEARTBEAT。
-- [ ] prepare 检查 endpoint evidence 能追溯到真实 serial。
-- [ ] prepare 失败时关闭已启动的 router process。
+- [x] prepare 启动 `mavlink-routerd` 或 `mavlink-router`。
+- [x] `mavlink-router` 独占真实 FCU serial，例如 `/dev/ttyACM0:115200`。
+- [x] `mavlink-router` 暴露本机 MAVLink endpoint 给 MAVROS / probe / GCS。
+- [x] prepare 记录 router command、pid、serial、baud、endpoint。
+- [x] prepare 通过 pymavlink endpoint probe 确认 HEARTBEAT。
+- [x] prepare 检查 endpoint evidence 能追溯到真实 serial。
+- [x] prepare 失败时关闭已启动的 router process。
 
 验收：
 
 - [ ] 串口被其他进程占用时 prepare blocked。
-- [ ] router process 未启动时 prepare blocked。
-- [ ] router endpoint 无 HEARTBEAT 时 prepare blocked。
-- [ ] SITL TCP/UDP endpoint 没有 real serial provenance 时 prepare blocked。
-- [ ] prepare summary 包含 `mavlink_router.ok=true` 和 serial provenance。
+- [x] router process 未启动时 prepare blocked。
+- [x] router endpoint 无 HEARTBEAT 时 prepare blocked。
+- [x] SITL TCP/UDP endpoint 没有 real serial provenance 时 prepare blocked。
+- [x] prepare summary 包含 `mavlink_router.ok=true` 和 serial provenance。
 
 ## RTD.4 MAVROS / FCU ROS bridge bringup
 
 任务：
 
-- [ ] prepare 启动 MAVROS 或等价 FCU ROS bridge。
-- [ ] MAVROS 使用 mavlink-router local endpoint，不直接抢 FCU serial。
-- [ ] prepare 检查 MAVROS state topic。
-- [ ] prepare 检查 FCU pose/status/twist topic。
+- [x] prepare 启动 MAVROS 或等价 FCU ROS bridge。
+- [x] MAVROS 使用 mavlink-router local endpoint，不直接抢 FCU serial。
+- [x] prepare 检查 MAVROS state topic。
+- [x] prepare 检查 FCU pose/status/twist topic。
 - [ ] prepare 检查 FCU topic freshness。
 - [ ] prepare 记录 FCU bridge source claim。
-- [ ] prepare 失败时关闭 MAVROS process。
+- [x] prepare 失败时关闭 MAVROS process。
 
 验收：
 
-- [ ] MAVROS 直接配置 `/dev/ttyACM0` 时 blocked 或 warning 升级为 blocker。
-- [ ] `/mavros/state` 或等价 bridge state 不存在时 blocked。
-- [ ] `/ap/v1/status`、`/ap/v1/pose/filtered`、`/ap/v1/twist/filtered` 缺失时 blocked。
+- [x] MAVROS 直接配置 `/dev/ttyACM0` 时 blocked 或 warning 升级为 blocker。
+- [x] `/mavros/state` 或等价 bridge state 不存在时 blocked。
+- [x] `/ap/v1/status`、`/ap/v1/pose/filtered`、`/ap/v1/twist/filtered` 缺失时 blocked。
 - [ ] FCU topic stale 时 blocked。
 - [ ] FCU topic source claim 指向 SITL 时 blocked。
 
@@ -141,21 +141,21 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 
 任务：
 
-- [ ] prepare 启动真实 lidar driver。
-- [ ] prepare 检查 `/scan` 存在、类型正确、数据新鲜。
+- [x] prepare 启动真实 lidar driver。
+- [x] prepare 检查 `/scan` 存在、类型正确、数据新鲜。
 - [ ] prepare 检查 `/scan` frame 符合配置。
-- [ ] prepare 启动 SLAM runtime。
+- [x] prepare 启动 SLAM runtime。
 - [ ] SLAM runtime 消费真实 `/scan` 和真实 IMU/odom evidence。
-- [ ] prepare 检查 `/slam/odom` 存在、类型正确、数据新鲜。
-- [ ] prepare 检查 `/navlab/slam/status` ready。
+- [x] prepare 检查 `/slam/odom` 存在、类型正确、数据新鲜。
+- [x] prepare 检查 `/navlab/slam/status` ready。
 - [ ] prepare 检查 optional `/rangefinder/down/range`、`/rangefinder/down/status` 或 FCU telemetry evidence。
-- [ ] prepare 禁止 `/scan_ideal`、`/sim/x2/status`、Gazebo rangefinder 作为 real evidence。
+- [x] prepare 禁止 `/scan_ideal`、`/sim/x2/status`、Gazebo rangefinder 作为 real evidence。
 
 验收：
 
-- [ ] `/scan` 缺失、类型错误或 stale 时 prepare blocked。
-- [ ] `/slam/odom` 缺失、类型错误或 stale 时 prepare blocked。
-- [ ] SLAM 未 ready 时 prepare blocked。
+- [x] `/scan` 缺失、类型错误或 stale 时 prepare blocked。
+- [x] `/slam/odom` 缺失、类型错误或 stale 时 prepare blocked。
+- [x] SLAM 未 ready 时 prepare blocked。
 - [ ] required rangefinder evidence 缺失时 hover / landing readiness blocked。
 - [ ] 真实 lidar 不能被 X2 virtual serial 替代。
 
@@ -163,72 +163,82 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 
 任务：
 
-- [ ] prepare 写出 `prepare_claim=evaluated`。
-- [ ] prepare summary 记录 `started_services`。
-- [ ] prepare summary 记录每个 service 的 command、pid、logs、health topic。
-- [ ] prepare summary 记录 MAVLink router serial provenance。
+- [x] prepare 写出 `prepare_claim=evaluated`。
+- [x] prepare summary 记录 `started_services`。
+- [x] prepare summary 记录每个 service 的 command、pid、logs、health topic。
+- [x] prepare summary 记录 MAVLink router serial provenance。
 - [ ] prepare summary 记录 FCU、scan、SLAM、rangefinder readiness。
-- [ ] prepare summary 使用稳定 blocker 字符串。
-- [ ] prepare fail 时关闭已启动但不再需要的辅助进程。
-- [ ] wrapper exit 时按 shutdown policy 清理 process。
+- [x] prepare summary 使用稳定 blocker 字符串。
+- [x] prepare fail 时关闭已启动但不再需要的辅助进程。
+- [x] wrapper exit 时按 shutdown policy 清理 process。
 
 验收：
 
-- [ ] `ok=true` 时 prepare summary 足够复现 bringup 状态。
-- [ ] `blocked=true` 时 blockers 可直接定位缺依赖、缺 topic 或进程失败。
-- [ ] prepare fail 不留下孤儿 helper process。
-- [ ] prepare summary 不把 companion 标记为 started service。
+- [x] `ok=true` 时 prepare summary 足够复现 bringup 状态。
+- [x] `blocked=true` 时 blockers 可直接定位缺依赖、缺 topic 或进程失败。
+- [x] prepare fail 不留下孤儿 helper process。
+- [x] prepare summary 不把 companion 标记为 started service。
 
 ## RTD.7 统一 Task Doctor helper
 
 任务：
 
-- [ ] 实现 `check_real_task_upstream_topics(task_name, config)` 或等价 helper。
+- [x] 实现 `check_real_task_upstream_topics(task_name, config)` 或等价 helper。
 - [ ] helper 检查 `/scan` presence、type、freshness、frame。
-- [ ] helper 检查 `/tf`、`/tf_static`。
-- [ ] helper 检查 FCU status / pose / velocity topic。
-- [ ] helper 检查 MAVROS state 或等价 FCU bridge state。
+- [x] helper 检查 `/tf`、`/tf_static`。
+- [x] helper 检查 FCU status / pose / velocity topic。
+- [x] helper 检查 MAVROS state 或等价 FCU bridge state。
 - [ ] helper 检查 `/slam/odom` presence、type、freshness、frame。
-- [ ] helper 检查 `/navlab/slam/status` ready。
+- [x] helper 检查 `/navlab/slam/status` ready。
 - [ ] helper 检查 rangefinder evidence。
-- [ ] helper 检查 forbidden simulation topic/source。
-- [ ] helper 输出结构化 result，供 hover / exploration / scan-robustness 复用。
+- [x] helper 检查 yaw source evidence，室内 SLAM 真机任务只接受 `external_nav_yaw_ready=true`。
+- [x] helper 在无 GPS / 室内 real mode 下不把“未校准磁罗盘”单独作为 blocker，但必须要求 ExternalNav/SLAM yaw ready。
+- [x] helper 记录 yaw source provenance，包括 ExternalNav yaw readiness topic 和 ready field。
+- [x] helper 检查 forbidden simulation topic/source。
+- [x] helper 输出结构化 result，供 hover / exploration / scan-robustness 复用。
 
 验收：
 
-- [ ] 任一 required upstream topic 缺失时 task doctor blocked。
-- [ ] 任一 required upstream topic stale 时 task doctor blocked。
-- [ ] topic type 不匹配时 task doctor blocked。
-- [ ] forbidden sim topic/source 存在时 task doctor blocked。
-- [ ] helper result 能写入 task doctor summary。
+- [x] 任一 required upstream topic 缺失时 task doctor blocked。
+- [x] 任一 required upstream topic stale 时 task doctor blocked。
+- [x] topic type 不匹配时 task doctor blocked。
+- [x] `external_nav_yaw_ready=false` 时 task doctor blocked，即使 `compass_calibrated=true` 或 `manual_override_acknowledged=true`。
+- [x] `external_nav_yaw_ready=true` 时 task doctor 不因未校准磁罗盘单独 blocked。
+- [x] `manual_override_acknowledged=true` 不作为室内 SLAM 真机任务 yaw source 放行条件。
+- [x] forbidden sim topic/source 存在时 task doctor blocked。
+- [x] helper result 能写入 task doctor summary。
 
 ## RTD.8 Task-specific doctor
 
 任务：
 
-- [ ] `hover` task doctor 检查 takeoff altitude、hover hold、landing policy。
-- [ ] `hover` task doctor 检查 FCU 初始 mode/armed 状态。
-- [ ] `hover` task doctor 检查 `land_in_place` readiness。
-- [ ] `exploration` task doctor 检查 P8 Stage 2 return-home policy。
-- [ ] `exploration` task doctor 检查 home source 和 bounded movement limits。
-- [ ] `exploration` task doctor 检查 `return_home_then_land` readiness。
-- [ ] `scan-robustness` task doctor 检查 P12 scan stabilization / tilt robustness status。
-- [ ] `scan-robustness` task doctor 检查 `land_in_place` readiness。
-- [ ] 每个 task doctor 写出独立 summary，并被 wrapper 汇总。
+- [x] `hover` task doctor 检查 takeoff altitude、hover hold、landing policy。
+- [x] `hover` task doctor 检查 FCU 初始 mode/armed 状态。
+- [x] `hover` task doctor 检查 yaw source readiness：必须是 `external_nav_yaw_ready=true`。
+- [x] `hover` task doctor 检查 `land_in_place` readiness。
+- [x] `exploration` task doctor 检查 P8 Stage 2 return-home policy。
+- [x] `exploration` task doctor 检查 home source 和 bounded movement limits。
+- [x] `exploration` task doctor 检查 yaw source readiness，并在 P8 return-home 前确认 ExternalNav yaw provenance。
+- [x] `exploration` task doctor 检查 `return_home_then_land` readiness。
+- [x] `scan-robustness` task doctor 检查 P12 scan stabilization / tilt robustness status。
+- [x] `scan-robustness` task doctor 检查 yaw source readiness，避免倾斜/扰动验收误用无来源 yaw。
+- [x] `scan-robustness` task doctor 检查 `land_in_place` readiness。
+- [x] 每个 task doctor 写出独立 summary，并被 wrapper 汇总。
 
 验收：
 
-- [ ] hover 缺 takeoff altitude 或 landing policy 时 blocked。
-- [ ] P8 缺 return-home policy 或 home source 时 blocked。
-- [ ] P12 缺 scan robustness status 时 blocked。
-- [ ] task doctor 通过不代表已经 arm/takeoff。
-- [ ] task doctor summary 能说明 task-specific readiness。
+- [x] hover 缺 takeoff altitude 或 landing policy 时 blocked。
+- [x] hover / P8 / P12 缺 ExternalNav yaw readiness 时 blocked。
+- [x] P8 缺 return-home policy 或 home source 时 blocked。
+- [x] P12 缺 scan robustness status 时 blocked。
+- [x] task doctor 通过不代表已经 arm/takeoff。
+- [x] task doctor summary 能说明 task-specific readiness。
 
 ## RTD.9 Companion 启动边界
 
 任务：
 
-- [ ] wrapper 只在 prepare 和 task doctor 通过后启动 companion。
+- [x] wrapper 只在 prepare 和 task doctor 通过后启动 companion。
 - [ ] companion 不直接抢 FCU serial。
 - [ ] companion 只消费 prepare/task doctor 已验证的 ROS topics。
 - [ ] companion startup 写入 run summary。
@@ -237,8 +247,8 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 
 验收：
 
-- [ ] prepare 未通过时 companion 不启动。
-- [ ] task doctor 未通过时 companion 不启动。
+- [x] prepare 未通过时 companion 不启动。
+- [x] task doctor 未通过时 companion 不启动。
 - [ ] companion 抢 `/dev/ttyACM0` 时 blocked。
 - [ ] companion status 不 ready 时 task run blocked。
 
@@ -265,18 +275,18 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 
 任务：
 
-- [ ] prepare 阶段保存 process logs。
+- [x] prepare 阶段保存 process logs。
 - [ ] prepare 阶段保存 ROS topic list。
-- [ ] prepare 阶段保存 topic info / publisher 摘要。
-- [ ] task doctor 阶段保存 upstream topic freshness 样本。
+- [x] prepare 阶段保存 topic info / publisher 摘要。
+- [x] task doctor 阶段保存 upstream topic freshness 样本。
 - [ ] task doctor 阶段保存 source claim summary。
 - [ ] real wrapper 录制真机 flight rosbag。
 - [ ] real wrapper summary 引用 preflight / prepare / task doctor artifact。
 
 验收：
 
-- [ ] prepare artifact 可复查辅助进程启动状态。
-- [ ] task doctor artifact 可复查 companion 启动前置 topic。
+- [x] prepare artifact 可复查辅助进程启动状态。
+- [x] task doctor artifact 可复查 companion 启动前置 topic。
 - [ ] real flight artifact 能追溯到 Stage 1 和所有 real phase artifact。
 - [ ] artifact 不把 Gazebo/SITL 输入作为 required evidence。
 
@@ -284,23 +294,26 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 
 任务：
 
-- [ ] 增加 CLI wrapper dispatch 测试。
-- [ ] 增加 real prepare config parser 测试。
-- [ ] 增加 mavlink-router command/provenance 测试。
-- [ ] 增加 MAVROS endpoint contract 测试。
-- [ ] 增加 lidar/SLAM prepare blocked 测试。
-- [ ] 增加 task doctor helper topic missing/stale/type 测试。
-- [ ] 增加 forbidden simulation source 测试。
-- [ ] 增加 companion 不提前启动测试。
+- [x] 增加 CLI wrapper dispatch 测试。
+- [x] 增加 real prepare config parser 测试。
+- [x] 增加 mavlink-router command/provenance 测试。
+- [x] 增加 MAVROS endpoint contract 测试。
+- [x] 增加 lidar/SLAM prepare blocked 测试。
+- [x] 增加 task doctor helper topic missing/stale/type 测试。
+- [x] 增加 task doctor yaw source 测试：只有 ExternalNav yaw ready 可以放行。
+- [x] 增加未校准磁罗盘但 ExternalNav yaw ready 时不 blocked 的测试。
+- [x] 增加 compass/manual override 存在但 ExternalNav yaw 不 ready 时 blocked 的测试。
+- [x] 增加 forbidden simulation source 测试。
+- [x] 增加 companion 不提前启动测试。
 - [ ] 增加 Stage 1 `ideal` + `mild_disturbance` gate 测试。
 - [ ] 增加 wrapper summary schema 测试。
 
 验收：
 
-- [ ] real prepare / task doctor 单元测试通过。
-- [ ] real preflight 现有测试仍通过。
+- [x] real prepare / task doctor 单元测试通过。
+- [x] real preflight 现有测试仍通过。
 - [ ] unified landing Stage 2 blocker 测试仍通过。
-- [ ] CLI help contract 测试通过。
+- [x] CLI help contract 测试通过。
 
 ## RTD.13 执行顺序
 
@@ -324,14 +337,15 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 
 RTD 全部完成必须满足：
 
-- [ ] operator 只执行 `run <task>` / `just navlab-run <task>`。
-- [ ] real mode wrapper 顺序固定为 preflight -> prepare -> task doctor -> companion/task run。
-- [ ] prepare 只在 preflight 通过后启动非 companion 辅助进程。
-- [ ] prepare 启动 `mavlink-router`，并证明 MAVLink endpoint 可追溯到真实 serial。
-- [ ] MAVROS 通过 router endpoint 暴露真实 FCU ROS topics。
-- [ ] 真实 lidar 提供 `/scan`，SLAM 提供 `/slam/odom`。
-- [ ] task doctor 复用统一 upstream topic helper。
-- [ ] companion 只在 prepare 和 task doctor 通过后启动。
+- [x] operator 只执行 `run <task>` / `just navlab-run <task>`。
+- [x] real mode wrapper 顺序固定为 preflight -> prepare -> task doctor -> companion/task run。
+- [x] prepare 只在 preflight 通过后启动非 companion 辅助进程。
+- [x] prepare 启动 `mavlink-router`，并证明 MAVLink endpoint 可追溯到真实 serial。
+- [x] MAVROS 通过 router endpoint 暴露真实 FCU ROS topics。
+- [x] 真实 lidar 提供 `/scan`，SLAM 提供 `/slam/odom`。
+- [x] task doctor 复用统一 upstream topic helper。
+- [x] task doctor 明确检查 yaw source evidence；无 GPS / 未校准磁罗盘场景必须由 ExternalNav/SLAM yaw ready 补足。
+- [x] companion 只在 prepare 和 task doctor 通过后启动。
 - [ ] Stage 1 `ideal` 和 `mild_disturbance` artifacts 都通过后才允许 real task run。
 - [ ] operator safety confirmation 缺失时不会进入 arm/takeoff。
 - [ ] summary 能追溯 preflight、prepare、task doctor、Stage 1 和 real flight artifact。
@@ -349,3 +363,11 @@ RTD 全部完成必须满足：
 - 命令：`uv run --project orchestration pytest orchestration/tests/test_cli.py orchestration/tests/test_runtime_backend.py orchestration/tests/test_config.py -q`
 - 结果：CLI / justfile 已收敛到 `build`、`doctor`、`run <task>`；real mode 下 `run <task>` 先执行 runtime doctor，然后在 prepare/task doctor/flight wrapper 未实现前 blocked，不 fallback 到 simulation task。
 - blocker：real prepare bringup、task doctor helper、companion 启动边界和真机 Stage 2 flight wrapper 尚未实现。
+
+### 2026-06-09 RTD real prepare and task doctor implementation
+
+- 命令：`uv run --project orchestration pytest orchestration/tests/test_cli.py orchestration/tests/test_config.py orchestration/tests/test_runtime_backend.py orchestration/tests/test_real_prepare.py -q`
+- 结果：142 passed。`run <task>` 的 real mode 顺序固定为 preflight -> prepare -> task doctor -> flight boundary；prepare 配置、MAVLink router serial provenance、MAVROS 不直连串口、真实 upstream topic helper、task-specific doctor 和 companion 不提前启动均有测试覆盖。
+- 命令：`git diff --check`
+- 结果：通过。
+- blocker：Stage 1 `ideal` + `mild_disturbance` real gate、operator safety confirmation、rangefinder evidence、topic frame/source-claim summary、flight rosbag 和真正 companion/arm/takeoff wrapper 尚未实现。

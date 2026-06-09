@@ -40,6 +40,7 @@ TASK_CONFIG_NAMES = {
     "scan-robustness": "scan_robustness",
     "scan-robustness-doctor": "scan_robustness",
     "real-preflight-doctor": "real_preflight",
+    "real-prepare": "real_prepare",
 }
 
 
@@ -111,6 +112,42 @@ class RealPreflightDependencyConfig:
     required_ros_packages: tuple[str, ...]
     required_python_modules: tuple[str, ...]
     required_process_services: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RealPrepareServiceConfig:
+    enabled: bool
+    required: bool
+    command: tuple[str, ...]
+    cwd: str
+    env: dict[str, str]
+    startup_timeout_sec: float
+    health_topics: tuple[str, ...]
+    shutdown_policy: str
+    direct_serial_access_allowed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RealPrepareConfig:
+    dry_run: bool
+    process_log_dir: str
+    summary_artifact_dir: str
+    ros_topic_probe_timeout_sec: float
+    topic_freshness_window_sec: float
+    external_nav_yaw_required: bool
+    external_nav_yaw_status_topics: tuple[str, ...]
+    external_nav_yaw_ready_fields: tuple[str, ...]
+    mavlink_router_serial_port: str
+    mavlink_router_baud: int
+    mavlink_router_local_endpoint: str
+    fcu_bridge_state_topic: str
+    required_upstream_topics: tuple[str, ...]
+    forbidden_simulation_topics: tuple[str, ...]
+    mavlink_router: RealPrepareServiceConfig
+    mavros: RealPrepareServiceConfig
+    lidar: RealPrepareServiceConfig
+    slam: RealPrepareServiceConfig
+    rangefinder_bridge: RealPrepareServiceConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -683,6 +720,7 @@ class OrchestrationConfig:
     airframe_disturbance_gate: AirframeDisturbanceGateConfig
     landing: LandingConfig
     real_preflight: RealPreflightConfig
+    real_prepare: RealPrepareConfig
     foxglove_upload: FoxgloveUploadConfig
     orchestration_config_source: str = "mode default"
     task_name: str | None = None
@@ -727,9 +765,13 @@ class OrchestrationConfig:
         real_preflight = _section(data, "real_preflight")
         serial_mavlink = _section(data, "serial_mavlink")
         real_preflight_dependencies = _section(real_preflight, "dependencies")
+        real_prepare = _section(data, "real_prepare")
         foxglove_upload = _section(data, "foxglove_upload")
         task = _optional_task_table(data, task_path)
         ros_domain_id = _as_str(data.get("ros_domain_id"), "85")
+        serial_port = _as_str(serial_mavlink.get("port"), "/dev/ttyACM0")
+        serial_baud = int(_as_float(serial_mavlink.get("baud"), 115200.0))
+        router_endpoint = _as_str(real_prepare.get("mavlink_router_local_endpoint"), "127.0.0.1:14550")
         return cls(
             path=config_path,
             session_id=_as_str(data.get("session_id"), "navlab_companion_sitl_gazebo"),
@@ -1699,6 +1741,121 @@ class OrchestrationConfig:
                     ),
                 ),
             ),
+            real_prepare=RealPrepareConfig(
+                dry_run=_as_bool(real_prepare.get("dry_run"), False),
+                process_log_dir=_as_str(
+                    real_prepare.get("process_log_dir"),
+                    "artifacts/runtime_logs/real_prepare",
+                ),
+                summary_artifact_dir=_as_str(
+                    real_prepare.get("summary_artifact_dir"),
+                    "artifacts/ros/navlab_real_prepare",
+                ),
+                ros_topic_probe_timeout_sec=_as_float(real_prepare.get("ros_topic_probe_timeout_sec"), 5.0),
+                topic_freshness_window_sec=_as_float(real_prepare.get("topic_freshness_window_sec"), 2.0),
+                external_nav_yaw_required=_as_bool(real_prepare.get("external_nav_yaw_required"), True),
+                external_nav_yaw_status_topics=_as_str_tuple(
+                    real_prepare.get("external_nav_yaw_status_topics"),
+                    (
+                        _as_str(slam_backend.get("external_nav_status_topic"), "/external_nav/status"),
+                        _as_str(slam_backend.get("slam_status_topic"), "/navlab/slam/status"),
+                    ),
+                ),
+                external_nav_yaw_ready_fields=_as_str_tuple(
+                    real_prepare.get("external_nav_yaw_ready_fields"),
+                    (
+                        "external_nav_yaw_ready",
+                        "yaw_ready",
+                        "orientation_ready",
+                    ),
+                ),
+                mavlink_router_serial_port=_as_str(
+                    real_prepare.get("mavlink_router_serial_port"),
+                    serial_port,
+                ),
+                mavlink_router_baud=int(
+                    _as_float(real_prepare.get("mavlink_router_baud"), float(serial_baud)),
+                ),
+                mavlink_router_local_endpoint=router_endpoint,
+                fcu_bridge_state_topic=_as_str(real_prepare.get("fcu_bridge_state_topic"), "/mavros/state"),
+                required_upstream_topics=_as_str_tuple(
+                    real_prepare.get("required_upstream_topics"),
+                    (
+                        "/scan",
+                        "/tf",
+                        "/tf_static",
+                        "/slam/odom",
+                        "/navlab/slam/status",
+                        "/ap/v1/status",
+                        "/ap/v1/pose/filtered",
+                        "/ap/v1/twist/filtered",
+                        "/mavros/state",
+                    ),
+                ),
+                forbidden_simulation_topics=_as_str_tuple(
+                    real_prepare.get("forbidden_simulation_topics"),
+                    (
+                        "/gazebo/*",
+                        "/scan_ideal",
+                        "/sim/x2/status",
+                        "/rangefinder/down/scan_ideal",
+                    ),
+                ),
+                mavlink_router=_real_prepare_service_from_config(
+                    real_prepare,
+                    "mavlink_router",
+                    default_command=(
+                        "mavlink-routerd",
+                        "-e",
+                        router_endpoint,
+                        f"{serial_port}:{serial_baud}",
+                    ),
+                    default_health_topics=(),
+                    default_shutdown_policy="stop_on_wrapper_exit",
+                ),
+                mavros=_real_prepare_service_from_config(
+                    real_prepare,
+                    "mavros",
+                    default_command=(
+                        "ros2",
+                        "launch",
+                        "mavros",
+                        "apm.launch.py",
+                        f"fcu_url:=udp://@{router_endpoint}",
+                    ),
+                    default_health_topics=("/mavros/state", "/ap/v1/status"),
+                    default_shutdown_policy="stop_on_wrapper_exit",
+                ),
+                lidar=_real_prepare_service_from_config(
+                    real_prepare,
+                    "lidar",
+                    default_command=("ros2", "launch", "ydlidar_ros2_driver", "ydlidar_launch.py"),
+                    default_health_topics=("/scan",),
+                    default_shutdown_policy="stop_on_wrapper_exit",
+                ),
+                slam=_real_prepare_service_from_config(
+                    real_prepare,
+                    "slam",
+                    default_command=(
+                        "ros2",
+                        "launch",
+                        "navlab_slam_bringup",
+                        "cartographer.launch.py",
+                        "use_sim_time:=false",
+                    ),
+                    default_health_topics=("/slam/odom", "/navlab/slam/status"),
+                    default_shutdown_policy="stop_on_wrapper_exit",
+                ),
+                rangefinder_bridge=_real_prepare_service_from_config(
+                    real_prepare,
+                    "rangefinder_bridge",
+                    default_enabled=False,
+                    default_required=False,
+                    default_command=(),
+                    default_health_topics=("/rangefinder/down/range", "/rangefinder/down/status"),
+                    default_shutdown_policy="stop_on_wrapper_exit",
+                ),
+            ),
             foxglove_upload=FoxgloveUploadConfig(
                 enabled=_as_bool(foxglove_upload.get("enabled"), True),
                 api_url=_as_str(foxglove_upload.get("api_url"), "https://api.foxglove.dev/v1"),
@@ -2122,6 +2279,35 @@ def _as_str_group_tuple(value: Any, default: tuple[tuple[str, ...], ...] = ()) -
                 raise TypeError(f"expected string command group, got {type(item).__name__}")
         return tuple(groups)
     raise TypeError(f"expected string group list, got {type(value).__name__}")
+
+
+def _real_prepare_service_from_config(
+    real_prepare: dict[str, Any],
+    name: str,
+    *,
+    default_command: tuple[str, ...],
+    default_health_topics: tuple[str, ...],
+    default_shutdown_policy: str,
+    default_enabled: bool = True,
+    default_required: bool = True,
+) -> RealPrepareServiceConfig:
+    service = _section(real_prepare, name)
+    raw_env = service.get("env", {})
+    if raw_env is None:
+        raw_env = {}
+    if not isinstance(raw_env, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in raw_env.items()):
+        raise ValueError(f"Invalid [real_prepare.{name}.env] section: expected string table")
+    return RealPrepareServiceConfig(
+        enabled=_as_bool(service.get("enabled"), default_enabled),
+        required=_as_bool(service.get("required"), default_required),
+        command=_as_args(service.get("command")) or default_command,
+        cwd=_as_str(service.get("cwd"), ""),
+        env=dict(raw_env),
+        startup_timeout_sec=_as_float(service.get("startup_timeout_sec"), 8.0),
+        health_topics=_as_str_tuple(service.get("health_topics"), default_health_topics),
+        shutdown_policy=_as_str(service.get("shutdown_policy"), default_shutdown_policy),
+        direct_serial_access_allowed=_as_bool(service.get("direct_serial_access_allowed"), False),
+    )
 
 
 def _section(data: dict[str, Any], *keys: str) -> dict[str, Any]:

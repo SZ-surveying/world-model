@@ -8,6 +8,7 @@ from rich.console import Console
 
 from src.tasks.build import BuildTask, ImageKind
 from src.tasks.doctor import DoctorTask
+from src.tasks.real_prepare import execute_real_prepare_phase, run_real_task_doctor, stop_real_prepare_phase
 from src.tasks.registry import TaskRegistry
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -92,14 +93,32 @@ def run_task_command(
     backend_mode = _runtime_backend_mode_from_env()
     if backend_mode == ("process", "real"):
         doctor = cast(DoctorTask, TaskRegistry.create("doctor"))
-        rc = doctor.run(config_path=orchestration_config, task_config_path=task_config, console=console)
+        rc = doctor.run(config_path=orchestration_config, task_config_path=None, console=console)
         if rc != 0:
             raise typer.Exit(rc)
-        console.print(
-            "[red]Real task run is blocked after preflight:[/red] "
-            "real prepare / task doctor / flight wrapper is not implemented yet."
+        prepare_result = execute_real_prepare_phase(
+            task_name=normalized,
+            config_path=orchestration_config,
+            console=console,
         )
-        raise typer.Exit(20)
+        if prepare_result.return_code != 0:
+            raise typer.Exit(prepare_result.return_code)
+        try:
+            rc = run_real_task_doctor(
+                task_name=normalized,
+                config_path=orchestration_config,
+                task_config_path=task_config,
+                console=console,
+            )
+            if rc != 0:
+                raise typer.Exit(rc)
+            console.print(
+                "[red]Real task run is blocked after task doctor:[/red] "
+                "companion startup / arm / takeoff flight wrapper is not implemented yet."
+            )
+            raise typer.Exit(20)
+        finally:
+            stop_real_prepare_phase(prepare_result)
     if backend_mode != ("docker", "simulation"):
         console.print("[red]Unsupported runtime run combination:[/red] " f"{backend_mode[0]}+{backend_mode[1]}")
         raise typer.Exit(20)

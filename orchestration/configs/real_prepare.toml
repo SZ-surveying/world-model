@@ -1,0 +1,71 @@
+[real_prepare]
+dry_run = false
+process_log_dir = "artifacts/runtime_logs/real_prepare"
+summary_artifact_dir = "artifacts/ros/navlab_real_prepare"
+ros_topic_probe_timeout_sec = 5.0
+topic_freshness_window_sec = 2.0
+external_nav_yaw_required = true
+external_nav_yaw_status_topics = ["/external_nav/status", "/navlab/slam/status"]
+external_nav_yaw_ready_fields = ["external_nav_yaw_ready", "yaw_ready", "orientation_ready"]
+mavlink_router_serial_port = "/dev/ttyACM0"
+mavlink_router_baud = 115200
+mavlink_router_local_endpoint = "127.0.0.1:14550"
+fcu_bridge_state_topic = "/mavros/state"
+required_upstream_topics = [
+    "/scan",
+    "/tf",
+    "/tf_static",
+    "/slam/odom",
+    "/navlab/slam/status",
+    "/ap/v1/status",
+    "/ap/v1/pose/filtered",
+    "/ap/v1/twist/filtered",
+    "/mavros/state",
+]
+forbidden_simulation_topics = [
+    "/gazebo/*",
+    "/scan_ideal",
+    "/sim/x2/status",
+    "/rangefinder/down/scan_ideal",
+]
+
+[real_prepare.mavlink_router]
+enabled = true
+required = true
+command = ["mavlink-routerd", "-e", "127.0.0.1:14550", "/dev/ttyACM0:115200"]
+startup_timeout_sec = 5.0
+health_topics = []
+shutdown_policy = "stop_on_wrapper_exit"
+
+[real_prepare.mavros]
+enabled = true
+required = true
+command = ["ros2", "launch", "mavros", "apm.launch.py", "fcu_url:=udp://@127.0.0.1:14550"]
+startup_timeout_sec = 12.0
+health_topics = ["/mavros/state", "/ap/v1/status"]
+shutdown_policy = "stop_on_wrapper_exit"
+direct_serial_access_allowed = false
+
+[real_prepare.lidar]
+enabled = true
+required = true
+command = ["ros2", "launch", "ydlidar_ros2_driver", "ydlidar_launch.py"]
+startup_timeout_sec = 10.0
+health_topics = ["/scan"]
+shutdown_policy = "stop_on_wrapper_exit"
+
+[real_prepare.slam]
+enabled = true
+required = true
+command = ["ros2", "launch", "navlab_slam_bringup", "cartographer.launch.py", "use_sim_time:=false"]
+startup_timeout_sec = 15.0
+health_topics = ["/slam/odom", "/navlab/slam/status"]
+shutdown_policy = "stop_on_wrapper_exit"
+
+[real_prepare.rangefinder_bridge]
+enabled = false
+required = false
+command = []
+startup_timeout_sec = 8.0
+health_topics = ["/rangefinder/down/range", "/rangefinder/down/status"]
+shutdown_policy = "stop_on_wrapper_exit"
