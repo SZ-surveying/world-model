@@ -17,12 +17,14 @@ class FcuBridgeModeSpec:
 NAVLAB_MAVLINK = FcuBridgeModeSpec(
     name="navlab_mavlink",
     description="NavLab MAVLink router plus NavLab MAVLink bridge topics; no MAVROS or /ap/v1 DDS required.",
-    prepare_service_names=("mavlink_router", "navlab_mavlink_bridge", "lidar", "slam"),
+    prepare_service_names=("mavlink_router", "navlab_mavlink_bridge", "lidar", "slam", "rangefinder_bridge"),
     prepare_required_topics=(
         "/navlab/mavlink/status",
         "/navlab/fcu/local_position_pose",
         "/mavlink_external_nav/status",
         "/external_nav/status",
+        "/rangefinder/down/range",
+        "/rangefinder/down/status",
     ),
     preflight_required_ros_packages=(
         "cartographer_ros",

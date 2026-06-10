@@ -40,7 +40,7 @@ def _complete_hover_snapshot() -> RealTopicSnapshot:
                     "tf": {"fresh": True, "count": 10},
                 },
             ),
-            "/navlab/mavlink/status": TopicEvidence(type_name="std_msgs/msg/String"),
+            "/navlab/mavlink/status": TopicEvidence(type_name="std_msgs/msg/String", metadata={"mode": "STABILIZE"}),
             "/navlab/fcu/local_position_pose": TopicEvidence(),
             "/mavlink_external_nav/status": TopicEvidence(type_name="std_msgs/msg/String"),
             "/external_nav/status": TopicEvidence(
@@ -49,6 +49,23 @@ def _complete_hover_snapshot() -> RealTopicSnapshot:
                     "ready": True,
                     "external_nav_yaw_ready": True,
                     "odom": {"input_topic": "/slam/odom", "frame_ok": True, "rate_ok": True},
+                },
+            ),
+            "/rangefinder/down/range": TopicEvidence(
+                type_name="sensor_msgs/msg/Range",
+                frame_id="rangefinder_down_frame",
+                metadata={"sample_seen": True, "range": 0.45, "min_range": 0.1, "max_range": 12.0},
+            ),
+            "/rangefinder/down/status": TopicEvidence(
+                type_name="std_msgs/msg/String",
+                metadata={
+                    "ready": True,
+                    "source": "real_fcu_distance_sensor",
+                    "current_distance_m": 0.45,
+                    "min_distance_m": 0.1,
+                    "max_distance_m": 12.0,
+                    "orientation": 25,
+                    "fresh": True,
                 },
             ),
         },
@@ -83,7 +100,17 @@ def test_real_prepare_config_parser_loads_router_serial_and_services() -> None:
     assert "external_nav_input_odom_topic:=/slam/odom" in prepare.slam.command
     assert "require_imu_for_external_nav:=false" in prepare.slam.command
     assert prepare.slam.health_topics == ("/imu", "/slam/odom", "/navlab/slam/status", "/external_nav/status")
-    assert prepare.rangefinder_bridge.enabled is False
+    assert prepare.rangefinder_bridge.enabled is True
+    assert prepare.rangefinder_bridge.required is True
+    assert "orchestration/src/tasks/rangefinder_bridge/fcu_distance_sensor_bridge.py" in " ".join(
+        prepare.rangefinder_bridge.command
+    )
+    assert prepare.rangefinder_bridge.health_topics == ("/rangefinder/down/range", "/rangefinder/down/status")
+    assert prepare.height_rangefinder_required is True
+    assert prepare.altitude_hold_mode == "fcu_rangefinder_guided"
+    assert prepare.altitude_hold_requires_rangefinder is True
+    assert prepare.altitude_hold_allows_indoor_no_gps is True
+    assert prepare.altitude_hold_allowed_initial_modes == ("STABILIZE", "ALT_HOLD", "GUIDED")
     assert prepare.external_nav_yaw_required is True
     assert prepare.external_nav_yaw_status_topics == ("/external_nav/status", "/navlab/slam/status")
     assert "external_nav_yaw_ready" in prepare.external_nav_yaw_ready_fields
@@ -101,10 +128,12 @@ def test_real_prepare_fcu_bridge_registry_selects_navlab_mavlink_topics() -> Non
     required_topics = real_prepare._required_upstream_topics("hover", config)
 
     assert mode.name == "navlab_mavlink"
-    assert set(services) == {"mavlink_router", "navlab_mavlink_bridge", "lidar", "slam"}
+    assert set(services) == {"mavlink_router", "navlab_mavlink_bridge", "lidar", "slam", "rangefinder_bridge"}
     assert "/navlab/mavlink/status" in required_topics
     assert "/navlab/fcu/local_position_pose" in required_topics
     assert "/mavlink_external_nav/status" in required_topics
+    assert "/rangefinder/down/range" in required_topics
+    assert "/rangefinder/down/status" in required_topics
     assert "/imu/data" in required_topics
     assert "/imu" in required_topics
     assert "/external_nav/status" in required_topics
@@ -281,6 +310,120 @@ def test_task_doctor_requires_external_nav_yaw_ready() -> None:
 
     assert "external_nav_yaw_not_ready" in result["blockers"]
     assert result["yaw_source"]["accepted_source"] == ""
+
+
+def test_task_doctor_requires_real_rangefinder_contract() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="hover")
+
+    missing_topics = {
+        k: v for k, v in _complete_hover_snapshot().topics.items() if not k.startswith("/rangefinder/down/")
+    }
+    result = real_prepare.check_real_task_upstream_topics(
+        "hover",
+        config,
+        topic_snapshot=RealTopicSnapshot(topics=missing_topics),
+    )
+    assert "required_topic_missing:/rangefinder/down/range" in result["blockers"]
+    assert "required_topic_missing:/rangefinder/down/status" in result["blockers"]
+    assert "rangefinder_down_no_data" in result["blockers"]
+
+    status_not_ready = dict(_complete_hover_snapshot().topics)
+    status_not_ready["/rangefinder/down/status"] = TopicEvidence(
+        type_name="std_msgs/msg/String",
+        metadata={"ready": False, "blocker": "rangefinder_down_distance_invalid"},
+    )
+    result = real_prepare.check_real_task_upstream_topics(
+        "hover",
+        config,
+        topic_snapshot=RealTopicSnapshot(topics=status_not_ready),
+    )
+    assert "rangefinder_down_distance_invalid" in result["blockers"]
+
+    wrong_source = dict(_complete_hover_snapshot().topics)
+    wrong_source["/rangefinder/down/status"] = TopicEvidence(
+        type_name="std_msgs/msg/String",
+        metadata={
+            "ready": True,
+            "source": "simulation_rangefinder",
+            "current_distance_m": 0.45,
+            "min_distance_m": 0.1,
+            "max_distance_m": 12.0,
+            "orientation": 25,
+        },
+    )
+    result = real_prepare.check_real_task_upstream_topics(
+        "hover",
+        config,
+        topic_snapshot=RealTopicSnapshot(topics=wrong_source),
+    )
+    assert "rangefinder_down_source_forbidden" in result["blockers"]
+
+    wrong_orientation = dict(_complete_hover_snapshot().topics)
+    wrong_orientation["/rangefinder/down/status"] = TopicEvidence(
+        type_name="std_msgs/msg/String",
+        metadata={
+            "ready": True,
+            "source": "real_fcu_distance_sensor",
+            "current_distance_m": 0.45,
+            "min_distance_m": 0.1,
+            "max_distance_m": 12.0,
+            "orientation": 0,
+        },
+    )
+    result = real_prepare.check_real_task_upstream_topics(
+        "hover",
+        config,
+        topic_snapshot=RealTopicSnapshot(topics=wrong_orientation),
+    )
+    assert "rangefinder_down_orientation_invalid" in result["blockers"]
+
+
+def test_task_doctor_blocks_altitude_hold_when_rangefinder_not_ready() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="hover")
+    topics = dict(_complete_hover_snapshot().topics)
+    topics["/rangefinder/down/range"] = TopicEvidence(
+        type_name="sensor_msgs/msg/Range",
+        metadata={"sample_seen": True, "range": 0.0, "min_range": 0.1, "max_range": 12.0},
+    )
+    topics["/rangefinder/down/status"] = TopicEvidence(
+        type_name="std_msgs/msg/String",
+        metadata={
+            "ready": False,
+            "source": "real_fcu_distance_sensor",
+            "current_distance_m": 0.0,
+            "min_distance_m": 0.1,
+            "max_distance_m": 12.0,
+            "orientation": 25,
+            "blocker": "rangefinder_down_distance_invalid",
+        },
+    )
+
+    summary = real_prepare.build_real_task_doctor_summary(
+        "hover",
+        config,
+        topic_snapshot=RealTopicSnapshot(topics=topics),
+    )
+
+    assert summary["ok"] is False
+    assert "rangefinder_down_distance_invalid" in summary["blockers"]
+    assert "altitude_hold_mode_not_ready" in summary["blockers"]
+    assert summary["task_specific"]["altitude_hold"]["rangefinder_ready"] is False
+
+
+def test_task_doctor_blocks_altitude_hold_on_disallowed_initial_fcu_mode() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="hover")
+    topics = dict(_complete_hover_snapshot().topics)
+    topics["/navlab/mavlink/status"] = TopicEvidence(type_name="std_msgs/msg/String", metadata={"mode": "AUTO"})
+
+    summary = real_prepare.build_real_task_doctor_summary(
+        "hover",
+        config,
+        topic_snapshot=RealTopicSnapshot(topics=topics),
+    )
+
+    assert summary["ok"] is False
+    assert "altitude_hold_mode_not_ready" in summary["blockers"]
+    assert summary["task_specific"]["altitude_hold"]["current_fcu_mode"] == "AUTO"
 
 
 def test_external_nav_yaw_metadata_parses_std_msgs_json_payload() -> None:

@@ -41,6 +41,7 @@
 - `docs/scenarios/indoor/navlab_unified_landing_sequence_design.md`: hover/P8/P12 统一降落流程设计
 - `docs/scenarios/indoor/navlab_real_flight_preflight_doctor_design.md`: 真机飞行前 real preflight doctor 设计
 - `docs/scenarios/indoor/navlab_real_prepare_and_task_doctor_design.md`: 真机 prepare / task doctor 分层设计
+- `docs/scenarios/indoor/navlab_real_pre_takeoff_development_confirmation.md`: 真机起飞前开发确认文档
 - `docs/scenarios/indoor/todos/real_flight_preflight_doctor_todo.md`: 真机飞行前 real preflight doctor TODO 和验收标准
 - `docs/scenarios/indoor/todos/real_prepare_and_task_doctor_todo.md`: 真机 prepare / task doctor TODO 和验收标准
 - `docs/scenarios/indoor/todos/unified_landing_sequence_todo.md`: 统一降落流程 TODO 和两阶段验收标准
@@ -98,20 +99,21 @@
 27. `docs/scenarios/indoor/navlab_unified_landing_sequence_design.md`
 28. `docs/scenarios/indoor/navlab_real_flight_preflight_doctor_design.md`
 29. `docs/scenarios/indoor/navlab_real_prepare_and_task_doctor_design.md`
-30. `docs/scenarios/indoor/todos/real_flight_preflight_doctor_todo.md`
-31. `docs/scenarios/indoor/todos/real_prepare_and_task_doctor_todo.md`
-32. `docs/scenarios/indoor/todos/unified_landing_sequence_todo.md`
-33. `docs/scenarios/indoor/todos/P12_airframe_disturbance_scan_robustness_todo.md`
-34. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
-35. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
-36. `docs/sim/x2_lidar_simulation_design.md`
-37. `docs/sim/x2_lidar_protocol_todo.md`
-38. `docs/general/lab_env_service_refactor_todo.md`
-39. `docs/general/orchestration_runtime_backend_refactor_todo.md`
-40. `docs/general/orchestration_runtime_backend_guide.md`
-41. `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`
-42. `docs/general/orchestration_config_precedence_split_design.md`
-43. `docs/general/orchestration_legacy_helper_deep_split_todo.md`
+30. `docs/scenarios/indoor/navlab_real_pre_takeoff_development_confirmation.md`
+31. `docs/scenarios/indoor/todos/real_flight_preflight_doctor_todo.md`
+32. `docs/scenarios/indoor/todos/real_prepare_and_task_doctor_todo.md`
+33. `docs/scenarios/indoor/todos/unified_landing_sequence_todo.md`
+34. `docs/scenarios/indoor/todos/P12_airframe_disturbance_scan_robustness_todo.md`
+35. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
+36. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
+37. `docs/sim/x2_lidar_simulation_design.md`
+38. `docs/sim/x2_lidar_protocol_todo.md`
+39. `docs/general/lab_env_service_refactor_todo.md`
+40. `docs/general/orchestration_runtime_backend_refactor_todo.md`
+41. `docs/general/orchestration_runtime_backend_guide.md`
+42. `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`
+43. `docs/general/orchestration_config_precedence_split_design.md`
+44. `docs/general/orchestration_legacy_helper_deep_split_todo.md`
 
 ## 当前目录结构
 
@@ -146,6 +148,7 @@ docs/
       navlab_unified_landing_sequence_design.md
       navlab_real_flight_preflight_doctor_design.md
       navlab_real_prepare_and_task_doctor_design.md
+      navlab_real_pre_takeoff_development_confirmation.md
       navlab_ardupilot_ros2_official_alignment.md
       navlab_reference_projects_analysis.md
       navlab_cartographer_real_machine_tuning.md

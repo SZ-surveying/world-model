@@ -232,6 +232,114 @@ real prepare 对齐后的目标链路：
   SITL、placeholder odom 或 fake odom 作为 real evidence。
 - [x] prepare 通过时仍不启动 companion、不 arm、不 takeoff、不 land。
 
+### RTD.5B 当前下一优先级：按 simulation 链路打通 real height / rangefinder
+
+目标：像 RTD.5A 复制 simulation 的 SLAM yaw contract 一样，real height / rangefinder
+也必须复制 simulation 中已跑通的高度 contract。simulation 的高度链路不是 2D
+`/scan`，而是 down-facing rangefinder：`/rangefinder/down/scan_ideal ->
+DISTANCE_SENSOR -> FCU rangefinder/EKF/altitude hold`，同时暴露 ROS 观测 topic
+`/rangefinder/down/range` 和 `/rangefinder/down/status`。real 只替换输入来源为
+真实 FCU telemetry / 真实下视测距，输出 contract 保持一致。
+
+simulation 完整对照：
+
+| Contract | simulation 来源 | simulation topic / 参数 | real 对应来源 |
+|---|---|---|---|
+| height source | Gazebo down range sensor | `/rangefinder/down/scan_ideal`，只作为仿真输入 | FCU MAVLink `DISTANCE_SENSOR` 下视测距，优先 `orientation=25` / `MAV_SENSOR_ROTATION_PITCH_270` |
+| ROS height evidence | `navlab.gazebo_sensor.rangefinder` | `/rangefinder/down/range`、`/rangefinder/down/status` | NavLab real rangefinder bridge 发布同名 topic |
+| FCU height evidence | Gazebo rangefinder sender -> MAVLink | `DISTANCE_SENSOR` 被 FCU/EKF/altitude controller 消费 | 真实 FCU 已输出 `DISTANCE_SENSOR`；bridge 只观测/转发，不伪造高度 |
+| altitude hold mode | SITL hover / landing 使用 FCU 高度控制闭环 | rangefinder 支撑 FCU altitude hold / takeoff / landing | real hover / landing 必须显式声明并检查当前定高模式，例如 FCU rangefinder altitude hold、GUIDED altitude hold 或等价配置 |
+| validity gate | min/max/current distance + status JSON | status 中记录 source、count、fresh、validity | 按 `min_distance`、`max_distance`、`current_distance`、orientation、quality/filter 过滤 |
+| flight gate | hover / landing 高度 readiness | rangefinder evidence 支撑 altitude hold / landing | hover / landing task doctor 必须要求 height ready，不能用 2D `/scan` 替代 |
+
+必须和 RTD.5A 分开：`/scan` 只证明水平 SLAM/yaw；height / rangefinder 只证明
+垂直高度和 landing evidence。缺 height 不能解释 yaw blocker；yaw ready 也不能让
+hover / landing height gate 放行。
+
+real prepare 对齐后的目标链路：
+
+```text
+/dev/ttyUSB1 FCU MAVLink DISTANCE_SENSOR
+  -> real rangefinder bridge filters down-facing valid samples
+  -> sensor_msgs/Range /rangefinder/down/range
+  -> std_msgs/String JSON /rangefinder/down/status ready=true
+  -> task doctor confirms configured real altitude-hold mode is compatible
+  -> prepare records height evidence provenance
+  -> hover / landing task doctor height gate passes
+```
+
+任务：
+
+- [x] 新增 real rangefinder bridge：从 `/dev/ttyUSB1` 经 MAVLink router / NavLab
+  bridge 读取真实 `DISTANCE_SENSOR`，发布 `sensor_msgs/msg/Range` 到
+  `/rangefinder/down/range`，发布 JSON status 到 `/rangefinder/down/status`。
+- [x] bridge 优先接受 `DISTANCE_SENSOR`，要求 `current_distance > 0`、不低于
+  `min_distance`、不高于 `max_distance`、orientation 为下视；`RANGEFINDER`、baro、
+  EKF height 只能作为辅助诊断 evidence。
+- [x] bridge status 必须记录 source、orientation、min/max/current、quality、count、
+  age、fresh、ready、rejected_count、blocker reason，并区分 `DISTANCE_SENSOR` 和
+  `RANGEFINDER`。
+- [x] real prepare 增加 `rangefinder_bridge` mode/config，health topic 固定为
+  `/rangefinder/down/range` 和 `/rangefinder/down/status`；不能使用
+  `/rangefinder/down/scan_ideal` 或 Gazebo rangefinder。
+- [x] prepare readiness 不只看 topic list；必须读取 `/rangefinder/down/range`
+  样本和 `/rangefinder/down/status` JSON，确认 `ready=true`，同时记录 frame、range、
+  freshness、source claim。
+- [x] prepare / task doctor fail 时 summary 必须区分：
+  `rangefinder_down_no_data`、`rangefinder_down_not_ready`、
+  `rangefinder_down_orientation_invalid`、`rangefinder_down_distance_invalid`、
+  `rangefinder_down_source_forbidden`。
+- [x] hover / landing task doctor 必须要求 height ready；`/scan`、`/slam/odom`、
+  `/external_nav/status.ready=true` 不能替代 height readiness。
+- [x] real hover / landing task doctor 必须检查定高模式：summary 记录
+  `altitude_hold_mode`、当前 FCU mode、是否依赖 rangefinder、是否允许无 GPS 室内
+  定高；mode 不匹配时 blocked 为 `altitude_hold_mode_not_ready` 或等价 blocker。
+- [x] 定高模式 gate 必须和 rangefinder gate 绑定：rangefinder 未 ready 时不能把
+  `GUIDED`、`ALT_HOLD`、baro-only 或 manual hold 当作 autonomous hover / landing
+  readiness。
+- [x] `run hover --dry-run` 在 real mode 下通过 prepare / task doctor 后，summary
+  同时证明 yaw ready、height ready 和 altitude-hold mode ready，但仍不启动
+  companion、不 arm、不 takeoff。
+
+验收：
+
+- [x] `NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real uv run --project orchestration python orchestration/main.py run hover --dry-run`
+  能同时通过 RTD.5A yaw gate 和 RTD.5B height / rangefinder gate。
+- [x] 最新 prepare summary 中：`/rangefinder/down/range` 有真实样本，
+  `/rangefinder/down/status.ready=true`，source 为 `real_fcu_distance_sensor`，并记录
+  `current_distance_m`、`min_distance_m`、`max_distance_m`、orientation。
+- [x] 举高/放低桌面测试时 `/rangefinder/down/range.range` 随高度变化，summary
+  记录的 `DISTANCE_SENSOR.current_distance` 与 CLI 连续读数一致。
+- [x] `DISTANCE_SENSOR.current_distance` 为 0、低于 min、高于 max、orientation 非下视、
+  或数据 stale 时 prepare/task doctor blocked。
+- [x] real FCU 当前模式或配置不满足定高模式要求时，hover / landing task doctor
+  blocked；不能只因为 rangefinder topic ready 就放行真实 hover。
+- [x] latest runtime logs 中没有 `/rangefinder/down/scan_ideal`、Gazebo、SITL、
+  fake height、placeholder height 作为 real evidence。
+- [x] height gate 通过时仍不启动 companion、不 arm、不 takeoff、不 land。
+
+当前验证记录（2026-06-10）：
+
+- `just navlab-doctor` 通过，summary:
+  `artifacts/ros/navlab_real_preflight_doctor/20260610_080422/summary.json`。
+- targeted pytest 通过：`orchestration/tests/test_real_prepare.py`、
+  `orchestration/tests/test_cli.py`、
+  `orchestration/tests/test_runtime_backend.py::test_real_preflight_effective_dependencies_use_fcu_bridge_mode`。
+- 最新 real dry-run summary:
+  `artifacts/ros/navlab_real_prepare/20260610_081003/summary.json`。RTD.5A yaw gate
+  已通过；RTD.5B height gate 按预期 blocked，因为当前桌面状态下 FCU
+  `DISTANCE_SENSOR.current_distance_m=0.0`、`min_distance_m=0.1`、
+  `orientation=25`，blocker 为 `rangefinder_down_distance_invalid`。这证明 invalid
+  height 不会放行真实 hover；通过验收还需要举高到有效测距区间后重跑 dry-run。
+- 重新举高到有效测距区间后，`run hover --dry-run` 通过 RTD.5A + RTD.5B：
+  prepare summary `artifacts/ros/navlab_real_prepare/20260610_082646/summary.json`，
+  task doctor summary
+  `artifacts/ros/navlab_real_task_doctor/20260610_082733/hover/summary.json`。
+  其中 `/rangefinder/down/status.ready=true`，source 为
+  `real_fcu_distance_sensor`，`current_distance_m=0.14`、`min_distance_m=0.1`、
+  `max_distance_m=12.0`、`orientation=25`，`real_height_rangefinder_contract.ok=true`，
+  `altitude_hold.ok=true`，且 companion / arm / takeoff / landing 仍为未执行。
+
 任务：
 
 - [x] prepare 启动真实 lidar driver。
@@ -244,10 +352,10 @@ real prepare 对齐后的目标链路：
 - [x] prepare 检查 `/navlab/slam/status` ready。
 - [x] 文档明确 real Stage 2 需要三链路：FCU bridge、2D lidar/SLAM/yaw、height/rangefinder。
 - [x] 文档记录 2026-06-10 真机举高测试：FCU `DISTANCE_SENSOR` 会随高度变化，作为 real height bridge 首选输入。
-- [ ] prepare 检查 optional `/rangefinder/down/range`、`/rangefinder/down/status` 或 FCU telemetry evidence。
-- [ ] 若存在 ROS rangefinder bridge，必须发布 `/rangefinder/down/range` 和 `/rangefinder/down/status`，与 simulation topic contract 一致。
-- [ ] 无 ROS rangefinder bridge 时，prepare/task doctor summary 必须记录 FCU MAVLink `DISTANCE_SENSOR` 有效性；`RANGEFINDER`、baro 或 EKF height 只能作为辅助 evidence。
-- [ ] real rangefinder bridge 优先从 FCU `DISTANCE_SENSOR` 生成 `/rangefinder/down/range` 和 `/rangefinder/down/status`，并按 orientation/min/max/current 过滤。
+- [x] prepare 检查 `/rangefinder/down/range`、`/rangefinder/down/status` 和 FCU `DISTANCE_SENSOR` telemetry evidence。
+- [x] 若存在 ROS rangefinder bridge，必须发布 `/rangefinder/down/range` 和 `/rangefinder/down/status`，与 simulation topic contract 一致。
+- [x] 当前 `navlab_mavlink` 模式使用 ROS rangefinder bridge；summary 记录 FCU MAVLink `DISTANCE_SENSOR` 有效性，`RANGEFINDER`、baro 或 EKF height 不作为放行 evidence。
+- [x] real rangefinder bridge 优先从 FCU `DISTANCE_SENSOR` 生成 `/rangefinder/down/range` 和 `/rangefinder/down/status`，并按 orientation/min/max/current 过滤。
 - [x] prepare 禁止 `/scan_ideal`、`/sim/x2/status`、Gazebo rangefinder 作为 real evidence。
 
 验收：
@@ -255,10 +363,10 @@ real prepare 对齐后的目标链路：
 - [x] `/scan` 缺失、类型错误或 stale 时 prepare blocked。
 - [x] `/slam/odom` 缺失、类型错误或 stale 时 prepare blocked。
 - [x] SLAM 未 ready 时 prepare blocked。
-- [ ] required rangefinder evidence 缺失时 hover / landing readiness blocked。
-- [ ] 2D `/scan` 存在但 rangefinder / height evidence 缺失时，hover / landing readiness 仍 blocked。
-- [ ] ROS rangefinder bridge 只发布其他 topic 名时 blocked 或明确 migration blocker。
-- [ ] `DISTANCE_SENSOR.current_distance` 为 0、低于 `min_distance`、高于 `max_distance` 或 orientation 非下视时，hover / landing readiness blocked。
+- [x] required rangefinder evidence 缺失时 hover / landing readiness blocked。
+- [x] 2D `/scan` 存在但 rangefinder / height evidence 缺失时，hover / landing readiness 仍 blocked。
+- [x] ROS rangefinder bridge 只发布其他 topic 名时 blocked 或明确 migration blocker。
+- [x] `DISTANCE_SENSOR.current_distance` 为 0、低于 `min_distance`、高于 `max_distance` 或 orientation 非下视时，hover / landing readiness blocked。
 - [x] 真实 lidar 不能被 X2 virtual serial 替代。
 
 ## RTD.6 Prepare summary、blocker 和进程清理
@@ -269,7 +377,7 @@ real prepare 对齐后的目标链路：
 - [x] prepare summary 记录 `started_services`。
 - [x] prepare summary 记录每个 service 的 command、pid、logs、health topic。
 - [x] prepare summary 记录 MAVLink router serial provenance。
-- [ ] prepare summary 分别记录 FCU bridge、2D lidar/SLAM/yaw、height/rangefinder readiness。
+- [x] prepare summary 分别记录 FCU bridge、2D lidar/SLAM/yaw、height/rangefinder readiness。
 - [x] prepare summary 使用稳定 blocker 字符串。
 - [x] prepare fail 时关闭已启动但不再需要的辅助进程。
 - [x] wrapper exit 时按 shutdown policy 清理 process。
@@ -292,7 +400,7 @@ real prepare 对齐后的目标链路：
 - [x] helper 检查 MAVROS state 或等价 FCU bridge state。
 - [ ] helper 检查 `/slam/odom` presence、type、freshness、frame。
 - [x] helper 检查 `/navlab/slam/status` ready。
-- [ ] helper 检查 rangefinder / height evidence；若 ROS bridge 存在，topic 必须是 `/rangefinder/down/range` 和 `/rangefinder/down/status`。
+- [x] helper 检查 rangefinder / height evidence；若 ROS bridge 存在，topic 必须是 `/rangefinder/down/range` 和 `/rangefinder/down/status`。
 - [x] helper 检查 yaw source evidence，室内 SLAM 真机任务只接受 `external_nav_yaw_ready=true`。
 - [x] helper 在无 GPS / 室内 real mode 下不把“未校准磁罗盘”单独作为 blocker，但必须要求 ExternalNav/SLAM yaw ready。
 - [x] helper 记录 yaw source provenance，包括 ExternalNav yaw readiness topic 和 ready field。

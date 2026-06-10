@@ -12,6 +12,11 @@ mavlink_router_serial_port = "/dev/ttyUSB1"
 mavlink_router_baud = 115200
 mavlink_router_local_endpoint = "127.0.0.1:14550"
 fcu_bridge_state_topic = "/navlab/mavlink/status"
+height_rangefinder_required = true
+altitude_hold_mode = "fcu_rangefinder_guided"
+altitude_hold_requires_rangefinder = true
+altitude_hold_allows_indoor_no_gps = true
+altitude_hold_allowed_initial_modes = ["STABILIZE", "ALT_HOLD", "GUIDED"]
 required_upstream_topics = [
     "/scan",
     "/imu/data",
@@ -106,9 +111,13 @@ health_topics = ["/imu", "/slam/odom", "/navlab/slam/status", "/external_nav/sta
 shutdown_policy = "stop_on_wrapper_exit"
 
 [real_prepare.rangefinder_bridge]
-enabled = false
-required = false
-command = []
+enabled = true
+required = true
+command = [
+    "bash",
+    "-lc",
+    "source /opt/ros/humble/setup.bash && source install/setup.bash && PYTHONPATH=.:$PYTHONPATH /usr/bin/python3 orchestration/src/tasks/rangefinder_bridge/fcu_distance_sensor_bridge.py --mavlink-endpoint tcp:127.0.0.1:5760 --range-topic /rangefinder/down/range --status-topic /rangefinder/down/status --frame-id rangefinder_down_frame --accepted-orientation 25",
+]
 startup_timeout_sec = 8.0
 health_topics = ["/rangefinder/down/range", "/rangefinder/down/status"]
 shutdown_policy = "stop_on_wrapper_exit"

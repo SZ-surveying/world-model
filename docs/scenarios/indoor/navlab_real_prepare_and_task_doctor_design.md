@@ -54,6 +54,9 @@ run <task>
 - hover / landing 的高度 evidence 优先来自 FCU MAVLink `DISTANCE_SENSOR`
   下视测距；`RANGEFINDER` 可作为辅助/诊断，baro、EKF height 或明确配置的
   高度源可作为补充；不能由水平 2D `/scan` 推断。
+- real hover / landing 还必须检查定高模式本身：task doctor 要记录
+  `altitude_hold_mode`、当前 FCU mode、rangefinder 是否被该模式使用，以及该模式
+  是否允许室内无 GPS 定高；不能只因为 rangefinder topic ready 就放行真实 hover。
 - 如果 real path 有 ROS rangefinder bridge，它必须发布与 simulation 相同的
   `/rangefinder/down/range` 和 `/rangefinder/down/status` contract。
 
@@ -284,6 +287,9 @@ check_real_task_upstream_topics(task_name, config)
   只能作为辅助/补充 evidence。
 - 如果高度 evidence 通过 ROS bridge 暴露，必须检查 `/rangefinder/down/range`
   和 `/rangefinder/down/status`；水平 2D `/scan` 不能替代。
+- hover / landing 还必须检查 real 定高模式 readiness：配置的
+  `altitude_hold_mode` 与当前 FCU mode / EKF / rangefinder 使用状态一致，且无 GPS
+  室内场景下不会退化成未验证的 baro-only 或 manual hold。
 - 室内 SLAM 真机任务必须有 `external_nav_yaw_ready=true` 的 yaw source evidence；
   未校准磁罗盘本身不单独 blocked，但罗盘校准和 manual override 都不能替代
   ExternalNav/SLAM yaw readiness。

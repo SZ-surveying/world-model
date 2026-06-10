@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-06-10: Real RTD.5B height gate uses FCU DISTANCE_SENSOR plus altitude-hold contract
+
+Decision: implement real height readiness as a NavLab rangefinder bridge from FCU MAVLink `DISTANCE_SENSOR` to `/rangefinder/down/range` and `/rangefinder/down/status`, then bind hover/landing task doctor to an explicit `altitude_hold_mode` gate.
+
+Basis: RTD.5A real dry-run proved yaw through `/scan + /imu -> SLAM -> ExternalNav`; RTD.5B dry-run summary `artifacts/ros/navlab_real_prepare/20260610_081003/summary.json` shows the real FCU publishes down-facing `DISTANCE_SENSOR` with `orientation=25`, but current table placement reports `current_distance_m=0.0`.
+
+Reason: horizontal 2D lidar/yaw readiness cannot prove vertical hover or landing safety. The real gate must reject invalid or stale height evidence and must not release autonomous hover only because SLAM yaw is ready.
+
 ## 2026-06-09: Landing acceptance gates precede real landing control
 
 Decision: add the unified landing policy, summary schema, rosbag contract, and Stage 1/Stage 2 blocker before implementing the FCU LAND / return-home control path.

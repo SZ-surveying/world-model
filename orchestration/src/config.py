@@ -143,6 +143,11 @@ class RealPrepareConfig:
     mavlink_router_baud: int
     mavlink_router_local_endpoint: str
     fcu_bridge_state_topic: str
+    height_rangefinder_required: bool
+    altitude_hold_mode: str
+    altitude_hold_requires_rangefinder: bool
+    altitude_hold_allows_indoor_no_gps: bool
+    altitude_hold_allowed_initial_modes: tuple[str, ...]
     required_upstream_topics: tuple[str, ...]
     forbidden_simulation_topics: tuple[str, ...]
     mavlink_router: RealPrepareServiceConfig
@@ -1780,6 +1785,18 @@ class OrchestrationConfig:
                 ),
                 mavlink_router_local_endpoint=router_endpoint,
                 fcu_bridge_state_topic=_as_str(real_prepare.get("fcu_bridge_state_topic"), "/navlab/mavlink/status"),
+                height_rangefinder_required=_as_bool(real_prepare.get("height_rangefinder_required"), True),
+                altitude_hold_mode=_as_str(real_prepare.get("altitude_hold_mode"), "fcu_rangefinder_guided"),
+                altitude_hold_requires_rangefinder=_as_bool(
+                    real_prepare.get("altitude_hold_requires_rangefinder"), True
+                ),
+                altitude_hold_allows_indoor_no_gps=_as_bool(
+                    real_prepare.get("altitude_hold_allows_indoor_no_gps"), True
+                ),
+                altitude_hold_allowed_initial_modes=_as_str_tuple(
+                    real_prepare.get("altitude_hold_allowed_initial_modes"),
+                    ("STABILIZE", "ALT_HOLD", "GUIDED"),
+                ),
                 required_upstream_topics=_as_str_tuple(
                     real_prepare.get("required_upstream_topics"),
                     (
@@ -1886,9 +1903,20 @@ class OrchestrationConfig:
                 rangefinder_bridge=_real_prepare_service_from_config(
                     real_prepare,
                     "rangefinder_bridge",
-                    default_enabled=False,
-                    default_required=False,
-                    default_command=(),
+                    default_enabled=True,
+                    default_required=True,
+                    default_command=(
+                        "bash",
+                        "-lc",
+                        "source /opt/ros/humble/setup.bash && source install/setup.bash && "
+                        "PYTHONPATH=.:$PYTHONPATH /usr/bin/python3 "
+                        "orchestration/src/tasks/rangefinder_bridge/fcu_distance_sensor_bridge.py "
+                        f"--mavlink-endpoint {_mavlink_router_tcp_endpoint(router_endpoint)} "
+                        "--range-topic /rangefinder/down/range "
+                        "--status-topic /rangefinder/down/status "
+                        "--frame-id rangefinder_down_frame "
+                        "--accepted-orientation 25",
+                    ),
                     default_health_topics=("/rangefinder/down/range", "/rangefinder/down/status"),
                     default_shutdown_policy="stop_on_wrapper_exit",
                 ),

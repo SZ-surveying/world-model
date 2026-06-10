@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import fnmatch
 import json
+import math
 import os
 import shlex
 import shutil
@@ -287,6 +288,9 @@ def check_real_task_upstream_topics(
     rtd5a = _check_real_slam_yaw_contract(config, snapshot)
     if rtd5a["blocked"]:
         blockers.extend(rtd5a["blockers"])
+    rtd5b = _check_real_height_rangefinder_contract(config, snapshot)
+    if rtd5b["blocked"]:
+        blockers.extend(rtd5b["blockers"])
 
     return {
         "ok": not blockers,
@@ -297,6 +301,7 @@ def check_real_task_upstream_topics(
         "required_topics": topic_results,
         "yaw_source": yaw_source,
         "real_slam_yaw_contract": rtd5a,
+        "real_height_rangefinder_contract": rtd5b,
         "forbidden_simulation_topics": forbidden_matches,
     }
 
@@ -365,6 +370,10 @@ def _wait_for_prepare_topic_snapshot(
                 "real_imu_no_data",
                 "slam_status_not_ready",
                 "external_nav_status_not_ready",
+                "rangefinder_down_no_data",
+                "rangefinder_down_not_ready",
+                "rangefinder_down_orientation_invalid",
+                "rangefinder_down_distance_invalid",
             }
             if not any(blocker in soft_wait_blockers for blocker in readiness["blockers"]):
                 return probed_snapshot
@@ -632,6 +641,13 @@ def _required_upstream_topics(task_name: str, config: RunConfig) -> tuple[str, .
             *prepare.external_nav_yaw_status_topics,
         )
     )
+    if prepare.height_rangefinder_required and task_name in {"hover", "exploration", "scan-robustness"}:
+        topics.extend(
+            (
+                config.orchestration.rangefinder_imu.rangefinder_range_topic,
+                config.orchestration.rangefinder_imu.rangefinder_status_topic,
+            )
+        )
     if task_name == "scan-robustness":
         topics.append(config.orchestration.scan_stabilization.status_topic)
     return tuple(dict.fromkeys(topic for topic in topics if topic))
@@ -659,6 +675,7 @@ def _expected_topic_types(config: RunConfig) -> dict[str, str]:
         "/navlab/mavlink/status": "std_msgs/msg/String",
         "/mavlink_external_nav/status": "std_msgs/msg/String",
         config.orchestration.rangefinder_imu.rangefinder_range_topic: "sensor_msgs/msg/Range",
+        config.orchestration.rangefinder_imu.rangefinder_status_topic: "std_msgs/msg/String",
     }
 
 
@@ -742,6 +759,72 @@ def _status_check(snapshot: RealTopicSnapshot, topic: str) -> dict[str, Any]:
     }
 
 
+def _check_real_height_rangefinder_contract(config: RunConfig, snapshot: RealTopicSnapshot) -> dict[str, Any]:
+    if not config.orchestration.real_prepare.height_rangefinder_required:
+        return {"ok": True, "blocked": False, "blockers": [], "required": False, "checks": {}}
+    range_topic = config.orchestration.rangefinder_imu.rangefinder_range_topic
+    status_topic = config.orchestration.rangefinder_imu.rangefinder_status_topic
+    range_check = _range_sample_check(snapshot, range_topic)
+    status_check = _status_check(snapshot, status_topic)
+    metadata = status_check["metadata"]
+    blockers: list[str] = []
+    if not range_check["ok"]:
+        blockers.append("rangefinder_down_no_data")
+    if not status_check["ready"]:
+        blocker = str(metadata.get("blocker") or "rangefinder_down_not_ready")
+        if blocker in {
+            "rangefinder_down_orientation_invalid",
+            "rangefinder_down_distance_invalid",
+            "rangefinder_down_source_forbidden",
+            "rangefinder_down_no_data",
+        }:
+            blockers.append(blocker)
+        else:
+            blockers.append("rangefinder_down_not_ready")
+    if metadata:
+        source = str(metadata.get("source") or metadata.get("source_claim") or "")
+        if source and source != "real_fcu_distance_sensor":
+            blockers.append("rangefinder_down_source_forbidden")
+        orientation = metadata.get("orientation")
+        orientation_value = _float_or_none(orientation)
+        if orientation is not None and (orientation_value is None or int(orientation_value) != 25):
+            blockers.append("rangefinder_down_orientation_invalid")
+        current = _float_or_none(metadata.get("current_distance_m"))
+        min_distance = _float_or_none(metadata.get("min_distance_m"))
+        max_distance = _float_or_none(metadata.get("max_distance_m"))
+        if current is not None:
+            if current <= 0.0:
+                blockers.append("rangefinder_down_distance_invalid")
+            if min_distance is not None and min_distance > 0.0 and current < min_distance:
+                blockers.append("rangefinder_down_distance_invalid")
+            if max_distance is not None and max_distance > 0.0 and current > max_distance:
+                blockers.append("rangefinder_down_distance_invalid")
+    blockers = list(dict.fromkeys(blockers))
+    return {
+        "ok": not blockers,
+        "blocked": bool(blockers),
+        "blockers": blockers,
+        "required": True,
+        "range_topic": range_topic,
+        "status_topic": status_topic,
+        "checks": {"range": range_check, "status": status_check},
+    }
+
+
+def _range_sample_check(snapshot: RealTopicSnapshot, topic: str) -> dict[str, Any]:
+    check = _sample_check(snapshot, topic)
+    metadata = check["metadata"]
+    value = _float_or_none(metadata.get("range"))
+    min_range = _float_or_none(metadata.get("min_range"))
+    max_range = _float_or_none(metadata.get("max_range"))
+    range_valid = value is not None and value > 0.0
+    if min_range is not None and value is not None and value < min_range:
+        range_valid = False
+    if max_range is not None and value is not None and value > max_range:
+        range_valid = False
+    return {**check, "range_m": value, "range_valid": range_valid, "ok": check["ok"] and range_valid}
+
+
 def _forbidden_topic_patterns(config: RunConfig) -> tuple[str, ...]:
     patterns = list(config.orchestration.real_prepare.forbidden_simulation_topics)
     try:
@@ -764,6 +847,8 @@ def _topic_requires_sample_probe(topic: str) -> bool:
         "/external_nav/status",
         "/navlab/mavlink/status",
         "/mavlink_external_nav/status",
+        "/rangefinder/down/range",
+        "/rangefinder/down/status",
     }
 
 
@@ -796,6 +881,11 @@ def _probe_topic_evidence(topic: str, evidence: TopicEvidence, *, timeout_sec: f
         metadata.update(payload)
     if evidence.type_name == "sensor_msgs/msg/LaserScan":
         metadata.setdefault("range_count", _count_yaml_sequence_items(stdout, "ranges"))
+    if evidence.type_name == "sensor_msgs/msg/Range":
+        for key in ("range", "min_range", "max_range"):
+            value = _yamlish_float_field(stdout, key)
+            if value is not None:
+                metadata[key] = value
     return TopicEvidence(
         type_name=evidence.type_name,
         fresh=bool(metadata["sample_seen"]),
@@ -806,10 +896,11 @@ def _probe_topic_evidence(topic: str, evidence: TopicEvidence, *, timeout_sec: f
 
 
 def _topic_uses_sensor_qos(type_name: str, topic: str) -> bool:
-    return type_name in {"sensor_msgs/msg/LaserScan", "sensor_msgs/msg/Imu"} or topic in {
+    return type_name in {"sensor_msgs/msg/LaserScan", "sensor_msgs/msg/Imu", "sensor_msgs/msg/Range"} or topic in {
         "/scan",
         "/imu/data",
         "/imu",
+        "/rangefinder/down/range",
     }
 
 
@@ -852,6 +943,23 @@ def _yamlish_string_field(text: str, field: str) -> str:
         if stripped.startswith(prefix):
             return stripped[len(prefix) :].strip().strip("\"'")
     return ""
+
+
+def _yamlish_float_field(text: str, field: str) -> float | None:
+    value = _yamlish_string_field(text, field)
+    if not value:
+        return None
+    return _float_or_none(value)
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
 
 
 def _count_yaml_sequence_items(text: str, key: str) -> int:
@@ -1078,8 +1186,17 @@ def _check_task_specific_readiness(task_name: str, config: RunConfig, upstream: 
     status_topic = config.orchestration.fcu_controller.status_topic
     status = upstream.get("required_topics", {}).get(status_topic, {})
     metadata = status.get("metadata", {}) if isinstance(status, dict) else {}
+    if not metadata:
+        bridge_status_topic = config.orchestration.real_prepare.fcu_bridge_state_topic
+        bridge_status = upstream.get("required_topics", {}).get(bridge_status_topic, {})
+        metadata = bridge_status.get("metadata", {}) if isinstance(bridge_status, dict) else {}
     if isinstance(metadata, Mapping) and metadata.get("armed") is True:
         blockers.append("task_initial_fcu_armed")
+
+    altitude_hold = _check_altitude_hold_mode(config, upstream, fcu_status_metadata=metadata)
+    result["altitude_hold"] = altitude_hold
+    if altitude_hold["blocked"]:
+        blockers.extend(altitude_hold["blockers"])
 
     if task_name == "hover":
         if landing_policy != "land_in_place":
@@ -1107,6 +1224,47 @@ def _check_task_specific_readiness(task_name: str, config: RunConfig, upstream: 
         blockers.append(f"unsupported_real_task:{task_name}")
 
     return {"ok": not blockers, "blocked": bool(blockers), "blockers": blockers, **result}
+
+
+def _check_altitude_hold_mode(
+    config: RunConfig,
+    upstream: Mapping[str, Any],
+    *,
+    fcu_status_metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    prepare = config.orchestration.real_prepare
+    rangefinder = upstream.get("real_height_rangefinder_contract", {})
+    rangefinder_ready = bool(isinstance(rangefinder, Mapping) and rangefinder.get("ok") is True)
+    mode = prepare.altitude_hold_mode.strip()
+    current_mode = str(
+        fcu_status_metadata.get("mode")
+        or fcu_status_metadata.get("mode_name")
+        or fcu_status_metadata.get("flight_mode")
+        or ""
+    ).upper()
+    allowed_initial_modes = tuple(item.upper() for item in prepare.altitude_hold_allowed_initial_modes)
+    blockers: list[str] = []
+    supported_modes = {"fcu_rangefinder_guided"}
+    if mode not in supported_modes:
+        blockers.append("altitude_hold_mode_not_ready")
+    if not prepare.altitude_hold_allows_indoor_no_gps:
+        blockers.append("altitude_hold_mode_not_ready")
+    if prepare.altitude_hold_requires_rangefinder and not rangefinder_ready:
+        blockers.append("altitude_hold_mode_not_ready")
+    if current_mode and allowed_initial_modes and current_mode not in allowed_initial_modes:
+        blockers.append("altitude_hold_mode_not_ready")
+    blockers = list(dict.fromkeys(blockers))
+    return {
+        "ok": not blockers,
+        "blocked": bool(blockers),
+        "blockers": blockers,
+        "altitude_hold_mode": mode,
+        "requires_rangefinder": prepare.altitude_hold_requires_rangefinder,
+        "allows_indoor_no_gps": prepare.altitude_hold_allows_indoor_no_gps,
+        "rangefinder_ready": rangefinder_ready,
+        "current_fcu_mode": current_mode,
+        "allowed_initial_modes": list(allowed_initial_modes),
+    }
 
 
 def _parse_ros2_topic_list_line(line: str) -> tuple[str, str]:
