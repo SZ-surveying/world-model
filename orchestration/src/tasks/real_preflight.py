@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -150,8 +151,11 @@ def _build_real_preflight_summary(
     blockers.extend(dependency_blockers)
     blockers.extend(dependency_probe.blockers)
     blockers.extend(serial_mavlink_probe.blockers)
+    warnings = _pre_prepare_serial_warnings(config, serial_mavlink_probe.summary, blockers)
+    if warnings:
+        blockers = [blocker for blocker in blockers if blocker not in warnings]
 
-    return {
+    summary = {
         "ok": not blockers,
         "blocked": bool(blockers),
         "blockers": blockers,
@@ -169,6 +173,10 @@ def _build_real_preflight_summary(
             "dependencies": dependency_probe.summary,
         },
     }
+    if warnings:
+        summary["warnings"] = warnings
+        summary["preflight_blockers"] = warnings
+    return summary
 
 
 def _effective_real_preflight_dependencies(config: RunConfig) -> tuple[RealPreflightDependencyConfig, tuple[str, ...]]:
@@ -473,6 +481,23 @@ def _probe_serial_mavlink(settings: SerialMavlinkConfig) -> SerialMavlinkProbe:
                 pass
 
     return SerialMavlinkProbe(summary=summary, blockers=tuple(blockers))
+
+
+def _pre_prepare_serial_warnings(
+    config: RunConfig,
+    serial_summary: Mapping[str, Any],
+    blockers: list[str],
+) -> list[str]:
+    if config.orchestration.real_prepare.fcu_bridge_mode != "navlab_mavlink":
+        return []
+    if not serial_summary.get("serial_open_ok"):
+        return []
+    return [
+        blocker
+        for blocker in blockers
+        if blocker == "serial_mavlink_heartbeat_missing"
+        or blocker.startswith("serial_mavlink_required_message_missing:")
+    ]
 
 
 def _request_mavlink_telemetry_streams(master: Any, mavutil: Any) -> None:
@@ -836,7 +861,9 @@ def _local_ros_overlay_commands() -> list[str]:
                 f'export AMENT_PREFIX_PATH="{resolved}:$AMENT_PREFIX_PATH"',
                 f'export CMAKE_PREFIX_PATH="{resolved}:$CMAKE_PREFIX_PATH"',
                 f'export PATH="{resolved}/bin:$PATH"',
-                f'export PYTHONPATH="{resolved}/local/lib/python3.10/dist-packages:{resolved}/lib/python3.10/site-packages:$PYTHONPATH"',
+                "export PYTHONPATH="
+                f'"{resolved}/local/lib/python3.10/dist-packages:'
+                f'{resolved}/lib/python3.10/site-packages:$PYTHONPATH"',
                 f'export LD_LIBRARY_PATH="{resolved}/lib:$LD_LIBRARY_PATH"',
             ]
         )

@@ -55,6 +55,7 @@ command = [
     "humble",
     "--mavlink-endpoint",
     "tcp:127.0.0.1:5760",
+    "--auto-ekf-source-set",
 ]
 startup_timeout_sec = 8.0
 health_topics = ["/navlab/mavlink/status", "/navlab/fcu/local_position_pose", "/mavlink_external_nav/status", "/imu/data", "/imu/status"]

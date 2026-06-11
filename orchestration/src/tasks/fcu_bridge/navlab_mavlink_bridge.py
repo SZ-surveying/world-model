@@ -64,6 +64,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--pose-topic", default="/navlab/fcu/mavlink_pose")
     parser.add_argument("--imu-topic", default="/imu/data")
     parser.add_argument("--imu-status-topic", default="/imu/status")
+    parser.add_argument("--auto-ekf-source-set", action=argparse.BooleanOptionalAction, default=False)
     return parser.parse_args(argv)
 
 
@@ -107,6 +108,7 @@ def _bridge_commands(args: argparse.Namespace) -> list[list[str]]:
                 "20.0",
                 "--stream-rate-hz",
                 "20.0",
+                *(_enabled_flag("--auto-ekf-source-set", args.auto_ekf_source_set)),
             ],
         ),
         _ros_python_command(
@@ -127,6 +129,10 @@ def _bridge_commands(args: argparse.Namespace) -> list[list[str]]:
             ],
         ),
     ]
+
+
+def _enabled_flag(flag: str, enabled: bool) -> list[str]:
+    return [flag] if enabled else []
 
 
 def _ros_python_command(ros_distro: str, command: list[str]) -> list[str]:

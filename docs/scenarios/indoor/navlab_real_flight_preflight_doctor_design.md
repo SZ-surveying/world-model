@@ -25,8 +25,7 @@ run <task> with NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real
 也就是说，真机飞行入口的顺序必须是：
 
 ```text
-Stage 1 Gazebo/SITL acceptance passed
-  -> run <task> wrapper
+run <task> wrapper
      -> real preflight doctor phase passed
      -> real prepare / bringup phase passed
      -> task doctor phase passed
@@ -91,9 +90,9 @@ operator CLI。
 
 ## 4. 入口关系
 
-### 4.1 仿真 Stage 1
+### 4.1 仿真 Stage 1 只作参考
 
-Stage 1 仍由 Gazebo/SITL built-in task 负责：
+Stage 1 仍由 Gazebo/SITL built-in task 负责，但它不是任何真机 wrapper 的必需 gate：
 
 | task | Stage 1 command | 结果 |
 |---|---|---|
@@ -101,8 +100,10 @@ Stage 1 仍由 Gazebo/SITL built-in task 负责：
 | P8 exploration | `just navlab-run exploration ... --simulation-profile ideal` 和 `mild_disturbance` | 证明仿真移动、返航、降落 |
 | P12 scan robustness | `just navlab-run scan-robustness ...` | 证明仿真扰动/scan 鲁棒性和原地降落 |
 
-Stage 1 允许使用 Gazebo/SITL 生成可复现实验数据，但仍不能把 Gazebo truth
-作为控制、SLAM、ExternalNav 或 landing 的输入。
+Stage 1 允许使用 Gazebo/SITL 生成可复现实验数据，但这些数据只能作为开发参考
+和回归诊断。缺少 `ideal` 或 `mild_disturbance` artifact 时，不能因此 block
+真机 preflight / prepare / task doctor；更不能把 Gazebo truth 作为控制、SLAM、
+ExternalNav 或 landing 的输入。
 
 ### 4.2 Real Wrapper Entry
 

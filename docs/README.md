@@ -41,6 +41,8 @@
 - `docs/scenarios/indoor/navlab_unified_landing_sequence_design.md`: hover/P8/P12 统一降落流程设计
 - `docs/scenarios/indoor/navlab_real_flight_preflight_doctor_design.md`: 真机飞行前 real preflight doctor 设计
 - `docs/scenarios/indoor/navlab_real_prepare_and_task_doctor_design.md`: 真机 prepare / task doctor 分层设计
+- `docs/scenarios/indoor/navlab_ardupilot_externalnav_reading.md`: ArduPilot Cartographer / VIO / GPS-NonGPS / Guided / arm 文档阅读
+- `docs/scenarios/indoor/navlab_real_motor_debug_design.md`: 真机无桨 motor-debug 的 Guided / ExternalNav / arm-disarm 设计
 - `docs/scenarios/indoor/navlab_real_pre_takeoff_development_confirmation.md`: 真机起飞前开发确认文档
 - `docs/scenarios/indoor/todos/real_flight_preflight_doctor_todo.md`: 真机飞行前 real preflight doctor TODO 和验收标准
 - `docs/scenarios/indoor/todos/real_prepare_and_task_doctor_todo.md`: 真机 prepare / task doctor TODO 和验收标准
@@ -148,6 +150,8 @@ docs/
       navlab_unified_landing_sequence_design.md
       navlab_real_flight_preflight_doctor_design.md
       navlab_real_prepare_and_task_doctor_design.md
+      navlab_ardupilot_externalnav_reading.md
+      navlab_real_motor_debug_design.md
       navlab_real_pre_takeoff_development_confirmation.md
       navlab_ardupilot_ros2_official_alignment.md
       navlab_reference_projects_analysis.md

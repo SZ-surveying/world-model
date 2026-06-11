@@ -1,0 +1,4 @@
+[task]
+motor_percent = 5.0
+motor_sec = 5.0
+motor_count = 4

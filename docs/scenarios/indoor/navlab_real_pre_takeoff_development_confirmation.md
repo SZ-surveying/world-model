@@ -32,7 +32,7 @@ safety 是真正 arm/takeoff 前的最后 gate。
 | 2D lidar / SLAM / yaw | Gazebo scan + IMU + Cartographer + ExternalNav 已跑通 | preflight 不启动这些 | real prepare 必须证明 `/scan`、`/imu`、`/slam/odom`、`/external_nav/status.ready=true` |
 | Height / rangefinder | Gazebo down rangefinder -> `DISTANCE_SENSOR` -> `/rangefinder/down/*` | preflight 最多记录 MAVLink telemetry | real prepare/task doctor 必须证明 `/rangefinder/down/range`、`/rangefinder/down/status.ready=true` 和定高模式 |
 | Hover 执行 | SITL 已实际 takeoff -> hover -> land/disarm | `flight_claim=not_evaluated` | 还没有 arm、takeoff、hover、landing |
-| 安全与审计 | 仿真 artifact 可复查 | preflight artifact 可复查串口/依赖 | 还缺 operator safety、flight rosbag、real landing summary |
+| 安全与审计 | 仿真 artifact 只作参考 | preflight artifact 可复查串口/依赖 | 还缺 operator safety、flight rosbag、real landing summary |
 
 ## 统一真机起飞前开发流程
 
@@ -46,8 +46,7 @@ uv run --project orchestration python orchestration/main.py run hover --dry-run
 完整开发 gate 顺序：
 
 ```text
-Stage 1 simulation artifact passed
-  -> real preflight doctor
+real preflight doctor
   -> real prepare / bringup
   -> real task doctor
   -> dry-run summary review
@@ -55,6 +54,9 @@ Stage 1 simulation artifact passed
   -> real task run arm/takeoff/hover/landing
   -> flight rosbag + landing summary review
 ```
+
+Stage 1 simulation artifact 只能作为开发参考和回归诊断，不能作为真机 wrapper
+的必需 blocker，也不能替代任何真实传感器、真实 FCU 或真实安全确认。
 
 任何一层 blocked，都不能跳到下一层。
 
@@ -218,12 +220,14 @@ real flight rosbag 和 landing summary。
 
 ### D. Operator safety
 
-- [ ] Stage 1 `ideal` simulation artifact 已复查。
-- [ ] Stage 1 `mild_disturbance` simulation artifact 已复查。
-- [ ] manual takeover 已确认。
-- [ ] kill switch 已确认。
+Stage 1 simulation artifact 不作为真机起飞 gate；这一层只检查真实操作安全。
+
+- [ ] manual takeover 已确认，并在真实非 dry-run 命令中传
+  `--confirm-manual-takeover`。
+- [ ] kill switch 已确认，并在真实非 dry-run 命令中传 `--confirm-kill-switch`。
 - [ ] 安全场地、保护措施和人员站位已确认。
 - [ ] 电池、电机、桨叶、固定件和安全距离已确认。
+- [ ] 真实非 dry-run 命令中传 `--confirm-safe-area`。
 
 ### E. 真机执行前最终条件
 
@@ -240,6 +244,19 @@ operator_safety_confirmed=true
 ```
 
 否则必须停在 dry-run / doctor 阶段。
+
+真实非 dry-run 执行前的安全确认方式固定为 wrapper 参数：
+
+```bash
+NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real \
+uv run --project orchestration python orchestration/main.py run hover \
+  --confirm-manual-takeover \
+  --confirm-kill-switch \
+  --confirm-safe-area
+```
+
+任一 flag 缺失都会在 arm/takeoff 前 blocked。`--dry-run` 不要求这些 flag，因为
+dry-run 不会启动 companion、arm 或 takeoff。
 
 ## 推荐下一步
 
@@ -258,6 +275,39 @@ uv run --project orchestration python orchestration/main.py run hover --dry-run
    - `real_height_rangefinder_contract.ok=true`
    - `altitude_hold.ok=true`
 4. dry-run 通过后，再补 operator safety 和 real flight rosbag / landing summary gate。
+
+## 无桨 Motor Debug
+
+如果当前没有挂桨叶，只想确认电机链路，可以使用 `motor-debug`，不要用 `hover`。
+这个 task 不起飞、不做 landing 验收，只做低油门短时电机测试并在结束后发送
+disarm 关闭电机。
+
+先 dry-run 看计划，不会转电机：
+
+```bash
+NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real \
+uv run --project orchestration python orchestration/main.py run motor-debug --dry-run
+```
+
+确认无桨、可人工接管、kill switch 和场地安全后，才允许真实转电机：
+
+```bash
+NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real \
+uv run --project orchestration python orchestration/main.py run motor-debug \
+  --confirm-no-props \
+  --confirm-manual-takeover \
+  --confirm-kill-switch \
+  --confirm-safe-area
+```
+
+可选调小参数，例如：
+
+```bash
+--motor-percent 5 --motor-sec 1.5 --motor-count 4
+```
+
+`motor-debug` 只证明电机输出链路；不能证明 hover、height hold、SLAM yaw 或
+landing readiness。
 
 ## 禁止绕过
 

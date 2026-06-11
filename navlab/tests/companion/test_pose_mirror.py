@@ -19,6 +19,7 @@ from navlab.companion.nodes.pose_mirror import (
     ned_to_gazebo_pose,
     next_imu_output_stamp_nanoseconds,
     next_monotonic_stamp_nanoseconds,
+    normalize_mavlink_param_value,
     stamp_fields_to_nanoseconds,
 )
 
@@ -160,8 +161,28 @@ def test_encode_mavlink_telemetry_status_is_json_with_message_counts() -> None:
             target_component=1,
             armed=True,
             mode_number=4,
+            mode_name="GUIDED",
             local_position_present=True,
             local_position_age_ms=12.3456,
+            local_position_valid=True,
+            active_source_set="SRC1",
+            external_nav_seen_by_fcu=True,
+            ekf_source_set_switch={
+                "enabled": True,
+                "target_source_set": "SRC1",
+                "target_source_set_id": 1,
+                "sent": True,
+                "sent_count": 1,
+                "ack_result": 0,
+            },
+            parameters={
+                "GPS_TYPE": 0,
+                "GPS1_TYPE": 0,
+                "VISO_TYPE": 1,
+                "EK3_SRC1_POSXY": 6,
+                "EK3_SRC1_VELXY": 6,
+                "EK3_SRC1_YAW": 6,
+            },
             ekf_flags=[831],
             command_acks=[{"command": 400, "result": 0}],
             statustext=[{"severity": 6, "text": "Mode GUIDED"}],
@@ -173,8 +194,23 @@ def test_encode_mavlink_telemetry_status_is_json_with_message_counts() -> None:
     assert data["state"] == "streaming"
     assert data["heartbeat_seen"] is True
     assert data["armed"] is True
+    assert data["mode"] == "GUIDED"
+    assert data["mode_name"] == "GUIDED"
     assert data["local_position"]["age_ms"] == 12.346
+    assert data["local_position_valid"] is True
+    assert data["active_source_set"] == "SRC1"
+    assert data["external_nav_seen_by_fcu"] is True
+    assert data["ekf_source_set_switch"]["target_source_set"] == "SRC1"
+    assert data["ekf_source_set_switch"]["ack_result"] == 0
+    assert data["parameters"]["GPS_TYPE"] == 0
+    assert data["parameters"]["EK3_SRC1_POSXY"] == 6
     assert data["ekf"]["flags_seen"] == [831]
     assert data["command_acks"][0]["command"] == 400
     assert data["statustext"][0]["text"] == "Mode GUIDED"
     assert data["message_counts"]["LOCAL_POSITION_NED"] == 5
+
+
+def test_normalize_mavlink_param_value_preserves_int_params() -> None:
+    assert normalize_mavlink_param_value(6.0) == 6
+    assert normalize_mavlink_param_value(1.5) == 1.5
+    assert normalize_mavlink_param_value(b"GPS_TYPE\x00\x00") == "GPS_TYPE"

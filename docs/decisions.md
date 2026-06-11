@@ -1,5 +1,61 @@
 # Decisions
 
+## 2026-06-10: FCU status fields are shared between bridge and common doctor
+
+Decision: define FCU common-doctor fields once in `navlab.common.fcu_status`, and use that same list for both MAVLink bridge parameter publication and common-doctor parsing.
+
+Basis: real `motor-debug` common doctor showed `Mode/GPS/VISO/EK3` as `unknown` even though those values are available from MAVLink, because the doctor expected fields that `/navlab/mavlink/status` was not publishing.
+
+Reason: duplicating field names across the bridge and doctor creates silent drift. The bridge now requests the shared MAVLink parameters and publishes them under `/navlab/mavlink/status.parameters`; the doctor waits for that status to contain mode plus at least one shared parameter before summarizing.
+
+## 2026-06-10: Motor-debug GUIDED is a run-stage gate
+
+Decision: `motor-debug` task doctor records the required mode and current FCU mode, but it does not block merely because the FCU is not already in `GUIDED`.
+
+Basis: user clarified the task boundary: doctor checks FCU link / ExternalNav / task config, while `motor-debug run` owns switching to `GUIDED`, confirming it, then arm / hold / disarm.
+
+Reason: requiring current `GUIDED` during task doctor turns a runtime state transition into a precondition and blocks the normal flow from `STABILIZE` to `GUIDED`. The hard gate belongs immediately before arm, where the MAVLink run path can send `set_mode(GUIDED)` and verify the heartbeat mode before `MAV_CMD_COMPONENT_ARM_DISARM`.
+
+## 2026-06-10: Real common doctor uses a fixed metadata field list, not a new config surface
+
+Decision: keep `real common doctor` field discovery as a small hard-coded `MetadataField` list that is iterated at runtime, instead of adding a separate config section for each EKF alias.
+
+Basis: user feedback on the common-doctor boundary and local implementation shape.
+
+Reason: the shared FCU / EKF / ExternalNav panel needs stable field names, but splitting those into dozens of config keys adds noise without buying flexibility. A field list keeps the structure explicit while still making the looped extraction easy to extend.
+
+## 2026-06-10: No-props motor debug is a separate real task
+
+Decision: add `run motor-debug` as a process+real-only task that uses MAVLink motor-test commands under explicit no-props and operator-safety confirmations.
+
+Basis: current hardware debugging needs motor rotation without propellers, takeoff, hover, or landing.
+
+Reason: motor-output checks should not reuse `hover` semantics. A separate task keeps no-props motor tests from being confused with autonomous flight readiness and lets dry-run print the debug plan without spinning motors.
+
+## 2026-06-10: Real operator safety uses explicit wrapper flags
+
+Decision: require non-dry-run real task execution to pass `--confirm-manual-takeover`, `--confirm-kill-switch`, and `--confirm-safe-area` before any future arm/takeoff path.
+
+Basis: RTD.10 needs real operator safety confirmation without relying on simulation artifacts.
+
+Reason: manual takeover, kill switch readiness, and safe-area checks are human/operator facts. They must be explicit at the real wrapper boundary and skipped only for dry-run because dry-run does not execute flight.
+
+## 2026-06-10: Real pre-takeoff gates do not require Stage 1 artifacts
+
+Decision: remove Stage 1 `ideal` and `mild_disturbance` artifacts as mandatory blockers for the real wrapper.
+
+Basis: user hardware path and RTD.5A/RTD.5B real dry-run evidence already come from real lidar, FCU, SLAM, rangefinder, and task doctor summaries.
+
+Reason: simulation artifacts are useful for regression and design comparison, but they do not prove the real aircraft's current sensors, FCU, operator safety, or flight environment. Real gates must depend on real evidence only.
+
+## 2026-06-10: Real task doctor probes frame contracts directly
+
+Decision: make RTD.7 validate `/scan` and `/slam/odom` frame IDs from sampled ROS message headers instead of relying only on topic presence and type.
+
+Basis: codebase research on `check_real_task_upstream_topics` and the RTD.7 acceptance gap.
+
+Reason: real SLAM/yaw readiness depends on frame correctness; a fresh topic with the wrong frame can make ExternalNav evidence unsafe even when topic list and type checks pass.
+
 ## 2026-06-10: Real RTD.5B height gate uses FCU DISTANCE_SENSOR plus altitude-hold contract
 
 Decision: implement real height readiness as a NavLab rangefinder bridge from FCU MAVLink `DISTANCE_SENSOR` to `/rangefinder/down/range` and `/rangefinder/down/status`, then bind hover/landing task doctor to an explicit `altitude_hold_mode` gate.
@@ -531,3 +587,19 @@ Decision: make RTD.5A real prepare run the same `scan + IMU + Cartographer TF/od
 Basis: `just navlab-doctor` passed with `Status OK`; `NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real uv run --project orchestration python orchestration/main.py run hover --dry-run` passed preflight, prepare, and task doctor on 2026-06-10. The latest prepare summary `artifacts/ros/navlab_real_prepare/20260610_023033/summary.json` records real scan and IMU samples, `/navlab/slam/status.ready=true`, `/external_nav/status.ready=true`, `accepted_topic=/external_nav/status`, and no prepare blockers.
 
 Reason: the yaw gate must prove the real SLAM/ExternalNav chain rather than accept placeholder odom, fake odom, FCU pose TF, or simulation topics. The real Cartographer config disables the missing odometry input while keeping backend TF output, the pose mirror no longer injects replay TF into the real TF tree, and prepare probes actual samples/status JSON instead of only topic names.
+
+## 2026-06-10: Real motor-debug reuses prepare and ExternalNav before arm
+
+Decision: define `run motor-debug` as a process+real, no-props, GUIDED-only arm/hold/disarm debug task that first runs real prepare and connects through mavlink-router instead of opening the FCU serial directly.
+
+Basis: a real motor-debug run reached GUIDED but arm was rejected with `MAV_RESULT_FAILED` and ArduPilot `STATUSTEXT` values `Arm: RC not found` and `Arm: GPS 1: Bad fix`. The simulation profile already follows the ArduPilot Cartographer SLAM ExternalNav contract with GPS disabled and EKF source set to ExternalNav, while the failing real path had not yet proven the same FCU parameter and ExternalNav readiness before arm.
+
+Reason: `GPS 1: Bad fix` is not a motor command formatting problem; it indicates the FCU still has GPS/pre-arm assumptions or EKF source mismatch. `motor-debug` must therefore share the real prepare chain that brings up router, FCU bridge, real scan, Cartographer, and ExternalNav, then send only `MAV_CMD_COMPONENT_ARM_DISARM` arm/hold/disarm commands in GUIDED. `RC not found` remains a separate pre-arm issue and should not be hidden by force arm unless a future bench-only override is explicitly designed.
+
+## 2026-06-10: VIO and GPS/Non-GPS docs constrain the same ExternalNav contract
+
+Decision: use the ArduPilot VIO tracking camera and GPS/Non-GPS transition docs as supporting references for NavLab lidar SLAM ExternalNav checks, without changing NavLab's primary sensor route from lidar + IMU + Cartographer.
+
+Basis: VIO and Cartographer differ in upstream sensor source, but both feed external pose into ArduPilot EKF. The GPS/Non-GPS transition doc also clarifies that EKF source sets can switch between GPS and non-GPS sources, which is relevant to interpreting `GPS 1: Bad fix` during an indoor arm attempt.
+
+Reason: NavLab should not treat ROS `/external_nav/status.ready=true` alone as proof that the FCU is ready to arm. Ground checks must also prove the FCU receives ExternalNav, local position changes consistently when the vehicle is moved, EKF origin/home are handled, and the active EKF source no longer depends on GPS for the indoor path. Future GPS/non-GPS transitions should use EKF source sets rather than ad hoc motor-debug overrides.

@@ -18,6 +18,7 @@ class TaskRegistry:
             "hover",
             "exploration",
             "scan-robustness",
+            "motor-debug",
         }
     )
 
@@ -63,6 +64,7 @@ class TaskRegistry:
             "src.tasks.doctor",
             "src.tasks.built_in.hover",
             "src.tasks.built_in.exploration",
+            "src.tasks.built_in.motor_debug",
             "src.tasks.built_in.real_preflight",
             "src.tasks.built_in.scan_robustness",
         ):

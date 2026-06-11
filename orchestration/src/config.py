@@ -71,6 +71,26 @@ class TaskInvocationConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class MotorDebugTaskConfig:
+    task_name: str
+    path: Path | None
+    path_source: str
+    motor_percent: float
+    motor_percent_source: str
+    motor_sec: float
+    motor_sec_source: str
+    motor_count: int
+    motor_count_source: str
+
+    def to_summary(self) -> dict[str, Any]:
+        return {
+            "motor_percent": {"value": self.motor_percent, "source": self.motor_percent_source},
+            "motor_sec": {"value": self.motor_sec, "source": self.motor_sec_source},
+            "motor_count": {"value": self.motor_count, "source": self.motor_count_source},
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class FoxgloveUploadConfig:
     enabled: bool
     api_url: str
@@ -1866,7 +1886,8 @@ class OrchestrationConfig:
                         "bash",
                         "-lc",
                         "source /opt/ros/humble/setup.bash && source install/setup.bash && "
-                        "PYTHONPATH=.:$PYTHONPATH /usr/bin/python3 orchestration/src/tasks/lidar_bridge/ydlidar_x2_scan_bridge.py "
+                        "PYTHONPATH=.:$PYTHONPATH /usr/bin/python3 "
+                        "orchestration/src/tasks/lidar_bridge/ydlidar_x2_scan_bridge.py "
                         "--port /dev/ttyUSB0 --baud 115200 --scan-topic /scan --frame-id laser_frame",
                     ),
                     default_health_topics=("/scan",),
@@ -2193,6 +2214,48 @@ def load_task_invocation_config(
     )
 
 
+def load_motor_debug_task_config(
+    *,
+    task_config_path: str | Path | None = None,
+    cli_motor_percent: float | None = None,
+    cli_motor_sec: float | None = None,
+    cli_motor_count: int | None = None,
+) -> MotorDebugTaskConfig:
+    task_name = "motor-debug"
+    path, path_source = resolve_task_config_path(task_name, task_config_path)
+    data = load_task_config_data(task_name, task_config_path=task_config_path)
+    task = _optional_task_table(data, path)
+    motor_percent, motor_percent_source = _resolve_task_float(
+        task,
+        "motor_percent",
+        cli_motor_percent,
+        5.0,
+    )
+    motor_sec, motor_sec_source = _resolve_task_float(
+        task,
+        "motor_sec",
+        cli_motor_sec,
+        5.0,
+    )
+    motor_count, motor_count_source = _resolve_task_int(
+        task,
+        "motor_count",
+        cli_motor_count,
+        4,
+    )
+    return MotorDebugTaskConfig(
+        task_name=task_name,
+        path=path if path and path.is_file() else None,
+        path_source=path_source,
+        motor_percent=motor_percent,
+        motor_percent_source=motor_percent_source,
+        motor_sec=motor_sec,
+        motor_sec_source=motor_sec_source,
+        motor_count=motor_count,
+        motor_count_source=motor_count_source,
+    )
+
+
 def _deep_merge_dicts(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in overlay.items():
@@ -2223,6 +2286,19 @@ def _resolve_task_float(
         return float(cli_value), "CLI"
     if task.get(key) not in (None, ""):
         return float(task[key]), "task config"
+    return default, "default"
+
+
+def _resolve_task_int(
+    task: dict[str, Any],
+    key: str,
+    cli_value: int | None,
+    default: int,
+) -> tuple[int, str]:
+    if cli_value is not None:
+        return int(cli_value), "CLI"
+    if task.get(key) not in (None, ""):
+        return int(task[key]), "task config"
     return default, "default"
 
 

@@ -7,6 +7,12 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from navlab.common.fcu_status import (
+    FCU_STATUS_PARAMETER_NAMES,
+    arducopter_mode_name,
+    infer_external_nav_source_set,
+    source_set_id,
+)
 from navlab.companion.nodes.imu_bridge import (
     GRAVITY_MPS2,
     ImuBridgeStatus,
@@ -49,8 +55,14 @@ class MavlinkTelemetryStatus:
     target_component: int | None
     armed: bool
     mode_number: int | None
+    mode_name: str
     local_position_present: bool
     local_position_age_ms: float
+    local_position_valid: bool
+    active_source_set: str
+    external_nav_seen_by_fcu: bool | None
+    ekf_source_set_switch: dict[str, bool | int | str | None]
+    parameters: dict[str, int | float | str]
     ekf_flags: list[int]
     command_acks: list[dict[str, int]]
     statustext: list[dict[str, int | str]]
@@ -250,10 +262,17 @@ def encode_mavlink_telemetry_status(status: MavlinkTelemetryStatus) -> str:
             "target_component": status.target_component,
             "armed": status.armed,
             "mode_number": status.mode_number,
+            "mode_name": status.mode_name,
+            "mode": status.mode_name,
             "local_position": {
                 "present": status.local_position_present,
                 "age_ms": round(status.local_position_age_ms, 3),
             },
+            "local_position_valid": status.local_position_valid,
+            "active_source_set": status.active_source_set,
+            "external_nav_seen_by_fcu": status.external_nav_seen_by_fcu,
+            "ekf_source_set_switch": status.ekf_source_set_switch,
+            "parameters": status.parameters,
             "ekf": {
                 "flags_seen": status.ekf_flags,
             },
@@ -264,6 +283,20 @@ def encode_mavlink_telemetry_status(status: MavlinkTelemetryStatus) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+
+
+def normalize_mavlink_param_value(value: object) -> int | float | str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").rstrip("\x00")
+    if isinstance(value, str):
+        return value.rstrip("\x00")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if math.isfinite(number) and number.is_integer():
+        return int(number)
+    return number
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -302,6 +335,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--synthetic-imu-when-mavlink-missing", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--rate-hz", type=float, default=10.0)
     parser.add_argument("--stream-rate-hz", type=float, default=10.0)
+    parser.add_argument("--auto-ekf-source-set", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--ekf-source-set-retry-sec", type=float, default=2.0)
     parser.add_argument("--timeout-sec", type=float, default=1.0)
     parser.add_argument("--reconnect-sec", type=float, default=2.0)
     parser.add_argument("--stale-reconnect-sec", type=float, default=5.0)
@@ -404,6 +439,13 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._command_acks: list[dict[str, int]] = []
             self._statustext: list[dict[str, int | str]] = []
             self._ekf_flags: list[int] = []
+            self._parameters: dict[str, int | float | str] = {}
+            self._ekf_source_set_switch_sent_source = ""
+            self._ekf_source_set_switch_sent_count = 0
+            self._ekf_source_set_switch_last_send = 0.0
+            self._ekf_source_set_switch_ack_result: int | None = None
+            self._next_parameter_request = 0.0
+            self._parameter_request_index = 0
             self._next_stream_request = 0.0
             self._next_reconnect_monotonic = 0.0
             self._last_mavlink_message_monotonic = 0.0
@@ -504,6 +546,8 @@ def run(argv: Sequence[str] | None = None) -> int:
             ):
                 _request_streams(self._connection, self._target_system, self._target_component, args.stream_rate_hz)
                 self._next_stream_request = now + 2.0
+            self._request_status_parameter_if_needed(now)
+            self._switch_ekf_source_set_if_needed(now)
 
             age_sec = now - self._last_sample_monotonic if self._last_sample is not None else math.inf
             if self._last_sample is None:
@@ -563,6 +607,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                 elif msg_type == "COMMAND_ACK":
                     if len(self._command_acks) < 80:
                         self._command_acks.append({"command": int(msg.command), "result": int(msg.result)})
+                    if int(msg.command) == int(mavlink.MAV_CMD_SET_EKF_SOURCE_SET):
+                        self._ekf_source_set_switch_ack_result = int(msg.result)
                 elif msg_type == "STATUSTEXT":
                     if len(self._statustext) < 80:
                         text = getattr(msg, "text", "")
@@ -571,6 +617,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                         self._statustext.append({"severity": int(msg.severity), "text": str(text).rstrip("\x00")})
                 elif msg_type == "EKF_STATUS_REPORT":
                     self._ekf_flags.append(int(msg.flags))
+                elif msg_type == "PARAM_VALUE":
+                    self._handle_param_value(msg)
                 elif msg_type == "HIGHRES_IMU":
                     self._handle_imu_sample(sample_from_highres_imu(msg))
                 elif msg_type == "SCALED_IMU":
@@ -578,6 +626,78 @@ def run(argv: Sequence[str] | None = None) -> int:
                 elif msg_type == "RAW_IMU" and args.allow_raw_imu:
                     self._raw_imu_count += 1
                     self._handle_imu_sample(sample_from_raw_imu(msg))
+
+        def _handle_param_value(self, msg: object) -> None:
+            param_id = getattr(msg, "param_id", "")
+            if isinstance(param_id, bytes):
+                param_name = param_id.decode("utf-8", errors="replace").rstrip("\x00")
+            else:
+                param_name = str(param_id).rstrip("\x00")
+            if param_name in FCU_STATUS_PARAMETER_NAMES:
+                self._parameters[param_name] = normalize_mavlink_param_value(getattr(msg, "param_value", ""))
+
+        def _switch_ekf_source_set_if_needed(self, now: float) -> None:
+            if not args.auto_ekf_source_set:
+                return
+            if self._connection is None or self._target_system is None or self._target_component is None:
+                return
+            target_source = infer_external_nav_source_set(self._parameters)
+            target_source_id = source_set_id(target_source)
+            if target_source_id is None:
+                return
+            if (
+                self._ekf_source_set_switch_sent_source == target_source
+                and self._ekf_source_set_switch_ack_result == int(mavlink.MAV_RESULT_ACCEPTED)
+            ):
+                return
+            if (
+                self._ekf_source_set_switch_sent_source == target_source
+                and now - self._ekf_source_set_switch_last_send < args.ekf_source_set_retry_sec
+            ):
+                return
+            try:
+                self._connection.mav.command_long_send(
+                    self._target_system,
+                    self._target_component,
+                    mavlink.MAV_CMD_SET_EKF_SOURCE_SET,
+                    0,
+                    float(target_source_id),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            except Exception as exc:
+                self.get_logger().warn(f"ekf source set switch failed target={target_source}: {exc}")
+                self._ekf_source_set_switch_last_send = now
+                return
+            self._ekf_source_set_switch_sent_source = target_source
+            self._ekf_source_set_switch_sent_count += 1
+            self._ekf_source_set_switch_last_send = now
+            self._ekf_source_set_switch_ack_result = None
+            self.get_logger().info(f"requested EKF source set {target_source} for ExternalNav")
+
+        def _request_status_parameter_if_needed(self, now: float) -> None:
+            if self._connection is None or self._target_system is None or self._target_component is None:
+                return
+            if not FCU_STATUS_PARAMETER_NAMES or now < self._next_parameter_request:
+                return
+            param_name = FCU_STATUS_PARAMETER_NAMES[self._parameter_request_index]
+            try:
+                self._connection.mav.param_request_read_send(
+                    self._target_system,
+                    self._target_component,
+                    param_name.encode("ascii"),
+                    -1,
+                )
+            except Exception as exc:
+                self.get_logger().warn(f"mavlink parameter request failed param={param_name}: {exc}")
+                self._next_parameter_request = now + 2.0
+                return
+            self._parameter_request_index = (self._parameter_request_index + 1) % len(FCU_STATUS_PARAMETER_NAMES)
+            self._next_parameter_request = now + (10.0 if self._parameter_request_index == 0 else 0.1)
 
         def _handle_constraint_list(self, msg: MarkerArray) -> None:
             filtered = MarkerArray()
@@ -761,6 +881,14 @@ def run(argv: Sequence[str] | None = None) -> int:
                 state = "waiting_for_local_position"
             else:
                 state = "waiting_for_heartbeat"
+            local_position_age_ms = (
+                -1.0
+                if self._last_sample is None
+                else max(0.0, (time.monotonic() - self._last_sample_monotonic) * 1000.0)
+            )
+            local_position_valid = self._last_sample is not None and local_position_age_ms <= args.timeout_sec * 1000.0
+            active_source_set = infer_external_nav_source_set(self._parameters)
+            external_nav_seen = True if local_position_valid and active_source_set in {"SRC1", "SRC2"} else None
             message = String()
             message.data = encode_mavlink_telemetry_status(
                 MavlinkTelemetryStatus(
@@ -770,12 +898,14 @@ def run(argv: Sequence[str] | None = None) -> int:
                     target_component=self._target_component,
                     armed=self._armed,
                     mode_number=self._mode_number,
+                    mode_name=arducopter_mode_name(self._mode_number),
                     local_position_present=self._last_sample is not None,
-                    local_position_age_ms=(
-                        -1.0
-                        if self._last_sample is None
-                        else max(0.0, (time.monotonic() - self._last_sample_monotonic) * 1000.0)
-                    ),
+                    local_position_age_ms=local_position_age_ms,
+                    local_position_valid=local_position_valid,
+                    active_source_set=active_source_set,
+                    external_nav_seen_by_fcu=external_nav_seen,
+                    ekf_source_set_switch=self._ekf_source_set_switch_status(active_source_set),
+                    parameters=dict(self._parameters),
                     ekf_flags=sorted(set(self._ekf_flags)),
                     command_acks=self._command_acks[-20:],
                     statustext=self._statustext[-20:],
@@ -783,6 +913,17 @@ def run(argv: Sequence[str] | None = None) -> int:
                 )
             )
             self._mavlink_status_pub.publish(message)
+
+        def _ekf_source_set_switch_status(self, target_source: str) -> dict[str, bool | int | str | None]:
+            target_source_id = source_set_id(target_source)
+            return {
+                "enabled": bool(args.auto_ekf_source_set),
+                "target_source_set": target_source,
+                "target_source_set_id": target_source_id,
+                "sent": self._ekf_source_set_switch_sent_count > 0,
+                "sent_count": self._ekf_source_set_switch_sent_count,
+                "ack_result": self._ekf_source_set_switch_ack_result,
+            }
 
         def _publish_imu_status(self) -> None:
             now = time.monotonic()

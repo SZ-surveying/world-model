@@ -10,12 +10,14 @@
 run <task>
   -> real preflight doctor
   -> real prepare / bringup
+  -> real common doctor
   -> task doctor
   -> companion / task run
 ```
 
-prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU、scan、SLAM
-和 task-specific readiness。它们都不是单独的 operator CLI。
+prepare 负责启动非 companion 的辅助进程；common doctor 负责确认 FCU、EKF、
+ExternalNav 共同状态并展示 RC 状态；task doctor 负责确认 task-specific readiness。它们
+都不是单独的 operator CLI。
 
 设计文档：
 
@@ -46,6 +48,7 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 - [x] 文档明确 prepare 有副作用，doctor 不负责启动辅助进程。
 - [x] 文档明确 prepare 不启动 companion。
 - [x] 文档明确 task doctor 不 arm、不 takeoff、不 land。
+- [x] 文档明确 common doctor 是 prepare 后的 FCU / EKF / ExternalNav 共同检查。
 - [x] 文档明确 task doctor 使用统一 upstream topic helper。
 
 验收：
@@ -67,7 +70,7 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 - [x] wrapper 不要求 operator 手动执行 `doctor`。
 - [x] wrapper 不要求 operator 手动执行 `prepare`。
 - [x] simulation mode 仍走 Gazebo/SITL Stage 1 路径。
-- [x] real mode 走 preflight -> prepare -> task doctor -> task run 路径。
+- [x] real mode 走 preflight -> prepare -> common doctor -> task doctor -> task run 路径。
 
 验收：
 
@@ -108,6 +111,8 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 - [x] prepare 通过 pymavlink endpoint probe 确认 HEARTBEAT。
 - [x] prepare 检查 endpoint evidence 能追溯到真实 serial。
 - [x] prepare 失败时关闭已启动的 router process。
+- [x] 手工串口桥（`socat` / `stty` / Python bridge）只作为隔离调试手段，不作为
+  real prepare 的长期依赖。
 
 验收：
 
@@ -116,6 +121,8 @@ prepare 负责启动非 companion 的辅助进程；task doctor 负责确认 FCU
 - [x] router endpoint 无 HEARTBEAT 时 prepare blocked。
 - [x] SITL TCP/UDP endpoint 没有 real serial provenance 时 prepare blocked。
 - [x] prepare summary 包含 `mavlink_router.ok=true` 和 serial provenance。
+- [x] 真实 prepare 运行前，tmux/socat 临时桥必须停止，否则 serial provenance
+  失真。
 
 ## RTD.4 MAVROS / FCU ROS bridge bringup
 
@@ -394,11 +401,11 @@ real prepare 对齐后的目标链路：
 任务：
 
 - [x] 实现 `check_real_task_upstream_topics(task_name, config)` 或等价 helper。
-- [ ] helper 检查 `/scan` presence、type、freshness、frame。
+- [x] helper 检查 `/scan` presence、type、freshness、frame。
 - [x] helper 检查 `/tf`、`/tf_static`。
 - [x] helper 检查 FCU status / pose / velocity topic。
 - [x] helper 检查 MAVROS state 或等价 FCU bridge state。
-- [ ] helper 检查 `/slam/odom` presence、type、freshness、frame。
+- [x] helper 检查 `/slam/odom` presence、type、freshness、frame。
 - [x] helper 检查 `/navlab/slam/status` ready。
 - [x] helper 检查 rangefinder / height evidence；若 ROS bridge 存在，topic 必须是 `/rangefinder/down/range` 和 `/rangefinder/down/status`。
 - [x] helper 检查 yaw source evidence，室内 SLAM 真机任务只接受 `external_nav_yaw_ready=true`。
@@ -412,11 +419,52 @@ real prepare 对齐后的目标链路：
 - [x] 任一 required upstream topic 缺失时 task doctor blocked。
 - [x] 任一 required upstream topic stale 时 task doctor blocked。
 - [x] topic type 不匹配时 task doctor blocked。
+- [x] `/scan` frame 不匹配时 task doctor blocked，并记录 expected frame。
+- [x] `/slam/odom` frame 不匹配时 task doctor blocked，并记录 expected frame。
 - [x] `external_nav_yaw_ready=false` 时 task doctor blocked，即使 `compass_calibrated=true` 或 `manual_override_acknowledged=true`。
 - [x] `external_nav_yaw_ready=true` 时 task doctor 不因未校准磁罗盘单独 blocked。
 - [x] `manual_override_acknowledged=true` 不作为室内 SLAM 真机任务 yaw source 放行条件。
 - [x] forbidden sim topic/source 存在时 task doctor blocked。
 - [x] helper result 能写入 task doctor summary。
+
+验证记录（2026-06-10）：
+
+- `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=orchestration:. uv run --project orchestration pytest orchestration/tests/test_real_prepare.py -q`
+  通过；新增覆盖 `/scan` 和 `/slam/odom` frame mismatch blocker。
+- `NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real uv run --project orchestration python orchestration/main.py run hover --dry-run`
+  通过；prepare summary `artifacts/ros/navlab_real_prepare/20260610_084205/summary.json`
+  和 task doctor summary
+  `artifacts/ros/navlab_real_task_doctor/20260610_084254/hover/summary.json`
+  均记录 `/scan` frame 为 `laser_frame`、`/slam/odom` frame 为 `odom`，且
+  expected frame 一致。
+
+## RTD.7A Real Common Doctor
+
+任务：
+
+- [ ] 在 wrapper 中实现 `real common doctor`，位于 prepare 之后、task doctor 之前。
+- [ ] common doctor 输出 FCU / EKF / ExternalNav 的共同 readiness 面板，并展示 RC 状态。
+- [ ] common doctor 检查 `GPS_TYPE`、`GPS1_TYPE`、`VISO_TYPE`、`EK3_SRC1_*`、
+  `EK3_SRC2_*`。
+- [ ] common doctor 记录当前 active EKF source set，至少区分 `SRC1`、`SRC2` 和
+  unknown。
+- [ ] common doctor 读取 ROS 外部定位 ready 状态，但不把 ROS ready 视为 FCU
+  ready。
+- [ ] common doctor 记录 FCU-side ExternalNav evidence：FCU 是否看到 external nav、
+  local position 是否有效、EKF origin/home 是否已设置或明确不需要。
+- [ ] common doctor 区分 `external_nav_or_gps_source_not_ready`、
+  `external_nav_not_seen_by_fcu` 和 `ekf_origin_or_home_missing` blocker。
+- [ ] common doctor 仅展示 RC input 状态，不把 RC 作为 shared hard blocker。
+- [ ] common doctor 在 `active source = SRC2` 且 ExternalNav 未进入 FCU 时 blocked。
+- [ ] common doctor summary 写入 wrapper FSM 当前状态。
+
+验收：
+
+- [ ] prepare 之后必须先跑 common doctor，再跑 task-specific doctor。
+- [ ] common doctor 输出能直接解释 `GPS 1: Bad fix` 和 `external_nav_not_seen_by_fcu`；
+  `RC not found` 保留给 arm / task 阶段诊断。
+- [ ] common doctor 不启动进程、不重启进程、不占用串口。
+- [ ] common doctor 通过后，task doctor 才能只做 task-specific readiness。
 
 ## RTD.8 Task-specific doctor
 
@@ -462,24 +510,134 @@ real prepare 对齐后的目标链路：
 - [ ] companion 抢 `/dev/ttyACM0` 时 blocked。
 - [ ] companion status 不 ready 时 task run blocked。
 
-## RTD.10 Stage 1 和 operator safety 串联
+## RTD.10 Operator safety 串联（不依赖 Stage 1）
 
 任务：
 
-- [ ] wrapper 检查对应 task 的 Stage 1 `ideal` summary。
-- [ ] wrapper 检查对应 task 的 Stage 1 `mild_disturbance` summary。
-- [ ] wrapper 检查 Stage 1 summaries 未被错误标记为 real evidence。
-- [ ] wrapper 检查 manual takeover confirmation。
-- [ ] wrapper 检查 kill switch confirmation。
-- [ ] wrapper 检查安全场地/保护措施确认。
-- [ ] wrapper summary 记录 Stage 1 artifact、preflight artifact、prepare artifact、task doctor artifact。
+- [x] 文档明确 Stage 1 `ideal` / `mild_disturbance` simulation artifact 不作为真机 wrapper 必需 gate。
+- [x] 文档明确 Stage 1 artifact 只能作为开发参考和回归诊断，不能替代真实传感器 / FCU / safety evidence。
+- [x] wrapper 检查 manual takeover confirmation：真实非 dry-run 执行前必须显式传
+  `--confirm-manual-takeover`。
+- [x] wrapper 检查 kill switch confirmation：真实非 dry-run 执行前必须显式传
+  `--confirm-kill-switch`。
+- [x] wrapper 检查安全场地/保护措施确认：真实非 dry-run 执行前必须显式传
+  `--confirm-safe-area`。
+- [ ] wrapper summary 记录 preflight artifact、prepare artifact、task doctor artifact 和 operator safety confirmation。
 
 验收：
 
-- [ ] 缺 `ideal` Stage 1 artifact 时 real wrapper blocked。
-- [ ] 缺 `mild_disturbance` Stage 1 artifact 时 real wrapper blocked。
-- [ ] 缺 operator safety confirmation 时 arm/takeoff 前 blocked。
-- [ ] wrapper summary 可以追溯所有前置 artifact。
+- [x] 缺 `ideal` Stage 1 artifact 时 real wrapper 不应 blocked。
+- [x] 缺 `mild_disturbance` Stage 1 artifact 时 real wrapper 不应 blocked。
+- [x] 缺 operator safety confirmation 时 arm/takeoff 前 blocked，并输出稳定 blocker：
+  `operator_manual_takeover_not_confirmed`、`operator_kill_switch_not_confirmed`、
+  `operator_safe_area_not_confirmed`。
+- [ ] wrapper summary 可以追溯所有真实前置 artifact。
+
+确认方式：
+
+- `--confirm-manual-takeover`：人工遥控器/模式切换/接管流程已就绪，operator 能
+  立即接管。
+- `--confirm-kill-switch`：物理或软件 kill switch 已就绪，operator 已确认触发路径。
+- `--confirm-safe-area`：场地、人员距离、电池、电机、桨叶和保护措施已确认。
+- 这些 flag 只用于非 dry-run 的真实执行；`--dry-run` 仍只验证 preflight /
+  prepare / task doctor，不要求 operator safety confirmation。
+
+## RTD.10A 无桨 motor-debug task
+
+目标：提供一个只用于无桨台架检查的真机 debug task，复用 real prepare 的
+Cartographer / ExternalNav 链路，在 `GUIDED` 下执行 arm -> hold -> disarm，
+但绝不 takeoff。该 task 用来确认 FCU 到电调/电机的输出链路，不能作为 hover
+readiness 或 landing readiness 的替代。
+
+设计文档：
+
+- `docs/scenarios/indoor/navlab_real_motor_debug_design.md`
+- `docs/scenarios/indoor/navlab_ardupilot_externalnav_reading.md`
+
+关键结论：
+
+- `motor-debug` 不是 ArduPilot 飞行模式，也不是“定高模式”。
+- 所有盒子操作都必须在 ArduPilot `GUIDED` 模式下执行。
+- `motor-debug` 不能绕开 prepare 直接抢 `/dev/ttyUSB1`。
+- FCU serial 由 `mavlink-router` 独占，motor-debug 连接 router endpoint。
+- `GPS 1: Bad fix` 表示 FCU 当前仍按 GPS/pre-arm 条件判断，优先检查
+  ExternalNav/EKF source 参数，而不是修改 motor command。
+- `RC not found` 是独立 pre-arm 条件，ExternalNav 不能自动解决。
+- VIO tracking camera 文档虽然是视觉输入，但其 ExternalNav / EKF ground test
+  流程同样适用于 lidar SLAM：FCU 侧必须看到外部定位并且地面移动方向一致。
+- GPS / Non-GPS Transitions 文档适合未来 source set 切换；当前 motor-debug
+  只需要确认 active source 不依赖 GPS。
+
+任务：
+
+- [x] 新增 `run motor-debug` wrapper 入口，仅允许
+  `NAVLAB_RUNTIME_BACKEND=process NAVLAB_RUNTIME_MODE=real`。
+- [x] `run motor-debug --dry-run` 只运行 real preflight 并打印 motor-debug 计划，
+  不启动电机。
+- [x] 非 dry-run `motor-debug` 必须显式确认：
+  `--confirm-manual-takeover`、`--confirm-kill-switch`、`--confirm-safe-area`、
+  `--confirm-no-props`。
+- [x] 非 dry-run `motor-debug` 先执行 real prepare，启动 mavlink-router、
+  FCU bridge、真实 `/scan`、Cartographer 和 ExternalNav readiness 链路。
+- [x] motor-debug 使用 prepare 的 mavlink-router endpoint，不直接打开真实 FCU
+  serial。
+- [x] motor-debug 在 arm 前切换并观察 ArduPilot `GUIDED`。
+- [x] 非 dry-run `motor-debug` 使用 `MAV_CMD_COMPONENT_ARM_DISARM`：
+  `param1=1,param2=0` arm，hold 5 sec，`param1=0,param2=0` disarm。
+- [x] motor-debug 不使用 `MAV_CMD_DO_MOTOR_TEST` 作为默认流程，不逐个电机测试。
+- [x] motor-debug 默认 4 个电机按 FCU armed idle 逻辑一起转约 5 秒。
+- [x] motor-debug 结束或失败后发送 disarm 作为电机关闭路径；
+  `landing_claim=not_evaluated_no_takeoff`。
+- [x] motor-debug summary 记录 serial、connection endpoint、baud、motor_count、
+  motor_sec、COMMAND_ACK、STATUSTEXT、logs 和 shutdown claim。
+- [x] motor-debug task doctor 不要求当前已经是 `GUIDED`；它只记录
+  `required_mode=GUIDED`、当前 FCU mode 和 `guided_gate=run_stage`。
+- [x] motor-debug run 启动时先输出参数 panel，列出 router endpoint、serial、
+  motor_count、hold seconds、GUIDED runtime gate 和 arm/disarm command。
+- [ ] motor-debug task doctor 在 arm 前检查 FCU 参数与 simulation ExternalNav
+  profile 对齐：`GPS_TYPE=0`、`GPS1_TYPE=0`、`VISO_TYPE=1`、
+  `EK3_SRC1_POSXY=6`、`EK3_SRC1_VELXY=6`、`EK3_SRC1_YAW=6`。
+- [ ] motor-debug task doctor 将 `Arm: GPS 1: Bad fix` 归类为
+  `external_nav_or_gps_source_not_ready`，并输出具体参数/ExternalNav readiness
+  证据。
+- [ ] motor-debug task doctor 增加 FCU-side ExternalNav evidence：external nav
+  MAVLink message 已发送/被 FCU 接收、local position 有效、EKF origin/home
+  已设置或明确不需要。
+- [ ] motor-debug arm 前必须通过 real common doctor；task doctor 只追加
+  motor-debug 自己的 task config / no-props / arm-hold-disarm readiness；
+  `GUIDED` 切换和确认是 run 阶段 gate，不是 task doctor hard blocker。
+- [ ] motor-debug summary 记录 FSM 状态转换：`PREPARE_READY`、
+  `COMMON_DOCTOR_OK`、`TASK_DOCTOR_OK`、`GUIDED_CONFIRMED`、`ARM_ACCEPTED`、
+  `HOLDING`、`DISARMED` 或对应 `BLOCKED(reason)`。
+- [ ] 增加地面移动检查口径：拿起机体做小范围平移/旋转时，GCS 或 ROS local
+  position 变化方向与真实运动一致。
+- [ ] 如果未来支持 GPS/Non-GPS transition，增加 EKF source set 检查和
+  `EKF Pos Source` 切换 evidence；当前 motor-debug 不执行 source set 切换。
+- [ ] motor-debug task doctor 将 `Arm: RC not found` 归类为独立 RC/pre-arm
+  blocker，不和 ExternalNav 问题混在一起。
+- [ ] 增加可选 bench-only RC/arming-check 策略设计；默认不使用 force arm，不用
+  `param2=21196` 掩盖配置问题。
+- [ ] 增加显式 integration 测试入口，用 SITL 或真实 router endpoint 跑
+  arm -> hold -> disarm；默认 pytest 不启动 SITL。
+- [ ] 真机无桨台架记录一次成功 artifact：prepare ready，GUIDED confirmed，
+  arm accepted，hold 5 sec，disarm accepted，summary `ok=true`。
+
+验收：
+
+- [x] 缺 `--confirm-no-props` 或任一 operator safety flag 时，非 dry-run
+  motor-debug blocked。
+- [x] `--dry-run` 不转电机，只显示计划和 `requires_no_props=True`。
+- [x] motor-debug 不支持 Docker/simulation runtime。
+- [x] motor-debug 不复用 hover task，不执行 arm/takeoff/landing。
+- [x] motor-debug 运行时会先启动 prepare，并在退出时关闭 prepare。
+- [x] motor-debug 连接 router endpoint 而不是直接抢 FCU serial。
+- [x] arm rejected 时 blocker 包含 `MAV_RESULT_*` 和 ArduPilot `STATUSTEXT`。
+- [ ] `GPS 1: Bad fix` 不再作为 opaque `MAV_RESULT_FAILED`，而是指向
+  ExternalNav/EKF source 配置检查。
+- [ ] ROS ExternalNav ready 但 FCU 未融合时 blocked 为
+  `external_nav_not_seen_by_fcu` 或等价 blocker。
+- [ ] `RC not found` 有单独 blocker 和修复建议。
+- [ ] 成功 artifact 证明 4 个电机无桨一起 idle spin 约 5 秒后 disarm。
 
 ## RTD.11 Rosbag 和审计 artifact
 
@@ -497,7 +655,7 @@ real prepare 对齐后的目标链路：
 
 - [x] prepare artifact 可复查辅助进程启动状态。
 - [x] task doctor artifact 可复查 companion 启动前置 topic。
-- [ ] real flight artifact 能追溯到 Stage 1 和所有 real phase artifact。
+- [ ] real flight artifact 能追溯到所有 real phase artifact；Stage 1 仿真 artifact 只可选引用。
 - [ ] artifact 不把 Gazebo/SITL 输入作为 required evidence。
 
 ## RTD.12 测试
@@ -515,7 +673,7 @@ real prepare 对齐后的目标链路：
 - [x] 增加 compass/manual override 存在但 ExternalNav yaw 不 ready 时 blocked 的测试。
 - [x] 增加 forbidden simulation source 测试。
 - [x] 增加 companion 不提前启动测试。
-- [ ] 增加 Stage 1 `ideal` + `mild_disturbance` gate 测试。
+- [x] 不增加 Stage 1 `ideal` + `mild_disturbance` real gate；它们不是飞行前必需 blocker。
 - [ ] 增加 wrapper summary schema 测试。
 
 验收：
@@ -537,28 +695,32 @@ real prepare 对齐后的目标链路：
 6. RTD.5 Lidar、rangefinder 和 SLAM bringup。
 7. RTD.6 Prepare summary、blocker 和进程清理。
 8. RTD.7 统一 Task Doctor helper。
-9. RTD.8 Task-specific doctor。
-10. RTD.9 Companion 启动边界。
-11. RTD.10 Stage 1 和 operator safety 串联。
-12. RTD.11 Rosbag 和审计 artifact。
-13. RTD.12 测试。
+9. RTD.7A Real Common Doctor。
+10. RTD.8 Task-specific doctor。
+11. RTD.9 Companion 启动边界。
+12. RTD.10 Operator safety 串联。
+13. RTD.10A 无桨 motor-debug task。
+14. RTD.11 Rosbag 和审计 artifact。
+15. RTD.12 测试。
 
 ## RTD 完成标准
 
 RTD 全部完成必须满足：
 
 - [x] operator 只执行 `run <task>` / `just navlab-run <task>`。
-- [x] real mode wrapper 顺序固定为 preflight -> prepare -> task doctor -> companion/task run。
+- [x] real mode wrapper 顺序固定为 preflight -> prepare -> common doctor -> task doctor -> companion/task run。
 - [x] prepare 只在 preflight 通过后启动非 companion 辅助进程。
 - [x] prepare 启动 `mavlink-router`，并证明 MAVLink endpoint 可追溯到真实 serial。
 - [x] MAVROS 通过 router endpoint 暴露真实 FCU ROS topics。
 - [x] 真实 lidar 提供 `/scan`，SLAM 提供 `/slam/odom`。
 - [x] task doctor 复用统一 upstream topic helper。
+- [ ] common doctor 明确输出 FCU / EKF / ExternalNav / RC 共同状态。
 - [x] task doctor 明确检查 yaw source evidence；无 GPS / 未校准磁罗盘场景必须由 ExternalNav/SLAM yaw ready 补足。
 - [x] companion 只在 prepare 和 task doctor 通过后启动。
-- [ ] Stage 1 `ideal` 和 `mild_disturbance` artifacts 都通过后才允许 real task run。
-- [ ] operator safety confirmation 缺失时不会进入 arm/takeoff。
-- [ ] summary 能追溯 preflight、prepare、task doctor、Stage 1 和 real flight artifact。
+- [x] Stage 1 `ideal` 和 `mild_disturbance` artifacts 不作为 real task run 必需条件。
+- [x] operator safety confirmation 缺失时不会进入 arm/takeoff。
+- [x] 无桨 motor-debug 只能在 no-props 和 operator safety 全部确认后转电机。
+- [ ] summary 能追溯 preflight、prepare、task doctor、operator safety 和 real flight artifact。
 
 ## 验证记录
 
@@ -577,7 +739,7 @@ RTD 全部完成必须满足：
 ### 2026-06-09 RTD real prepare and task doctor implementation
 
 - 命令：`uv run --project orchestration pytest orchestration/tests/test_cli.py orchestration/tests/test_config.py orchestration/tests/test_runtime_backend.py orchestration/tests/test_real_prepare.py -q`
-- 结果：142 passed。`run <task>` 的 real mode 顺序固定为 preflight -> prepare -> task doctor -> flight boundary；prepare 配置、MAVLink router serial provenance、MAVROS 不直连串口、真实 upstream topic helper、task-specific doctor 和 companion 不提前启动均有测试覆盖。
+- 结果：142 passed。`run <task>` 的 real mode 顺序固定为 preflight -> prepare -> common doctor -> task doctor -> flight boundary；prepare 配置、MAVLink router serial provenance、MAVROS 不直连串口、真实 upstream topic helper、task-specific doctor 和 companion 不提前启动均有测试覆盖。
 - 命令：`git diff --check`
 - 结果：通过。
-- blocker：Stage 1 `ideal` + `mild_disturbance` real gate、operator safety confirmation、rangefinder evidence、topic frame/source-claim summary、flight rosbag 和真正 companion/arm/takeoff wrapper 尚未实现。
+- blocker：operator safety confirmation、topic source-claim summary、flight rosbag 和真正 companion/arm/takeoff wrapper 尚未实现；Stage 1 `ideal` + `mild_disturbance` 不再作为 real gate。

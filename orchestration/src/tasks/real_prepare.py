@@ -8,6 +8,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import textwrap
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -17,8 +18,8 @@ from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
+from navlab.common.fcu_status import FCU_STATUS_FIELDS, FCU_STATUS_PARAMETER_NAMES, FcuStatusField, arducopter_mode_name
 from src.config import RealPrepareServiceConfig, RunConfig
 from src.runtime.errors import BackendConfigError, ServiceStartError
 from src.runtime.process_backend import ProcessBackend
@@ -38,6 +39,16 @@ class TopicEvidence:
     frame_id: str = ""
     source_claim: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+COMMON_DOCTOR_FIELDS = {
+    "fcu_status_topic": "/navlab/mavlink/status",
+    "bridge_state_topic": "/navlab/mavlink/status",
+    "external_nav_status_topic": "/external_nav/status",
+    "mavlink_external_nav_status_topic": "/mavlink_external_nav/status",
+}
+
+COMMON_DOCTOR_METADATA_FIELDS = FCU_STATUS_FIELDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +81,7 @@ def execute_real_prepare_phase(
     config_path: str | Path | None = None,
     console: Console | None = None,
 ) -> RealPreparePhaseResult:
+    console = console or Console()
     config = RunConfig.from_config(
         config_path=config_path,
         task_name="real-prepare",
@@ -82,6 +94,7 @@ def execute_real_prepare_phase(
     log_dir = Path(config.orchestration.real_prepare.process_log_dir) / config.run_id
     backend = ProcessBackend(default_log_dir=log_dir, dry_run=config.orchestration.real_prepare.dry_run)
     handles: list[RuntimeHandle] = []
+    console.print("\n\nStarting real prepare services")
     summary = _build_real_prepare_summary(
         config,
         task_name=task_name,
@@ -93,11 +106,14 @@ def execute_real_prepare_phase(
     summary_path = artifact_dir / "summary.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
-    _print_real_prepare_summary(console or Console(), summary=summary, summary_path=summary_path)
+    rc = 0 if summary["ok"] else 20
+    color = "green" if summary["ok"] else "red"
+    console.print(f"[{color}]Real prepare rc={rc}[/{color}]")
+    _print_real_prepare_summary(console, summary=summary, summary_path=summary_path)
     if not summary["ok"]:
         _stop_handles(backend, handles)
     return RealPreparePhaseResult(
-        return_code=0 if summary["ok"] else 20,
+        return_code=rc,
         summary=summary,
         backend=backend,
         handles=handles,
@@ -115,6 +131,7 @@ def run_real_task_doctor(
     task_config_path: str | Path | None = None,
     console: Console | None = None,
 ) -> int:
+    console = console or Console()
     config = RunConfig.from_config(
         config_path=config_path,
         task_name=task_name,
@@ -129,8 +146,46 @@ def run_real_task_doctor(
     summary_path = artifact_dir / "summary.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
-    _print_real_task_doctor_summary(console or Console(), summary=summary, summary_path=summary_path)
-    return 0 if summary["ok"] else 20
+    rc = 0 if summary["ok"] else 20
+    color = "green" if summary["ok"] else "red"
+    console.print("\n\nChecking real task doctor contract")
+    console.print(f"[{color}]Real task doctor rc={rc}[/{color}]")
+    _print_real_task_doctor_summary(console, summary=summary, summary_path=summary_path)
+    return rc
+
+
+def run_real_common_doctor(
+    *,
+    config_path: str | Path | None = None,
+    task_config_path: str | Path | None = None,
+    task_name: str = "doctor",
+    console: Console | None = None,
+) -> int:
+    console = console or Console()
+    config = RunConfig.from_config(
+        config_path=config_path,
+        task_name=task_name,
+        task_config_path=task_config_path,
+        artifact_dir=os.environ.get("ARTIFACT_DIR"),
+        run_id=os.environ.get("RUN_ID"),
+    )
+    artifact_dir = Path(
+        os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_real_common_doctor/{config.run_id}/{task_name}")
+    )
+    summary = build_real_common_doctor_summary(
+        config,
+        task_name=task_name,
+        topic_snapshot=_wait_for_common_doctor_topic_snapshot(config, task_name=task_name),
+    )
+    summary_path = artifact_dir / "summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    rc = 0 if summary["ok"] else 20
+    color = "green" if summary["ok"] else "red"
+    console.print("\n\nChecking real common doctor contract")
+    console.print(f"[{color}]Real common doctor rc={rc}[/{color}]")
+    _print_real_common_doctor_summary(console, summary=summary, summary_path=summary_path)
+    return rc
 
 
 def _build_real_prepare_summary(
@@ -146,7 +201,7 @@ def _build_real_prepare_summary(
     prepare = config.orchestration.real_prepare
     mode_spec, mode_blockers = _fcu_bridge_mode_selection(config)
     blockers.extend(mode_blockers)
-    services = _prepare_services(config)
+    services = _prepare_services(config, task_name=task_name)
     blockers.extend(_validate_prepare_services(config, services))
     started_services: list[dict[str, Any]] = []
 
@@ -234,6 +289,35 @@ def build_real_task_doctor_summary(
     }
 
 
+def build_real_common_doctor_summary(
+    config: RunConfig,
+    *,
+    task_name: str = "doctor",
+    topic_snapshot: RealTopicSnapshot | None = None,
+) -> dict[str, Any]:
+    upstream = check_real_task_upstream_topics(task_name, config, topic_snapshot=topic_snapshot)
+    blockers = list(upstream["blockers"])
+    common = _check_common_readiness(config, upstream)
+    blockers.extend(common["blockers"])
+    blockers = list(dict.fromkeys(blockers))
+    return {
+        "ok": not blockers,
+        "blocked": bool(blockers),
+        "blockers": blockers,
+        "task_name": task_name,
+        "common_doctor_claim": "evaluated",
+        "arm_claim": "not_evaluated",
+        "takeoff_claim": "not_evaluated",
+        "landing_claim": "not_evaluated",
+        "companion_claim": "not_started",
+        "checked_at": _utc_now(),
+        "fcu_bridge_mode": config.orchestration.real_prepare.fcu_bridge_mode,
+        "upstream": upstream,
+        "common_state": common,
+        "task_specific": common,
+    }
+
+
 def check_real_task_upstream_topics(
     task_name: str,
     config: RunConfig,
@@ -246,6 +330,7 @@ def check_real_task_upstream_topics(
         probe_topics=required,
     )
     expected_types = _expected_topic_types(config)
+    expected_frames = _expected_topic_frames(config)
     forbidden_patterns = _forbidden_topic_patterns(config)
     topic_names = tuple(snapshot.topics)
     blockers: list[str] = []
@@ -259,12 +344,14 @@ def check_real_task_upstream_topics(
     for topic in required:
         evidence = snapshot.topics.get(topic)
         expected_type = expected_types.get(topic, "")
+        expected_frame = expected_frames.get(topic, "")
         result = {
             "present": evidence is not None,
             "type": evidence.type_name if evidence else "",
             "expected_type": expected_type,
             "fresh": evidence.fresh if evidence else False,
             "frame_id": evidence.frame_id if evidence else "",
+            "expected_frame_id": expected_frame,
             "source_claim": evidence.source_claim if evidence else "",
             "metadata": dict(evidence.metadata) if evidence else {},
         }
@@ -274,6 +361,9 @@ def check_real_task_upstream_topics(
             blockers.append(f"required_topic_type_mismatch:{topic}:{evidence.type_name}!={expected_type}")
         elif evidence.fresh is False:
             blockers.append(f"required_topic_stale:{topic}")
+        elif expected_frame and evidence.frame_id != expected_frame:
+            observed = evidence.frame_id or "<missing>"
+            blockers.append(f"required_topic_frame_mismatch:{topic}:{observed}!={expected_frame}")
         topic_results[topic] = result
 
     forbidden_matches = sorted(
@@ -288,7 +378,10 @@ def check_real_task_upstream_topics(
     rtd5a = _check_real_slam_yaw_contract(config, snapshot)
     if rtd5a["blocked"]:
         blockers.extend(rtd5a["blockers"])
-    rtd5b = _check_real_height_rangefinder_contract(config, snapshot)
+    if task_name in {"hover", "exploration", "scan-robustness"}:
+        rtd5b = _check_real_height_rangefinder_contract(config, snapshot)
+    else:
+        rtd5b = {"ok": True, "blocked": False, "blockers": [], "required": False, "checks": {}}
     if rtd5b["blocked"]:
         blockers.extend(rtd5b["blockers"])
 
@@ -334,6 +427,45 @@ def collect_ros_topic_snapshot(
             continue
         topics[topic] = _probe_topic_evidence(topic, evidence, timeout_sec=min(max(timeout_sec, 0.5), 2.0))
     return RealTopicSnapshot(topics=topics, collected_at=_utc_now())
+
+
+def _wait_for_common_doctor_topic_snapshot(config: RunConfig, *, task_name: str) -> RealTopicSnapshot:
+    prepare = config.orchestration.real_prepare
+    probe_topics = tuple(sorted(_required_upstream_topics(task_name, config)))
+    deadline = time.monotonic() + max(prepare.ros_topic_probe_timeout_sec, 2.0)
+    last_snapshot: RealTopicSnapshot | None = None
+    while time.monotonic() < deadline:
+        snapshot = collect_ros_topic_snapshot(
+            timeout_sec=min(prepare.ros_topic_probe_timeout_sec, 2.0),
+            probe_topics=probe_topics,
+        )
+        last_snapshot = snapshot
+        status = snapshot.topics.get(prepare.fcu_bridge_state_topic)
+        metadata = dict(status.metadata) if status else {}
+        if _mavlink_status_has_common_metadata(metadata):
+            return snapshot
+        time.sleep(0.3)
+    if last_snapshot is not None:
+        return last_snapshot
+    return collect_ros_topic_snapshot(
+        timeout_sec=min(prepare.ros_topic_probe_timeout_sec, 2.0),
+        probe_topics=probe_topics,
+    )
+
+
+def _mavlink_status_has_common_metadata(metadata: Mapping[str, Any]) -> bool:
+    if not metadata:
+        return False
+    has_mode = bool(
+        _metadata_string_value(metadata, FcuStatusField("mode", ("mode", "mode_name", "flight_mode")))
+        or _metadata_field_value(metadata, FcuStatusField("mode_number", ("mode_number",))) is not None
+    )
+    parameters = metadata.get("parameters")
+    if isinstance(parameters, Mapping):
+        has_parameter = any(name in parameters for name in FCU_STATUS_PARAMETER_NAMES)
+    else:
+        has_parameter = any(name in metadata for name in FCU_STATUS_PARAMETER_NAMES)
+    return has_mode and has_parameter
 
 
 def _wait_for_prepare_topic_snapshot(
@@ -389,7 +521,7 @@ def _wait_for_prepare_topic_snapshot(
     )
 
 
-def _prepare_services(config: RunConfig) -> dict[str, RealPrepareServiceConfig]:
+def _prepare_services(config: RunConfig, *, task_name: str = "") -> dict[str, RealPrepareServiceConfig]:
     prepare = config.orchestration.real_prepare
     all_services = {
         "mavlink_router": prepare.mavlink_router,
@@ -400,7 +532,9 @@ def _prepare_services(config: RunConfig) -> dict[str, RealPrepareServiceConfig]:
         "rangefinder_bridge": prepare.rangefinder_bridge,
     }
     mode_spec, _ = _fcu_bridge_mode_selection(config)
-    selected_names = mode_spec.prepare_service_names if mode_spec else tuple(all_services)
+    selected_names = list(mode_spec.prepare_service_names if mode_spec else tuple(all_services))
+    if task_name == "motor-debug":
+        selected_names = [name for name in selected_names if name != "rangefinder_bridge"]
     return {name: all_services[name] for name in selected_names if name in all_services and all_services[name].enabled}
 
 
@@ -633,6 +767,14 @@ def _required_upstream_topics(task_name: str, config: RunConfig) -> tuple[str, .
     topics = list(prepare.required_upstream_topics)
     if mode_spec:
         topics.extend(mode_spec.prepare_required_topics)
+    if task_name == "motor-debug":
+        rangefinder_topics = {
+            config.orchestration.rangefinder_imu.rangefinder_range_topic,
+            config.orchestration.rangefinder_imu.rangefinder_status_topic,
+            "/rangefinder/down/range",
+            "/rangefinder/down/status",
+        }
+        topics = [topic for topic in topics if topic not in rangefinder_topics]
     topics.extend(
         (
             config.orchestration.slam_backend.slam_odom_topic,
@@ -641,7 +783,7 @@ def _required_upstream_topics(task_name: str, config: RunConfig) -> tuple[str, .
             *prepare.external_nav_yaw_status_topics,
         )
     )
-    if prepare.height_rangefinder_required and task_name in {"hover", "exploration", "scan-robustness"}:
+    if prepare.height_rangefinder_required and task_name in {"doctor", "hover", "exploration", "scan-robustness"}:
         topics.extend(
             (
                 config.orchestration.rangefinder_imu.rangefinder_range_topic,
@@ -677,6 +819,47 @@ def _expected_topic_types(config: RunConfig) -> dict[str, str]:
         config.orchestration.rangefinder_imu.rangefinder_range_topic: "sensor_msgs/msg/Range",
         config.orchestration.rangefinder_imu.rangefinder_status_topic: "std_msgs/msg/String",
     }
+
+
+def _expected_topic_frames(config: RunConfig) -> dict[str, str]:
+    prepare = config.orchestration.real_prepare
+    scan_frame = (
+        _ros_launch_arg(prepare.slam.command, "laser_frame")
+        or _command_option_value(prepare.lidar.command, "--frame-id")
+        or "laser_frame"
+    )
+    return {
+        "/scan": scan_frame,
+        config.orchestration.slam_backend.slam_odom_topic: config.orchestration.slam_backend.odom_frame_id,
+    }
+
+
+def _ros_launch_arg(command: tuple[str, ...], name: str) -> str:
+    prefix = f"{name}:="
+    for token in _flatten_command_tokens(command):
+        if token.startswith(prefix):
+            return token[len(prefix) :]
+    return ""
+
+
+def _command_option_value(command: tuple[str, ...], option: str) -> str:
+    tokens = _flatten_command_tokens(command)
+    for index, token in enumerate(tokens):
+        if token == option and index + 1 < len(tokens):
+            return tokens[index + 1]
+        if token.startswith(f"{option}="):
+            return token.split("=", 1)[1]
+    return ""
+
+
+def _flatten_command_tokens(command: tuple[str, ...]) -> list[str]:
+    tokens: list[str] = []
+    for part in command:
+        try:
+            tokens.extend(shlex.split(part))
+        except ValueError:
+            tokens.append(part)
+    return tokens
 
 
 def _check_real_slam_yaw_contract(config: RunConfig, snapshot: RealTopicSnapshot) -> dict[str, Any]:
@@ -847,6 +1030,7 @@ def _topic_requires_sample_probe(topic: str) -> bool:
         "/external_nav/status",
         "/navlab/mavlink/status",
         "/mavlink_external_nav/status",
+        "/slam/odom",
         "/rangefinder/down/range",
         "/rangefinder/down/status",
     }
@@ -905,7 +1089,7 @@ def _topic_uses_sensor_qos(type_name: str, topic: str) -> bool:
 
 
 def _topic_probe_field_args(type_name: str) -> list[str]:
-    if type_name in {"sensor_msgs/msg/LaserScan", "sensor_msgs/msg/Imu"}:
+    if type_name in {"sensor_msgs/msg/LaserScan", "sensor_msgs/msg/Imu", "nav_msgs/msg/Odometry"}:
         return ["--field", "header"]
     if type_name == "std_msgs/msg/String":
         return ["--field", "data"]
@@ -962,6 +1146,13 @@ def _float_or_none(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
+def _int_or_none(value: Any) -> int | None:
+    number = _float_or_none(value)
+    if number is None:
+        return None
+    return int(number)
+
+
 def _count_yaml_sequence_items(text: str, key: str) -> int:
     lines = text.splitlines()
     for index, line in enumerate(lines):
@@ -1000,7 +1191,9 @@ def _local_ros_overlay_commands() -> list[str]:
                 f'export AMENT_PREFIX_PATH="{resolved}:$AMENT_PREFIX_PATH"',
                 f'export CMAKE_PREFIX_PATH="{resolved}:$CMAKE_PREFIX_PATH"',
                 f'export PATH="{resolved}/bin:$PATH"',
-                f'export PYTHONPATH="{resolved}/local/lib/python3.10/dist-packages:{resolved}/lib/python3.10/site-packages:$PYTHONPATH"',
+                "export PYTHONPATH="
+                f'"{resolved}/local/lib/python3.10/dist-packages:'
+                f'{resolved}/lib/python3.10/site-packages:$PYTHONPATH"',
                 f'export LD_LIBRARY_PATH="{resolved}/lib:$LD_LIBRARY_PATH"',
             ]
         )
@@ -1173,30 +1366,76 @@ def _metadata_bool(value: Any) -> bool:
     return False
 
 
+def _metadata_field_value(metadata: Mapping[str, Any], field: FcuStatusField) -> Any:
+    if not isinstance(metadata, Mapping):
+        return None
+    nested_names = ("parameters", "params", "config", "state", "ekf", "fcu", "bridge")
+    for key in field.aliases:
+        value = metadata.get(key)
+        if value not in (None, "", [], {}, ()):  # type: ignore[comparison-overlap]
+            return value
+        for nested_name in nested_names:
+            nested = metadata.get(nested_name)
+            if not isinstance(nested, Mapping):
+                continue
+            nested_value = nested.get(key)
+            if nested_value not in (None, "", [], {}, ()):  # type: ignore[comparison-overlap]
+                return nested_value
+    return None
+
+
+def _metadata_bool_or_none(metadata: Mapping[str, Any], field: FcuStatusField) -> bool | None:
+    value = _metadata_field_value(metadata, field)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on", "ready", "present", "ok", "valid"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", "missing", "not_ready", "invalid"}:
+            return False
+    return None
+
+
+def _metadata_string_value(metadata: Mapping[str, Any], field: FcuStatusField) -> str:
+    value = _metadata_field_value(metadata, field)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return ""
+
+
 def _check_task_specific_readiness(task_name: str, config: RunConfig, upstream: Mapping[str, Any]) -> dict[str, Any]:
     blockers: list[str] = []
+    result: dict[str, Any] = {}
     landing_policy = config.orchestration.landing.policy_for_task(task_name)
-    result: dict[str, Any] = {
-        "landing_policy": landing_policy,
-        "takeoff_alt_m": config.orchestration.fcu_controller.takeoff_alt_m,
-    }
-    if config.orchestration.fcu_controller.takeoff_alt_m <= 0:
-        blockers.append("task_takeoff_altitude_invalid")
+    result["landing_policy"] = landing_policy
 
-    status_topic = config.orchestration.fcu_controller.status_topic
-    status = upstream.get("required_topics", {}).get(status_topic, {})
-    metadata = status.get("metadata", {}) if isinstance(status, dict) else {}
-    if not metadata:
-        bridge_status_topic = config.orchestration.real_prepare.fcu_bridge_state_topic
-        bridge_status = upstream.get("required_topics", {}).get(bridge_status_topic, {})
-        metadata = bridge_status.get("metadata", {}) if isinstance(bridge_status, dict) else {}
-    if isinstance(metadata, Mapping) and metadata.get("armed") is True:
-        blockers.append("task_initial_fcu_armed")
+    if task_name in {"hover", "exploration", "scan-robustness"}:
+        result["takeoff_alt_m"] = config.orchestration.fcu_controller.takeoff_alt_m
+        if config.orchestration.fcu_controller.takeoff_alt_m <= 0:
+            blockers.append("task_takeoff_altitude_invalid")
+        status_topic = config.orchestration.fcu_controller.status_topic
+        status = upstream.get("required_topics", {}).get(status_topic, {})
+        metadata = status.get("metadata", {}) if isinstance(status, dict) else {}
+        if not metadata:
+            bridge_status_topic = config.orchestration.real_prepare.fcu_bridge_state_topic
+            bridge_status = upstream.get("required_topics", {}).get(bridge_status_topic, {})
+            metadata = bridge_status.get("metadata", {}) if isinstance(bridge_status, dict) else {}
+        if isinstance(metadata, Mapping) and metadata.get("armed") is True:
+            blockers.append("task_initial_fcu_armed")
 
-    altitude_hold = _check_altitude_hold_mode(config, upstream, fcu_status_metadata=metadata)
-    result["altitude_hold"] = altitude_hold
-    if altitude_hold["blocked"]:
-        blockers.extend(altitude_hold["blockers"])
+        altitude_hold = _check_altitude_hold_mode(config, upstream, fcu_status_metadata=metadata)
+        result["altitude_hold"] = altitude_hold
+        if altitude_hold["blocked"]:
+            blockers.extend(altitude_hold["blockers"])
 
     if task_name == "hover":
         if landing_policy != "land_in_place":
@@ -1220,10 +1459,118 @@ def _check_task_specific_readiness(task_name: str, config: RunConfig, upstream: 
             blockers.append(f"scan_robustness_landing_policy_invalid:{landing_policy}")
         if not config.orchestration.scan_stabilization.enabled:
             blockers.append("scan_robustness_stabilization_disabled")
+    elif task_name == "motor-debug":
+        result["required_mode"] = "GUIDED"
+        result["guided_gate"] = "run_stage"
+        result["mode_switch_claim"] = "deferred_to_motor_debug_run"
+        status_topic = config.orchestration.fcu_controller.status_topic
+        status = upstream.get("required_topics", {}).get(status_topic, {})
+        metadata = status.get("metadata", {}) if isinstance(status, dict) else {}
+        if not metadata:
+            bridge_status_topic = config.orchestration.real_prepare.fcu_bridge_state_topic
+            bridge_status = upstream.get("required_topics", {}).get(bridge_status_topic, {})
+            metadata = bridge_status.get("metadata", {}) if isinstance(bridge_status, dict) else {}
+        current_mode = str(
+            metadata.get("mode") or metadata.get("mode_name") or metadata.get("flight_mode") or ""
+        ).upper()
+        result["current_fcu_mode"] = current_mode or "unknown"
+        result["guided_mode"] = "deferred_to_run"
+    elif task_name == "doctor":
+        pass
     else:
         blockers.append(f"unsupported_real_task:{task_name}")
 
     return {"ok": not blockers, "blocked": bool(blockers), "blockers": blockers, **result}
+
+
+def _check_common_readiness(config: RunConfig, upstream: Mapping[str, Any]) -> dict[str, Any]:
+    status_topic = config.orchestration.fcu_controller.status_topic
+    status = upstream.get("required_topics", {}).get(status_topic, {})
+    metadata = dict(status.get("metadata", {})) if isinstance(status, dict) else {}
+    if not metadata:
+        bridge_status_topic = config.orchestration.real_prepare.fcu_bridge_state_topic
+        bridge_status = upstream.get("required_topics", {}).get(bridge_status_topic, {})
+        metadata = dict(bridge_status.get("metadata", {})) if isinstance(bridge_status, dict) else {}
+    return _common_fcu_external_nav_state(config, upstream, metadata)
+
+
+def _common_fcu_external_nav_state(
+    config: RunConfig,
+    upstream: Mapping[str, Any],
+    fcu_status_metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    prepare = config.orchestration.real_prepare
+    topics = upstream.get("required_topics", {})
+    bridge_status = topics.get(prepare.fcu_bridge_state_topic, {})
+    mavlink_external_nav_status = topics.get(COMMON_DOCTOR_FIELDS["mavlink_external_nav_status_topic"], {})
+    external_nav_status = topics.get(config.orchestration.slam_backend.external_nav_status_topic, {})
+
+    bridge_metadata = dict(bridge_status.get("metadata", {})) if isinstance(bridge_status, dict) else {}
+    mavlink_external_nav_metadata = (
+        dict(mavlink_external_nav_status.get("metadata", {})) if isinstance(mavlink_external_nav_status, dict) else {}
+    )
+    external_nav_metadata = dict(external_nav_status.get("metadata", {})) if isinstance(external_nav_status, dict) else {}
+    fcu_and_bridge_metadata = {**bridge_metadata, **dict(fcu_status_metadata)}
+
+    extracted: dict[str, Any] = {}
+    for field in COMMON_DOCTOR_METADATA_FIELDS:
+        if field.name in {"local_position_valid"}:
+            value = _metadata_bool_or_none(fcu_and_bridge_metadata, field)
+        elif field.name in {"gps_type", "gps1_type", "viso_type", "active_source_set", "ek3_src1_posxy", "ek3_src1_velxy", "ek3_src1_yaw", "ek3_src1_posz", "ek3_src2_posxy", "ek3_src2_velxy", "ek3_src2_yaw", "ek3_src2_posz"}:
+            value = _metadata_string_value(fcu_status_metadata, field)
+        else:
+            value = _metadata_field_value(fcu_status_metadata, field)
+        extracted[field.name] = value
+
+    external_nav_ros_ready = bool(
+        _metadata_bool(external_nav_metadata.get("ready"))
+        or _metadata_bool(external_nav_metadata.get("external_nav_yaw_ready"))
+        or _metadata_bool(mavlink_external_nav_metadata.get("ready"))
+        or _metadata_bool(mavlink_external_nav_metadata.get("external_nav_ready"))
+    )
+    active_source_set = str(extracted.get("active_source_set") or "unknown")
+    local_position_valid = extracted.get("local_position_valid")
+    ekf_source_set_switch = fcu_and_bridge_metadata.get("ekf_source_set_switch", {})
+    if not isinstance(ekf_source_set_switch, Mapping):
+        ekf_source_set_switch = {}
+    mode = _metadata_string_value(fcu_status_metadata, FcuStatusField("mode", ("mode", "mode_name", "flight_mode")))
+    mode_number = _int_or_none(_metadata_field_value(fcu_status_metadata, FcuStatusField("mode_number", ("mode_number",))))
+    if not mode and mode_number is not None:
+        mode = arducopter_mode_name(mode_number)
+    armed = _metadata_bool_or_none(fcu_status_metadata, FcuStatusField("armed", ("armed",)))
+
+    blockers: list[str] = []
+    if active_source_set == "SRC2" and not external_nav_ros_ready:
+        blockers.append("external_nav_or_gps_source_not_ready")
+    return {
+        "ok": not blockers,
+        "blocked": bool(blockers),
+        "blockers": list(dict.fromkeys(blockers)),
+        "gps_type": extracted.get("gps_type") or "unknown",
+        "gps1_type": extracted.get("gps1_type") or "unknown",
+        "viso_type": extracted.get("viso_type") or "unknown",
+        "ek3_src1": {
+            "posxy": extracted.get("ek3_src1_posxy") or "unknown",
+            "velxy": extracted.get("ek3_src1_velxy") or "unknown",
+            "yaw": extracted.get("ek3_src1_yaw") or "unknown",
+            "posz": extracted.get("ek3_src1_posz") or "unknown",
+        },
+        "ek3_src2": {
+            "posxy": extracted.get("ek3_src2_posxy") or "unknown",
+            "velxy": extracted.get("ek3_src2_velxy") or "unknown",
+            "yaw": extracted.get("ek3_src2_yaw") or "unknown",
+            "posz": extracted.get("ek3_src2_posz") or "unknown",
+        },
+        "active_source_set": active_source_set,
+        "ekf_source_set_switch": dict(ekf_source_set_switch),
+        "external_nav_ros_ready": external_nav_ros_ready,
+        "local_position_valid": local_position_valid if local_position_valid is not None else "unknown",
+        "mode": mode or "unknown",
+        "armed": armed if armed is not None else "unknown",
+        "bridge_metadata": bridge_metadata,
+        "mavlink_external_nav_metadata": mavlink_external_nav_metadata,
+        "external_nav_metadata": external_nav_metadata,
+    }
 
 
 def _check_altitude_hold_mode(
@@ -1294,36 +1641,105 @@ def _stop_handles(backend: ProcessBackend, handles: list[RuntimeHandle]) -> None
 
 def _print_real_prepare_summary(console: Console, *, summary: Mapping[str, Any], summary_path: Path) -> None:
     router = summary.get("mavlink_router", {})
-    table = Table(title="Real Prepare", show_header=True, header_style="bold cyan")
-    table.add_column("Key")
-    table.add_column("Value")
-    table.add_row("ok", str(summary.get("ok")))
-    table.add_row("task", str(summary.get("task_name")))
-    table.add_row("dry_run", str(summary.get("dry_run")))
+    grid = _summary_grid()
+    grid.add_row("Status", "OK" if summary.get("ok") else "BLOCKED")
+    grid.add_row("Task", str(summary.get("task_name")))
+    grid.add_row("Dry run", str(summary.get("dry_run")))
     bridge = summary.get("fcu_bridge_mode", {})
     bridge_name = bridge.get("name") if isinstance(bridge, Mapping) else bridge
-    table.add_row("fcu_bridge", str(bridge_name))
-    table.add_row("router_serial", str(router.get("serial")))
-    table.add_row("router_endpoint", str(router.get("local_endpoint")))
-    table.add_row("services", str(summary.get("service_count")))
-    table.add_row("summary", str(summary_path))
-    console.print(Panel(table, title="NavLab Real Prepare"))
+    grid.add_row("FCU bridge", str(bridge_name))
+    grid.add_row("Router serial", str(router.get("serial")))
+    grid.add_row("Router endpoint", str(router.get("local_endpoint")))
+    grid.add_row("Services", str(summary.get("service_count")))
+    grid.add_row("Summary", "")
+    grid.add_row("", _wrapped_summary_path(console, summary_path))
+    border_style = "green" if summary.get("ok") else "red"
+    console.print(Panel(grid, title="NavLab Real Prepare", border_style=border_style))
     for blocker in summary.get("blockers", []):
         console.print(f"[red]blocker:[/red] {blocker}")
 
 
 def _print_real_task_doctor_summary(console: Console, *, summary: Mapping[str, Any], summary_path: Path) -> None:
-    table = Table(title="Real Task Doctor", show_header=True, header_style="bold cyan")
-    table.add_column("Key")
-    table.add_column("Value")
-    table.add_row("ok", str(summary.get("ok")))
-    table.add_row("task", str(summary.get("task_name")))
-    table.add_row("summary", str(summary_path))
-    table.add_row("arm", str(summary.get("arm_claim")))
-    table.add_row("takeoff", str(summary.get("takeoff_claim")))
-    console.print(Panel(table, title="NavLab Real Task Doctor"))
-    for blocker in summary.get("blockers", []):
-        console.print(f"[red]blocker:[/red] {blocker}")
+    task_specific = summary.get("task_specific", {})
+    grid = _summary_grid()
+    grid.add_row("Status", "OK" if summary.get("ok") else "BLOCKED")
+    grid.add_row("Task", str(summary.get("task_name")))
+    if summary.get("task_name") == "motor-debug" and isinstance(task_specific, Mapping):
+        grid.add_row("Required mode", str(task_specific.get("required_mode", "GUIDED")))
+        grid.add_row("Current mode", str(task_specific.get("current_fcu_mode", "unknown")))
+        grid.add_row("Guided gate", str(task_specific.get("guided_gate", "run_stage")))
+        grid.add_row("Mode switch", str(task_specific.get("mode_switch_claim", "deferred_to_run")))
+    else:
+        grid.add_row("Arm", str(summary.get("arm_claim")))
+        grid.add_row("Takeoff", str(summary.get("takeoff_claim")))
+    grid.add_row("Summary", "")
+    grid.add_row("", _wrapped_summary_path(console, summary_path))
+    border_style = "green" if summary.get("ok") else "red"
+    title = "NavLab Real Motor Debug Doctor" if summary.get("task_name") == "motor-debug" else "NavLab Real Task Doctor"
+    console.print(Panel(grid, title=title, border_style=border_style))
+    _print_blockers_panel(console, summary.get("blockers", []))
+
+
+def _print_real_common_doctor_summary(console: Console, *, summary: Mapping[str, Any], summary_path: Path) -> None:
+    common = summary.get("common_state", {})
+    grid = _summary_grid()
+    grid.add_row("Status", "OK" if summary.get("ok") else "BLOCKED")
+    grid.add_row("Task", str(summary.get("task_name")))
+    grid.add_row("Mode", str(common.get("mode", "unknown")))
+    grid.add_row("GPS", f'{common.get("gps_type", "unknown")} / {common.get("gps1_type", "unknown")}')
+    grid.add_row("VISO", str(common.get("viso_type", "unknown")))
+    src1 = common.get("ek3_src1", {})
+    src2 = common.get("ek3_src2", {})
+    grid.add_row(
+        "EK3 SRC1",
+        f'posxy={src1.get("posxy", "unknown")}, velxy={src1.get("velxy", "unknown")}, '
+        f'yaw={src1.get("yaw", "unknown")}, posz={src1.get("posz", "unknown")}',
+    )
+    grid.add_row(
+        "EK3 SRC2",
+        f'posxy={src2.get("posxy", "unknown")}, velxy={src2.get("velxy", "unknown")}, '
+        f'yaw={src2.get("yaw", "unknown")}, posz={src2.get("posz", "unknown")}',
+    )
+    grid.add_row("ExternalNav src", str(common.get("active_source_set", "unknown")))
+    switch = common.get("ekf_source_set_switch", {})
+    if isinstance(switch, Mapping) and switch.get("enabled") is True:
+        target = switch.get("target_source_set", "unknown")
+        sent = switch.get("sent", "unknown")
+        ack = switch.get("ack_result", "pending" if sent else "not_sent")
+        grid.add_row("EKF switch", f"target={target}, sent={sent}, ack={ack}")
+    grid.add_row("ExternalNav ROS", str(common.get("external_nav_ros_ready", "unknown")))
+    grid.add_row("Local position", str(common.get("local_position_valid", "unknown")))
+    grid.add_row("Summary", "")
+    grid.add_row("", _wrapped_summary_path(console, summary_path))
+    border_style = "green" if summary.get("ok") else "red"
+    console.print(Panel(grid, title="NavLab Real Common Doctor", border_style=border_style))
+    _print_blockers_panel(console, summary.get("blockers", []))
+
+
+def _print_blockers_panel(console: Console, blockers: object) -> None:
+    blocker_items = [str(item) for item in blockers] if isinstance(blockers, list | tuple) else []
+    if not blocker_items:
+        return
+    grid = _summary_grid()
+    for blocker in blocker_items[:8]:
+        grid.add_row("", f"- {blocker}")
+    if len(blocker_items) > 8:
+        grid.add_row("", f"- ... {len(blocker_items) - 8} more")
+    console.print(Panel(grid, title="Blockers", border_style="red"))
+
+
+def _summary_grid() -> object:
+    from rich.table import Table
+
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="bold")
+    grid.add_column()
+    return grid
+
+
+def _wrapped_summary_path(console: Console, summary_path: Path) -> str:
+    width = max(32, min(100, console.width - 28))
+    return "\n".join(textwrap.wrap(str(summary_path), width=width, break_long_words=True, break_on_hyphens=False))
 
 
 def _utc_now() -> str:

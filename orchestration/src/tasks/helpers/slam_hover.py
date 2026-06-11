@@ -1,75 +1,40 @@
 from __future__ import annotations
 
 import json
-import math
-import os
 import shlex
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import tomli_w
 from python_on_whales import DockerClient
 from python_on_whales.exceptions import DockerException
-from rich.console import Console
 
 from src import host
 from src.config import RunConfig
 from src.tasks.helpers.fcu import (
-    P4_CONTROLLER_CONTAINER,
-    _append_controller_blockers,
-    _append_owner_blockers,
     _build_p4_doctor_summary,
     _source_official_setup,
-    _start_p4_controller_container,
-    _wait_for_controller_summary,
-    _write_controller_runtime_script,
     _write_p4_runtime_config,
 )
 from src.tasks.helpers.frame_contract import (
-    _append_p5_blockers,
     _build_p5_doctor_summary,
-    _run_frame_probe,
-    _write_frame_probe_script,
     _write_p5_runtime_config,
+)
+from src.tasks.helpers.navlab_models import (
+    _file_sha256,
+    _profile_topics,
+    _remove_container,
 )
 from src.tasks.helpers.official_stack import (
     _build_doctor_summary,
-    _collect_official_dds_probe,
-    _collect_ros_graph,
     _load_rosbag_metadata_counts,
     _validate_official_rosbag_profile,
     _write_json,
     _write_text,
 )
-from src.tasks.helpers.navlab_models import (
-    GAZEBO_SENSOR_CONTAINER,
-    OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
-    _capture_container_log,
-    _collect_topic_info,
-    _file_sha256,
-    _profile_topics,
-    _remove_container,
-    _start_gazebo_sensor_container,
-    _write_p1_bridge_override,
-    _write_p1_vendor_profile,
-)
-from src.tasks.helpers.sensors import (
-    OFFICIAL_GAZEBO_IRIS_PARAMS,
-    OFFICIAL_IRIS_WITH_LIDAR_MODEL,
-    _collect_imu_probe,
-    _collect_rangefinder_probe,
-    _write_p2_model_overlay,
-    _write_p2_param_overlay,
-    _write_p2_sensor_config,
-)
 from src.tasks.helpers.slam import (
-    SLAM_BACKEND_CONTAINER,
-    _append_slam_odom_quality_blockers,
     _build_p3_doctor_summary,
-    _collect_odometry_probe,
-    _start_p3_slam_container,
     _write_p3_slam_runtime_config,
 )
 

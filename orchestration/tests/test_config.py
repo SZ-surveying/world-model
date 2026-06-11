@@ -1659,11 +1659,13 @@ def test_orchestration_task_registry_contains_navlab_workflows() -> None:
         "doctor",
         "exploration",
         "hover",
+        "motor-debug",
         "scan-robustness",
     )
     assert TaskRegistry.create("build").description
     assert TaskRegistry.create("doctor").description
     assert TaskRegistry.create("exploration").description
+    assert TaskRegistry.create("motor-debug").description
     assert TaskRegistry.create("hover").description
     assert TaskRegistry.create("scan-robustness").description
     with pytest.raises(ValueError, match="unknown orchestration task 'hover-doctor'"):

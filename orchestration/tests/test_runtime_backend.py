@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from io import StringIO
 from pathlib import Path
 
@@ -169,6 +170,46 @@ def test_process_backend_dry_run_does_not_start_process(tmp_path: Path) -> None:
     assert handle.identifier == "dry-run:dry"
     assert backend.wait(handle) == 0
     assert "command=echo ok" in (tmp_path / "dry.log").read_text(encoding="utf-8")
+
+
+def test_process_backend_stop_kills_child_process_group(tmp_path: Path) -> None:
+    child_code = "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+    parent_code = (
+        "import subprocess,sys,time;"
+        f"p=subprocess.Popen([sys.executable, '-c', {child_code!r}]);"
+        "print(p.pid, flush=True);"
+        "time.sleep(30)"
+    )
+    backend = ProcessBackend(default_log_dir=tmp_path)
+    handle = backend.start_service(
+        ServiceSpec(
+            name="child-group",
+            command=(sys.executable, "-c", parent_code),
+            log_path=tmp_path / "child-group.log",
+        )
+    )
+    assert handle.pid is not None
+    pgid = os.getpgid(handle.pid)
+
+    deadline = time.monotonic() + 2.0
+    while not (tmp_path / "child-group.log").read_text(encoding="utf-8").strip():
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+
+    backend.stop(handle, timeout_sec=0.2)
+
+    deadline = time.monotonic() + 2.0
+    while _process_group_alive(pgid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _process_group_alive(pgid)
+
+
+def _process_group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def test_process_manager_starts_waits_and_tails_logs(tmp_path: Path) -> None:
@@ -720,6 +761,54 @@ forbidden_simulation_input_topics = ["/gazebo/*"]
     assert summary["ok"] is False
     assert "serial_mavlink_heartbeat_missing" in summary["blockers"]
     assert "fcu_topic_not_backed_by_serial_mavlink" not in summary["blockers"]
+
+
+def test_real_preflight_allows_open_serial_before_prepare_heartbeat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
+
+    config_file = tmp_path / "real.toml"
+    config_file.write_text(
+        """
+[orchestration.runtime.process]
+require_explicit_services = false
+
+[real_prepare]
+fcu_bridge_mode = "navlab_mavlink"
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
+    config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
+
+    summary = _build_real_preflight_summary(
+        config,
+        serial_mavlink_probe=SerialMavlinkProbe(
+            summary={"enabled": True, "serial_open_ok": True, "heartbeat_seen": False},
+            blockers=(
+                "serial_mavlink_heartbeat_missing",
+                "serial_mavlink_required_message_missing:SYS_STATUS",
+            ),
+        ),
+        dependency_probe=DependencyProbe(
+            summary={
+                "required_command_groups": [{"found": True}],
+                "required_ros_packages": {},
+                "required_python_modules": {},
+            },
+            blockers=(),
+        ),
+    )
+
+    assert summary["ok"] is True
+    assert summary["blockers"] == []
+    assert summary["warnings"] == [
+        "serial_mavlink_heartbeat_missing",
+        "serial_mavlink_required_message_missing:SYS_STATUS",
+    ]
 
 
 def test_real_preflight_summary_schema_for_successful_serial_probe(

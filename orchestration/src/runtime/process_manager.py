@@ -138,21 +138,22 @@ class ProcessManager:
         process = self._processes.get(managed.pid)
         if process is None:
             raise ServiceWaitError(f"process service {managed.name} is not managed by this process manager")
-        if process.poll() is None:
+        if process.poll() is None or self._group_alive(managed):
             self._signal_group_or_process(managed, signal.SIGTERM)
             deadline = time.monotonic() + timeout_sec
-            while process.poll() is None and time.monotonic() < deadline:
+            while (process.poll() is None or self._group_alive(managed)) and time.monotonic() < deadline:
                 time.sleep(0.05)
-            if process.poll() is None:
+            if process.poll() is None or self._group_alive(managed):
                 self.kill_group(managed)
-                process.wait(timeout=5)
+                if process.poll() is None:
+                    process.wait(timeout=5)
         self._close_stdout(managed.pid)
 
     def kill_group(self, managed: ManagedProcess) -> None:
         process = self._processes.get(managed.pid)
         if process is None:
             raise ServiceWaitError(f"process service {managed.name} is not managed by this process manager")
-        if process.poll() is None:
+        if process.poll() is None or self._group_alive(managed):
             self._signal_group_or_process(managed, signal.SIGKILL)
 
     def tail_logs(self, handle_or_path: ManagedProcess | Path | str, *, tail: int = 400) -> str:
@@ -173,6 +174,15 @@ class ProcessManager:
                 os.kill(managed.pid, sig)
         except ProcessLookupError:
             return
+
+    def _group_alive(self, managed: ManagedProcess) -> bool:
+        if managed.pgid is None:
+            return False
+        try:
+            os.killpg(managed.pgid, 0)
+        except ProcessLookupError:
+            return False
+        return True
 
     def _close_stdout(self, pid: int) -> None:
         stdout = self._stdout_handles.pop(pid, None)
