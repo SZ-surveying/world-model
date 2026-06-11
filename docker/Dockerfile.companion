@@ -32,7 +32,7 @@ COPY --from=companion-python-builder /opt/companion-venv /opt/companion-venv
 
 WORKDIR /opt/navlab_ws
 
-COPY navlab/interfaces/ydlidar_interfaces /opt/navlab_ws/navlab_interfaces/ydlidar_interfaces
+COPY navlab/common/interfaces/ydlidar_interfaces /opt/navlab_ws/navlab_interfaces/ydlidar_interfaces
 
 RUN bash -lc "\
   source /opt/ros/jazzy/setup.bash && \

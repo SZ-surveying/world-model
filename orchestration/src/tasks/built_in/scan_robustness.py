@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from rich.console import Console
 
@@ -37,6 +38,42 @@ class BuiltInScanRobustnessDoctorTask(OrchestrationTask):
 class BuiltInScanRobustnessTask(OrchestrationTask):
     TASK_NAME: ClassVar[str] = "scan-robustness"
     TASK_DESCRIPTION: ClassVar[str] = "Run built-in P9/P12 tilted-scan robustness acceptance."
+
+    def build_real_task_doctor(
+        self,
+        *,
+        config: object,
+        upstream: Mapping[str, Any],
+    ) -> Mapping[str, Any] | None:
+        from src.configs.run_config import RunConfig
+        from src.workflows.real.task_doctor import real_altitude_hold_doctor, task_fcu_status_metadata
+
+        if not isinstance(config, RunConfig):
+            return None
+        blockers: list[str] = []
+        landing_policy = config.orchestration.landing.policy_for_task("scan-robustness")
+        metadata = task_fcu_status_metadata(config, upstream)
+        if config.orchestration.fcu_controller.takeoff_alt_m <= 0:
+            blockers.append("task_takeoff_altitude_invalid")
+        if metadata.get("armed") is True:
+            blockers.append("task_initial_fcu_armed")
+        altitude_hold = real_altitude_hold_doctor(config, upstream)
+        if altitude_hold["blocked"]:
+            blockers.extend(altitude_hold["blockers"])
+        if landing_policy != "land_in_place":
+            blockers.append(f"scan_robustness_landing_policy_invalid:{landing_policy}")
+        if not config.orchestration.scan_stabilization.enabled:
+            blockers.append("scan_robustness_stabilization_disabled")
+        return {
+            "ok": not blockers,
+            "blocked": bool(blockers),
+            "blockers": blockers,
+            "landing_policy": landing_policy,
+            "takeoff_alt_m": config.orchestration.fcu_controller.takeoff_alt_m,
+            "altitude_hold": altitude_hold,
+            "scan_stabilization_enabled": config.orchestration.scan_stabilization.enabled,
+            "scan_stabilization_status_topic": config.orchestration.scan_stabilization.status_topic,
+        }
 
     def run(
         self,

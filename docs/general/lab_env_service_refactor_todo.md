@@ -119,12 +119,12 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 
 ### 任务
 
-- [x] 创建 `navlab/gazebo_sensor/` 包。
-- [x] 移动旧 sim sensor/X2 包到 `navlab/gazebo_sensor/x2/`。
-- [x] 移动旧 X2 runtime 到 `navlab/gazebo_sensor/runtime.py`。
-- [x] 移动旧 X2 config 到 `navlab/gazebo_sensor/config.py`。
-- [x] 移动旧 X2 CLI 到 `navlab/gazebo_sensor/cli.py`。
-- [x] 更新 Docker entrypoint 调用 `python -m navlab.gazebo_sensor.cli`。
+- [x] 创建 `navlab/sim/gazebo_sensor/` 包。
+- [x] 移动旧 sim sensor/X2 包到 `navlab/sim/gazebo_sensor/x2/`。
+- [x] 移动旧 X2 runtime 到 `navlab/sim/gazebo_sensor/runtime.py`。
+- [x] 移动旧 X2 config 到 `navlab/sim/gazebo_sensor/config.py`。
+- [x] 移动旧 X2 CLI 到 `navlab/sim/gazebo_sensor/cli.py`。
+- [x] 更新 Docker entrypoint 调用 `python -m navlab.sim.gazebo_sensor.cli`。
 - [x] 记录 X2 driver smoke 原始 docker compose 命令；历史 justfile 便捷入口已回收。
 - [x] 更新所有 import。
 - [x] 删除空的旧 sim sensor 包。
@@ -132,31 +132,35 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 ### 验收
 
 - [x] repo 中不存在旧 sim sensor/X2 包。
-- [x] X2 相关 import 全部指向 `navlab.gazebo_sensor`。
+- [x] X2 相关 import 全部指向 `navlab.sim.gazebo_sensor`。
 - [x] `gazebo_sensor` 镜像仍可执行 driver smoke。
 - [x] companion、SLAM、SITL 代码没有 import `gazebo_sensor.x2`。
 
 ## P3：迁移 companion 节点归属
 
-目标：把由 companion runtime 启动的节点移入 `navlab/companion/nodes`。
+目标：历史阶段先把由 companion runtime 启动的节点集中起来；当前结构已经继续按
+real/sim 安全域拆到 `navlab.real.companion.nodes` 和
+`navlab.sim.companion.nodes`。
 
 ### 任务
 
-- [x] 创建 `navlab/companion/` 包。
-- [x] 将 `navlab/runtime/companion.py` 改名为 `navlab/companion/runtime.py`。
-- [x] 将 `navlab/runtime/config.py` 迁移为 `navlab/companion/config.py`。
-- [x] 将 `navlab/runtime/cli.py` 拆成 companion CLI 和 acceptance CLI。
-- [x] 迁移 `world_marker_publisher` 到 `navlab/companion/nodes/world_markers.py`。
-- [x] 迁移 `scan_features_publisher` 到 `navlab/companion/nodes/scan_features.py`。
-- [x] 迁移 `mavlink_gazebo_pose_mirror` 到 `navlab/companion/nodes/pose_mirror.py`。
-- [x] 迁移 `mavlink_imu_bridge` 到 `navlab/companion/nodes/imu_bridge.py`。
-- [x] 迁移 `mavlink_external_nav_sender` 到 `navlab/companion/nodes/external_nav.py`。
-- [x] 迁移 `mavlink_obstacle_mission_controller` 到 `navlab/companion/nodes/obstacle_mission.py`。
+- [x] 历史阶段创建过 `navlab/companion/` 包；当前已拆到
+  `navlab.sim.companion.runtime`、`navlab.sim.companion.nodes` 和
+  `navlab.real.companion.nodes`。
+- [x] 将 companion launcher/config/CLI/acceptance 归档到
+  `navlab.sim.companion.runtime`。
+- [x] 迁移 `world_marker_publisher` 到 `navlab.sim.companion.nodes.world_markers`。
+- [x] 迁移 `scan_features_publisher` 到 `navlab.sim.companion.nodes.scan_features`。
+- [x] 迁移 `mavlink_gazebo_pose_mirror` 到 `navlab.real.companion.nodes.pose_mirror`。
+- [x] 迁移 `mavlink_imu_bridge` 到 `navlab.real.companion.nodes.imu_bridge`。
+- [x] 迁移 `mavlink_external_nav_sender` 到 `navlab.real.companion.nodes.external_nav`。
+- [x] 迁移 `mavlink_obstacle_mission_controller` 到 `navlab.sim.companion.nodes.obstacle_mission`。
 - [x] 清理旧 sim node 包中已经不再通用的文件。
 
 ### 验收
 
-- [x] companion runtime 只从 `navlab.companion.nodes` 启动节点。
+- [x] companion runtime 不再从旧的未分域 companion node 包启动节点；节点入口已分到
+  `navlab.real.companion.nodes` 和 `navlab.sim.companion.nodes`。
 - [x] mission status 仍发布 `/navlab/mission/status`。
 - [x] scan features 仍消费最终 `/scan`，发布 `/scan_features`。
 - [x] pose mirror、IMU bridge、ExternalNav sender 行为不变。
@@ -209,7 +213,7 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 ### 任务
 
 - [x] `orchestration/main.py` 只引用 `orchestration/src/cli.py` 的 Typer app。
-- [x] companion 容器 entrypoint 调用 `navlab.companion.cli`。
+- [x] companion 容器 entrypoint 调用 `navlab.sim.companion.runtime.cli`。
 - [x] gazebo-sensor 容器 entrypoint 调用 `gazebo_sensor.cli`。
 - [x] orchestration 原始 image build 命令保持可用。
 - [x] smoke/acceptance 原始命令更新到新模块路径。
@@ -270,11 +274,11 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 
 ### 任务
 
-- [x] 创建根目录 `orchestration/`，迁移 host 侧 `cli.py`、`host.py`、`config.py`、`artifacts.py`、`foxglove_upload.py`。
+- [x] 创建根目录 `orchestration/`，迁移 host 侧 `cli.py`、`host.py`、`config.py`、`artifacts.py`；Foxglove 上传改由外部脚本负责。
 - [x] 创建根目录 `navlab/`，迁移 `companion/`、`gazebo_sensor/`、`common/`、`sim/`。
 - [x] 删除旧 Python 包外壳。
 - [x] 历史 justfile 便捷入口已回收，文档改为记录 `python orchestration/main.py ...` 原始命令。
-- [x] 更新 Docker entrypoint，直接调用 `navlab.companion...` / `navlab.gazebo_sensor...`。
+- [x] 更新 Docker entrypoint，直接调用 `navlab.sim.companion.runtime...` / `navlab.sim.gazebo_sensor...`。
 - [x] 更新 Dockerfile/uv project 路径，避免再依赖旧包外壳下的 pyproject。
 - [x] 更新测试 import 和测试目录路径。
 - [x] 更新文档中的主线路径。
@@ -283,8 +287,8 @@ P7+: 如有必要，再新增 C++ Gazebo plugin 或 C++ emulator
 
 - [x] 旧包外壳的 Python import 和 module entrypoint 不再命中主线代码。
 - [x] `python orchestration/main.py --help` 可运行。
-- [x] `python -m navlab.companion.cli --help` 可运行。
-- [x] `python -m navlab.gazebo_sensor.cli --help` 可运行。
+- [x] `python -m navlab.sim.companion.runtime.cli --help` 可运行。
+- [x] `python -m navlab.sim.gazebo_sensor.cli --help` 可运行。
 - [x] `ruff` 和 `pytest` 通过。
 - [x] `just --list` 保持干净；历史 build/doctor/acceptance 改回 orchestration 原始命令记录。
 

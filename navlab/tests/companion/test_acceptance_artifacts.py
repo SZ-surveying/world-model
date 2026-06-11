@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from navlab.companion.acceptance import (
+from navlab.sim.companion.runtime.acceptance import (
     MINIMUM_ROSBAG_TOPICS,
-    _build_rosbag_topic_plan,
-    _record_gazebo_truth_trajectory,
-    _record_profile_topics,
-    _write_effective_rosbag_profile,
-    _write_foxglove_notes,
+    build_rosbag_topic_plan,
+    record_gazebo_truth_trajectory,
+    record_profile_topics,
+    write_effective_rosbag_profile,
+    write_foxglove_notes,
 )
-from navlab.companion.hover_acceptance import HOVER_DIAGNOSTIC_MINIMUM_ROSBAG_TOPICS
+from navlab.sim.companion.runtime.hover_acceptance import HOVER_DIAGNOSTIC_MINIMUM_ROSBAG_TOPICS
 
 
 def test_write_foxglove_notes_uses_template(tmp_path) -> None:
-    _write_foxglove_notes(artifact_dir=tmp_path)
+    write_foxglove_notes(artifact_dir=tmp_path)
 
     notes = (tmp_path / "foxglove_notes.md").read_text(encoding="utf-8")
     assert "# NavLab Foxglove replay notes" in notes
@@ -76,8 +76,8 @@ def test_rosbag_topic_plan_adds_configured_extras(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    topics = _build_rosbag_topic_plan(profile)
-    effective_profile = _write_effective_rosbag_profile(
+    topics = build_rosbag_topic_plan(profile)
+    effective_profile = write_effective_rosbag_profile(
         artifact_dir=tmp_path,
         source_profile=profile,
         topics=topics,
@@ -102,7 +102,7 @@ def test_rosbag_record_uses_profile_topic_whitelist(tmp_path) -> None:
             calls.append({"name": name, "command": command, "log_path": log_path})
             return object()
 
-    _record_profile_topics(manager=FakeManager(), artifact_dir=tmp_path, topics=["/scan", "/sim/uav_pose"])
+    record_profile_topics(manager=FakeManager(), artifact_dir=tmp_path, topics=["/scan", "/sim/uav_pose"])
 
     command = calls[0]["command"]
     assert "--topics" in command
@@ -120,10 +120,10 @@ def test_gazebo_truth_trajectory_recorder_writes_json_artifact(tmp_path) -> None
             calls.append({"name": name, "command": command, "log_path": log_path})
             return object()
 
-    _record_gazebo_truth_trajectory(manager=FakeManager(), artifact_dir=tmp_path)
+    record_gazebo_truth_trajectory(manager=FakeManager(), artifact_dir=tmp_path)
 
     call = calls[0]
     assert call["name"] == "gazebo_truth_trajectory"
-    assert "navlab.companion.nodes.gazebo_truth_trajectory" in call["command"]
+    assert "navlab.sim.companion.nodes.gazebo_truth_trajectory" in call["command"]
     assert str(tmp_path / "gazebo_truth_trajectory.json") in call["command"]
     assert call["log_path"] == tmp_path / "gazebo_truth_trajectory.log"

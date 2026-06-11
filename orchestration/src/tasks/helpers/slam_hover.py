@@ -11,38 +11,36 @@ from python_on_whales import DockerClient
 from python_on_whales.exceptions import DockerException
 
 from src import host
-from src.config import RunConfig
+from src.configs.run_config import RunConfig
+from src.tasks.helpers.artifacts import file_sha256, write_json, write_text
 from src.tasks.helpers.fcu import (
-    _build_p4_doctor_summary,
-    _source_official_setup,
-    _write_p4_runtime_config,
+    build_p4_doctor_summary,
+    source_official_setup,
+    write_p4_runtime_config,
 )
 from src.tasks.helpers.frame_contract import (
-    _build_p5_doctor_summary,
-    _write_p5_runtime_config,
+    build_p5_doctor_summary,
+    write_p5_runtime_config,
 )
 from src.tasks.helpers.navlab_models import (
-    _file_sha256,
-    _profile_topics,
-    _remove_container,
+    remove_container,
 )
-from src.tasks.helpers.official_stack import (
-    _build_doctor_summary,
-    _load_rosbag_metadata_counts,
-    _validate_official_rosbag_profile,
-    _write_json,
-    _write_text,
+from src.tasks.helpers.official_stack import build_doctor_summary
+from src.tasks.helpers.rosbag_profiles import (
+    load_rosbag_metadata_counts,
+    profile_topics,
+    validate_official_rosbag_profile,
 )
 from src.tasks.helpers.slam import (
-    _build_p3_doctor_summary,
-    _write_p3_slam_runtime_config,
+    build_p3_doctor_summary,
+    write_p3_slam_runtime_config,
 )
 
 P6_ROSBAG_CONTAINER = "navlab-p6-rosbag"
 P6_VEHICLE_MARKER_CONTAINER = "navlab-p6-vehicle-markers"
 
 
-def _baseline_env(config: RunConfig) -> dict[str, str]:
+def baseline_env(config: RunConfig) -> dict[str, str]:
     baseline = config.orchestration.official_baseline
     return {
         "DDS_ENABLE": baseline.dds_enable,
@@ -52,7 +50,7 @@ def _baseline_env(config: RunConfig) -> dict[str, str]:
     }
 
 
-def _load_json(path: Path) -> dict[str, Any]:
+def load_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
     try:
@@ -61,14 +59,14 @@ def _load_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _message_counts(config: RunConfig) -> dict[str, int]:
+def message_counts(config: RunConfig) -> dict[str, int]:
     metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
     if not metadata.is_file():
         return {}
-    return _load_rosbag_metadata_counts(metadata)
+    return load_rosbag_metadata_counts(metadata)
 
 
-def _write_p6_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
+def write_p6_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
     p6 = config.orchestration.slam_hover
     data = {
         "slam_hover": {
@@ -113,7 +111,7 @@ def _write_p6_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
-    return {"path": str(path), "workspace_path": host._workspace_path(path), "sha256": _file_sha256(path), "data": data}
+    return {"path": str(path), "workspace_path": host.workspace_path(path), "sha256": file_sha256(path), "data": data}
 
 
 def _hover_probe_script(spec: dict[str, Any]) -> str:
@@ -473,12 +471,12 @@ raise SystemExit(0 if SlamHoverProbe().run()["ok"] else 30)
 """
 
 
-def _write_hover_probe_script(config: RunConfig, script_path: Path) -> dict[str, Any]:
+def write_hover_probe_script(config: RunConfig, script_path: Path) -> dict[str, Any]:
     p6 = config.orchestration.slam_hover
     p4 = config.orchestration.fcu_controller
     summary_file = config.artifact_dir / "slam_hover_summary.json"
     spec = {
-        "summary_file": host._workspace_path(summary_file),
+        "summary_file": host.workspace_path(summary_file),
         "slam_odom_topic": p6.slam_odom_topic,
         "slam_status_topic": p6.slam_status_topic,
         "external_nav_status_topic": p6.external_nav_status_topic,
@@ -513,47 +511,47 @@ def _write_hover_probe_script(config: RunConfig, script_path: Path) -> dict[str,
         "ready_timeout_sec": p4.readiness_timeout_sec + 25.0,
     }
     script_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_text(script_path, _hover_probe_script(spec))
+    write_text(script_path, _hover_probe_script(spec))
     return {
         "path": str(script_path),
-        "workspace_path": host._workspace_path(script_path),
-        "sha256": _file_sha256(script_path),
+        "workspace_path": host.workspace_path(script_path),
+        "sha256": file_sha256(script_path),
         "summary_file": str(summary_file),
         "spec": spec,
     }
 
 
-def _run_hover_probe(config: RunConfig, *, script_path: Path) -> dict[str, Any]:
-    rc, output = host._docker_run_ros_shell_capture(
+def run_hover_probe(config: RunConfig, *, script_path: Path) -> dict[str, Any]:
+    rc, output = host.docker_run_ros_shell_capture(
         config=config,
         image=config.orchestration.official_baseline.runtime_image,
-        shell_command=f"python3 {shlex.quote(host._workspace_path(script_path))}",
+        shell_command=f"python3 {shlex.quote(host.workspace_path(script_path))}",
         name=None,
         network="host",
-        envs=_baseline_env(config),
+        envs=baseline_env(config),
     )
-    _write_text(config.artifact_dir / "slam_hover_probe.txt", output)
-    summary = _load_json(config.artifact_dir / "slam_hover_summary.json")
+    write_text(config.artifact_dir / "slam_hover_probe.txt", output)
+    summary = load_json(config.artifact_dir / "slam_hover_summary.json")
     if not summary:
         summary = {"ok": False, "blockers": [f"hover probe failed rc={rc}"], "output": output}
     summary["rc"] = rc
     return summary
 
 
-def _start_p6_vehicle_marker_container(config: RunConfig) -> None:
+def start_p6_vehicle_marker_container(config: RunConfig) -> None:
     p6 = config.orchestration.slam_hover
     if not p6.record_visualization_markers:
-        _remove_container(P6_VEHICLE_MARKER_CONTAINER)
-        _write_text(
+        remove_container(P6_VEHICLE_MARKER_CONTAINER)
+        write_text(
             config.artifact_dir / "vehicle_markers_tail.log",
             "visualization marker recording disabled by slam_hover.record_visualization_markers=false\n",
         )
         return
-    _remove_container(P6_VEHICLE_MARKER_CONTAINER)
+    remove_container(P6_VEHICLE_MARKER_CONTAINER)
     args = [
         "python3",
         "-m",
-        "navlab.companion.nodes.vehicle_markers",
+        "navlab.sim.companion.nodes.vehicle_markers",
         "--pose-topic",
         p6.vehicle_marker_pose_topic,
         "--topic",
@@ -566,13 +564,13 @@ def _start_p6_vehicle_marker_container(config: RunConfig) -> None:
     command = " ".join(shlex.quote(item) for item in args)
     DockerClient().run(
         config.orchestration.official_baseline.runtime_image,
-        ["bash", "-lc", _source_official_setup(command)],
+        ["bash", "-lc", source_official_setup(command)],
         detach=True,
         name=P6_VEHICLE_MARKER_CONTAINER,
         networks=["host"],
         volumes=[(Path.cwd(), "/workspace")],
         workdir="/workspace",
-        envs={**_baseline_env(config), "PYTHONPATH": "/workspace"},
+        envs={**baseline_env(config), "PYTHONPATH": "/workspace"},
     )
 
 
@@ -591,10 +589,10 @@ def _p6_effective_profile_path(config: RunConfig) -> Path:
     return config.artifact_dir / "p6_effective_rosbag_profile.txt"
 
 
-def _write_p6_effective_rosbag_profile(config: RunConfig) -> tuple[Path, list[str], list[str], list[str]]:
+def write_p6_effective_rosbag_profile(config: RunConfig) -> tuple[Path, list[str], list[str], list[str]]:
     p6 = config.orchestration.slam_hover
     source_profile = Path(config.slam_hover_rosbag_profile)
-    required, optional, _topics = _profile_topics(source_profile)
+    required, optional, _topics = profile_topics(source_profile)
     if p6.record_visualization_markers:
         required = _dedupe_topics([*required, p6.vehicle_marker_topic])
         optional = [topic for topic in optional if topic not in required]
@@ -616,7 +614,7 @@ def _write_p6_effective_rosbag_profile(config: RunConfig) -> tuple[Path, list[st
 
 def _p6_rosbag_shell_command(config: RunConfig, *, duration_sec: float) -> tuple[Path, list[str], list[str], str]:
     source_profile = Path(config.slam_hover_rosbag_profile)
-    profile_path, required, optional, topics = _write_p6_effective_rosbag_profile(config)
+    profile_path, required, optional, topics = write_p6_effective_rosbag_profile(config)
     if not source_profile.is_file() or not topics:
         return profile_path, required, optional, ""
     container_rosbag = Path("/workspace") / config.artifact_dir / "rosbag"
@@ -636,11 +634,11 @@ def _p6_rosbag_shell_command(config: RunConfig, *, duration_sec: float) -> tuple
     return profile_path, required, optional, command
 
 
-def _start_p6_rosbag_recording(config: RunConfig, *, duration_sec: float) -> None:
-    _remove_container(P6_ROSBAG_CONTAINER)
+def start_p6_rosbag_recording(config: RunConfig, *, duration_sec: float) -> None:
+    remove_container(P6_ROSBAG_CONTAINER)
     profile_path, required, optional, command = _p6_rosbag_shell_command(config, duration_sec=duration_sec)
     if not command:
-        _write_json(
+        write_json(
             config.artifact_dir / "rosbag_profile_summary.json",
             {
                 "ok": False,
@@ -654,19 +652,19 @@ def _start_p6_rosbag_recording(config: RunConfig, *, duration_sec: float) -> Non
         return
     DockerClient().run(
         config.orchestration.official_baseline.runtime_image,
-        ["bash", "-lc", _source_official_setup(command)],
+        ["bash", "-lc", source_official_setup(command)],
         detach=True,
         name=P6_ROSBAG_CONTAINER,
         networks=["host"],
         volumes=[(Path.cwd(), "/workspace")],
         workdir="/workspace",
-        envs={**_baseline_env(config), "PYTHONPATH": "/workspace"},
+        envs={**baseline_env(config), "PYTHONPATH": "/workspace"},
     )
 
 
-def _finish_p6_rosbag_recording(config: RunConfig) -> dict[str, Any]:
+def finish_p6_rosbag_recording(config: RunConfig) -> dict[str, Any]:
     profile_path = _p6_effective_profile_path(config)
-    required, optional, _topics = _profile_topics(profile_path)
+    required, optional, _topics = profile_topics(profile_path)
     metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
     try:
         rc = DockerClient().wait(P6_ROSBAG_CONTAINER)
@@ -676,7 +674,7 @@ def _finish_p6_rosbag_recording(config: RunConfig) -> dict[str, Any]:
         output = DockerClient().logs(P6_ROSBAG_CONTAINER, tail=2000)
     except DockerException as exc:
         output = str(exc)
-    _write_text(config.artifact_dir / "rosbag_record.txt", str(output))
+    write_text(config.artifact_dir / "rosbag_record.txt", str(output))
     for _ in range(160):
         if metadata.is_file():
             break
@@ -691,9 +689,9 @@ def _finish_p6_rosbag_recording(config: RunConfig) -> dict[str, Any]:
             "reason": f"rosbag record failed rc={rc}",
             "record_output": str(output),
         }
-        _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
+        write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
         return summary
-    summary = _validate_official_rosbag_profile(
+    summary = validate_official_rosbag_profile(
         profile=profile_path,
         metadata=metadata,
         required=required,
@@ -701,11 +699,11 @@ def _finish_p6_rosbag_recording(config: RunConfig) -> dict[str, Any]:
     )
     summary["rosbag_path"] = str(config.artifact_dir / "rosbag")
     summary["mcap_path"] = str(config.artifact_dir / "rosbag" / "rosbag_0.mcap")
-    _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
+    write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
     return summary
 
 
-def _build_p6_doctor_summary(
+def build_p6_doctor_summary(
     config: RunConfig,
     *,
     runtime_config: Path,
@@ -713,23 +711,23 @@ def _build_p6_doctor_summary(
 ) -> dict[str, Any]:
     p6 = config.orchestration.slam_hover
     if include_dependencies:
-        baseline_doctor = _build_doctor_summary(config)
+        baseline_doctor = build_doctor_summary(config)
         p3_runtime_config = config.artifact_dir / "p6_doctor_p3_slam_runtime.toml"
-        _write_p3_slam_runtime_config(config, p3_runtime_config)
-        p3_doctor = _build_p3_doctor_summary(config, runtime_config=p3_runtime_config)
+        write_p3_slam_runtime_config(config, p3_runtime_config)
+        p3_doctor = build_p3_doctor_summary(config, runtime_config=p3_runtime_config)
         p4_runtime_config = config.artifact_dir / "p6_doctor_p4_fcu_controller_runtime.toml"
-        _write_p4_runtime_config(config, p4_runtime_config)
-        p4_doctor = _build_p4_doctor_summary(config, runtime_config=p4_runtime_config)
+        write_p4_runtime_config(config, p4_runtime_config)
+        p4_doctor = build_p4_doctor_summary(config, runtime_config=p4_runtime_config)
         p5_runtime_config = config.artifact_dir / "p6_doctor_p5_frame_contract_runtime.toml"
-        _write_p5_runtime_config(config, p5_runtime_config)
-        p5_doctor = _build_p5_doctor_summary(config, runtime_config=p5_runtime_config)
+        write_p5_runtime_config(config, p5_runtime_config)
+        p5_doctor = build_p5_doctor_summary(config, runtime_config=p5_runtime_config)
     else:
         baseline_doctor = {"ok": True, "blockers": [], "skipped": "acceptance already launched official stack"}
         p3_doctor = {"ok": True, "blockers": [], "skipped": "acceptance already launched SLAM backend"}
         p4_doctor = {"ok": True, "blockers": [], "skipped": "acceptance already launched FCU controller"}
         p5_doctor = {"ok": True, "blockers": [], "skipped": "acceptance already ran frame probe"}
     profile_path = Path(p6.rosbag_profile)
-    required, optional, topics = _profile_topics(profile_path)
+    required, optional, topics = profile_topics(profile_path)
     if p6.record_visualization_markers:
         required = _dedupe_topics([*required, p6.vehicle_marker_topic])
         optional = [topic for topic in optional if topic not in required]
@@ -754,7 +752,7 @@ def _build_p6_doctor_summary(
         "blockers": blockers,
         "p6_slam_hover_doctor": {
             "runtime_config": str(runtime_config),
-            "runtime_config_sha256": _file_sha256(runtime_config) if runtime_config.is_file() else "",
+            "runtime_config_sha256": file_sha256(runtime_config) if runtime_config.is_file() else "",
             "dependency_checks_included": include_dependencies,
             "slam_odom_topic": p6.slam_odom_topic,
             "external_nav_status_topic": p6.external_nav_status_topic,
@@ -787,7 +785,7 @@ def _build_p6_doctor_summary(
     }
 
 
-def _append_p6_blockers(
+def append_p6_blockers(
     *,
     blockers: list[str],
     hover_summary: dict[str, Any],
@@ -818,9 +816,9 @@ def _append_p6_blockers(
         blockers.append(f"{p6.vehicle_marker_topic} was not recorded")
 
 
-def _write_foxglove_notes(config: RunConfig) -> None:
+def write_foxglove_notes(config: RunConfig) -> None:
     p6 = config.orchestration.slam_hover
-    _write_text(
+    write_text(
         config.artifact_dir / "foxglove_notes.md",
         "\n".join(
             [
@@ -846,7 +844,3 @@ def _write_foxglove_notes(config: RunConfig) -> None:
         )
         + "\n",
     )
-
-
-
-

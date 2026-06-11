@@ -34,9 +34,9 @@ navlab/
   sim/
 ```
 
-- `gazebo_sensor` 只负责 Gazebo ideal scan 到厂商驱动 `/scan` 的传感器链路。
-- `navlab.companion` 只负责机载计算盒子侧 runtime：world markers、scan features、FCU IMU bridge、ExternalNav sender、mission controller 和 acceptance artifact。
-- `navlab.slam` 是可替换 SLAM 后端镜像，当前默认是 Cartographer。
+- `navlab.sim.gazebo_sensor` 只负责 Gazebo ideal scan 到厂商驱动 `/scan` 的传感器链路。
+- 仿真 companion 节点放在 `navlab.sim.companion.nodes`；launcher/config/acceptance 放在 `navlab.sim.companion.runtime`。
+- SLAM backend/config wrapper 放在 `navlab.common.slam`，因为当前 real/sim 共用同一套 backend registry 和 launch 参数契约。
 - `common` 只放跨服务复用的纯工具，不拥有 ROS runtime 职责。
 
 ## 关键 topic

@@ -1,0 +1,45 @@
+# Lefthook Configuration for NavLab
+# https://github.com/evilmartians/lefthook
+
+# Commit-msg hook: Lint commit message with git-cliff
+commit-msg:
+  commands:
+    cliff-lint:
+      run: |
+        # Extract commit message
+        COMMIT_MSG_FILE={1}
+        COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+        # Check conventional commit format using git-cliff
+        # git-cliff expects conventional commits format:
+        # <type>[optional scope]: <description>
+        # Examples: feat: add new feature, fix(api): resolve bug
+
+        echo "$COMMIT_MSG" | grep -qiE "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?(!)?: .{1,}|^first commit$" || {
+          echo "❌ Commit message does not follow Conventional Commits format!"
+          echo ""
+          echo "Expected format: <type>[optional scope]: <description>"
+          echo ""
+          echo "Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+          echo ""
+          echo "Examples:"
+          echo "  feat: add new authentication system"
+          echo "  fix(api): resolve null pointer exception"
+          echo "  docs: update installation guide"
+          exit 1
+        }
+
+# Pre-commit hook: Run formatting checks and fast tests
+pre-commit:
+  parallel: true
+  commands:
+    # Python formatting check
+    python-format:
+      glob: "**/*.py"
+      run: ./scripts/format-python.sh --scope staged
+      stage_fixed: true
+
+    # Fast Python checks. Integration-heavy checks run in CI.
+    python-check:
+      glob: "**/*.py"
+      run: PYTHON_CHECK_PROFILE=pre-commit ./scripts/check-python.sh

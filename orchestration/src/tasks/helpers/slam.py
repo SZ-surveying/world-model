@@ -1,53 +1,24 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import shlex
-import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import tomli_w
 from python_on_whales import DockerClient
-from python_on_whales.exceptions import DockerException
-from rich.console import Console
 
 from src import host
-from src.config import RunConfig
-from src.tasks.helpers.official_stack import (
-    _build_doctor_summary,
-    _collect_official_dds_probe,
-    _collect_ros_graph,
-    _load_rosbag_metadata_counts,
-    _validate_official_rosbag_profile,
-    _write_json,
-    _write_text,
-)
+from src.configs.run_config import RunConfig
+from src.tasks.helpers.artifacts import file_sha256, write_text
 from src.tasks.helpers.navlab_models import (
-    GAZEBO_SENSOR_CONTAINER,
-    OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
-    _capture_container_log,
-    _collect_laser_scan_sample,
-    _collect_topic_info,
-    _file_sha256,
-    _profile_topics,
-    _remove_container,
-    _start_gazebo_sensor_container,
-    _write_p1_bridge_override,
-    _write_p1_vendor_profile,
+    remove_container,
 )
-from src.tasks.helpers.sensors import (
-    OFFICIAL_GAZEBO_IRIS_PARAMS,
-    OFFICIAL_IRIS_WITH_LIDAR_MODEL,
-    _collect_imu_probe,
-    _collect_json_status_sample,
-    _collect_rangefinder_probe,
-    _write_p2_model_overlay,
-    _write_p2_param_overlay,
-    _write_p2_sensor_config,
+from src.tasks.helpers.official_stack import (
+    build_doctor_summary,
 )
+from src.tasks.helpers.rosbag_profiles import load_rosbag_metadata_counts
 
 SLAM_BACKEND_CONTAINER = "navlab-p3-slam-backend"
 OFFICIAL_IRIS_LIDAR_Z_M = "0.075077"
@@ -64,7 +35,7 @@ def _baseline_env(config: RunConfig) -> dict[str, str]:
     }
 
 
-def _write_p3_slam_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
+def write_p3_slam_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
     p3 = config.orchestration.slam_backend
     data = {
         "slam": {
@@ -110,19 +81,19 @@ def _write_p3_slam_runtime_config(config: RunConfig, path: Path) -> dict[str, An
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
-    return {"path": str(path), "workspace_path": host._workspace_path(path), "sha256": _file_sha256(path), "data": data}
+    return {"path": str(path), "workspace_path": host.workspace_path(path), "sha256": file_sha256(path), "data": data}
 
 
-def _start_p3_slam_container(config: RunConfig, *, runtime_config: Path) -> None:
-    _remove_container(SLAM_BACKEND_CONTAINER)
+def start_p3_slam_container(config: RunConfig, *, runtime_config: Path) -> None:
+    remove_container(SLAM_BACKEND_CONTAINER)
     p3 = config.orchestration.slam_backend
-    workspace_config = host._workspace_path(runtime_config)
+    workspace_config = host.workspace_path(runtime_config)
     launch_command = " ".join(
         shlex.quote(arg)
         for arg in [
             "python3",
             "-m",
-            "navlab.slam.cli",
+            "navlab.common.slam.cli",
             "launch",
             "--config",
             workspace_config,
@@ -155,158 +126,14 @@ def _start_p3_slam_container(config: RunConfig, *, runtime_config: Path) -> None
     )
 
 
-def _p3_rosbag_shell_command(config: RunConfig, *, duration_sec: float) -> tuple[Path, list[str], list[str], str]:
-    profile_path = Path(config.slam_backend_rosbag_profile)
-    required, optional, topics = _profile_topics(profile_path)
-    if not profile_path.is_file() or not topics:
-        return profile_path, required, optional, ""
-    container_rosbag = Path("/workspace") / config.artifact_dir / "rosbag"
-    topic_args = " ".join(shlex.quote(topic) for topic in topics)
-    command = (
-        f"rm -rf {shlex.quote(str(container_rosbag))} && "
-        f"mkdir -p {shlex.quote(str(container_rosbag.parent))} && "
-        "set +e; "
-        f"timeout --signal=INT {duration_sec:g} "
-        f"ros2 bag record -s mcap -o {shlex.quote(str(container_rosbag))} --topics {topic_args}; "
-        "rc=$?; "
-        "set -e; "
-        'if [ "$rc" != "0" ] && [ "$rc" != "124" ] && [ "$rc" != "130" ]; then exit "$rc"; fi; '
-        f"for i in $(seq 1 40); do [ -f {shlex.quote(str(container_rosbag / 'metadata.yaml'))} ] && exit 0; "
-        "sleep 0.25; done; exit 2"
-    )
-    return profile_path, required, optional, command
-
-
-def _record_p3_rosbag(config: RunConfig, *, image: str, duration_sec: float) -> dict[str, Any]:
-    profile_path, required, optional, command = _p3_rosbag_shell_command(config, duration_sec=duration_sec)
-    if not command:
-        summary = {
-            "ok": False,
-            "recorded": False,
-            "profile": str(profile_path),
-            "required_topics": required,
-            "optional_topics": optional,
-            "reason": "rosbag profile missing or empty",
-        }
-        _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
-        return summary
-    rc, output = host._docker_run_ros_shell_capture(
-        config=config,
-        image=image,
-        shell_command=command,
-        name=None,
-        network="host",
-        envs=_baseline_env(config),
-    )
-    _write_text(config.artifact_dir / "rosbag_record.txt", output)
-    metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
-    if rc != 0 or not metadata.is_file():
-        summary = {
-            "ok": False,
-            "recorded": False,
-            "profile": str(profile_path),
-            "required_topics": required,
-            "optional_topics": optional,
-            "reason": f"rosbag record failed rc={rc}",
-            "record_output": output,
-        }
-        _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
-        return summary
-    summary = _validate_official_rosbag_profile(
-        profile=profile_path,
-        metadata=metadata,
-        required=required,
-        optional=optional,
-    )
-    summary["rosbag_path"] = str(config.artifact_dir / "rosbag")
-    summary["mcap_path"] = str(config.artifact_dir / "rosbag" / "rosbag_0.mcap")
-    _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
-    return summary
-
-
-def _start_p3_rosbag_recording(config: RunConfig, *, image: str, duration_sec: float) -> None:
-    _remove_container(P3_ROSBAG_CONTAINER)
-    profile_path, required, optional, command = _p3_rosbag_shell_command(config, duration_sec=duration_sec)
-    if not command:
-        summary = {
-            "ok": False,
-            "recorded": False,
-            "profile": str(profile_path),
-            "required_topics": required,
-            "optional_topics": optional,
-            "reason": "rosbag profile missing or empty",
-        }
-        _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
-        return
-    shell_command = (
-        "source /opt/ros/jazzy/setup.bash && "
-        "if [ -f /opt/navlab_ws/install/setup.bash ]; then source /opt/navlab_ws/install/setup.bash; fi && "
-        "if [ -f /opt/navlab_official_ws/install/setup.bash ]; then "
-        "source /opt/navlab_official_ws/install/setup.bash; fi && "
-        f"{command}"
-    )
-    DockerClient().run(
-        image,
-        ["bash", "-lc", shell_command],
-        detach=True,
-        name=P3_ROSBAG_CONTAINER,
-        networks=["host"],
-        volumes=[(Path.cwd(), "/workspace")],
-        workdir="/workspace",
-        envs={
-            "ROS_DOMAIN_ID": config.orchestration.official_baseline.dds_domain_id,
-            "RMW_IMPLEMENTATION": config.orchestration.official_baseline.rmw_implementation,
-            "PYTHONPATH": "/workspace",
-            **_baseline_env(config),
-        },
-    )
-
-
-def _finish_p3_rosbag_recording(config: RunConfig) -> dict[str, Any]:
-    profile_path = Path(config.slam_backend_rosbag_profile)
-    required, optional, _topics = _profile_topics(profile_path)
-    metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
-    try:
-        rc = DockerClient().wait(P3_ROSBAG_CONTAINER)
-    except DockerException as exc:
-        rc = exc.return_code or 1
-    try:
-        output = DockerClient().logs(P3_ROSBAG_CONTAINER, tail=2000)
-    except DockerException as exc:
-        output = str(exc)
-    _write_text(config.artifact_dir / "rosbag_record.txt", str(output))
-    if rc != 0 or not metadata.is_file():
-        summary = {
-            "ok": False,
-            "recorded": False,
-            "profile": str(profile_path),
-            "required_topics": required,
-            "optional_topics": optional,
-            "reason": f"rosbag record failed rc={rc}",
-            "record_output": str(output),
-        }
-        _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
-        return summary
-    summary = _validate_official_rosbag_profile(
-        profile=profile_path,
-        metadata=metadata,
-        required=required,
-        optional=optional,
-    )
-    summary["rosbag_path"] = str(config.artifact_dir / "rosbag")
-    summary["mcap_path"] = str(config.artifact_dir / "rosbag" / "rosbag_0.mcap")
-    _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
-    return summary
-
-
 def _message_counts(config: RunConfig) -> dict[str, int]:
     metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
     if not metadata.is_file():
         return {}
-    return _load_rosbag_metadata_counts(metadata)
+    return load_rosbag_metadata_counts(metadata)
 
 
-def _collect_odometry_probe(config: RunConfig, *, image: str, topic: str, artifact_name: str) -> dict[str, Any]:
+def collect_odometry_probe(config: RunConfig, *, image: str, topic: str, artifact_name: str) -> dict[str, Any]:
     script = f"""
 import json
 import math
@@ -377,7 +204,7 @@ node.destroy_node()
 rclpy.shutdown()
 print(json.dumps(result, sort_keys=True))
 """
-    rc, output = host._docker_run_ros_shell_capture(
+    rc, output = host.docker_run_ros_shell_capture(
         config=config,
         image=image,
         shell_command=f"python3 - <<'PY'\n{script}\nPY",
@@ -385,133 +212,7 @@ print(json.dumps(result, sort_keys=True))
         network="host",
         envs=_baseline_env(config),
     )
-    _write_text(config.artifact_dir / artifact_name, output)
-    return {"rc": rc, "output": output, "result": _last_json_line(output) if rc == 0 else {}}
-
-
-def _collect_tf_probe(config: RunConfig, *, image: str) -> dict[str, Any]:
-    p3 = config.orchestration.slam_backend
-    script = f"""
-import json
-import time
-
-import rclpy
-from tf2_msgs.msg import TFMessage
-
-wanted = {{
-    ("map", {p3.odom_frame_id!r}): "map_to_odom",
-    ({p3.odom_frame_id!r}, {p3.base_frame_id!r}): "odom_to_base",
-    ({p3.base_frame_id!r}, {p3.imu_frame_id!r}): "base_to_imu",
-    ({p3.base_frame_id!r}, {p3.laser_frame_id!r}): "base_to_laser",
-}}
-result = {{"received_count": 0, "transforms": {{key: False for key in wanted.values()}}}}
-rclpy.init()
-node = rclpy.create_node("navlab_p3_tf_probe")
-
-def callback(msg):
-    result["received_count"] += len(msg.transforms)
-    for transform in msg.transforms:
-        key = (transform.header.frame_id, transform.child_frame_id)
-        if key in wanted:
-            result["transforms"][wanted[key]] = True
-
-sub_tf = node.create_subscription(TFMessage, "/tf", callback, 10)
-sub_static = node.create_subscription(TFMessage, "/tf_static", callback, 10)
-deadline = time.monotonic() + 10.0
-while time.monotonic() < deadline:
-    rclpy.spin_once(node, timeout_sec=0.1)
-node.destroy_subscription(sub_tf)
-node.destroy_subscription(sub_static)
-node.destroy_node()
-rclpy.shutdown()
-print(json.dumps(result, sort_keys=True))
-"""
-    rc, output = host._docker_run_ros_shell_capture(
-        config=config,
-        image=image,
-        shell_command=f"python3 - <<'PY'\n{script}\nPY",
-        name=None,
-        network="host",
-        envs=_baseline_env(config),
-    )
-    _write_text(config.artifact_dir / "tf_probe.txt", output)
-    return {"rc": rc, "output": output, "result": _last_json_line(output) if rc == 0 else {}}
-
-
-def _collect_truth_error_probe(config: RunConfig, *, image: str) -> dict[str, Any]:
-    p3 = config.orchestration.slam_backend
-    script = f"""
-import json
-import math
-import time
-
-import rclpy
-from nav_msgs.msg import Odometry
-from rclpy.qos import qos_profile_sensor_data
-
-slam_topic = {p3.slam_odom_topic!r}
-truth_topic = {p3.truth_diagnostic_topic!r}
-result = {{
-    "slam_topic": slam_topic,
-    "truth_diagnostic_topic": truth_topic,
-    "slam_count": 0,
-    "truth_count": 0,
-    "paired_count": 0,
-    "error_mean_m": None,
-    "error_p95_m": None,
-    "error_max_m": None,
-}}
-slam_samples = []
-truth_samples = []
-
-def point(msg):
-    p = msg.pose.pose.position
-    return (float(p.x), float(p.y), float(p.z))
-
-rclpy.init()
-node = rclpy.create_node("navlab_p3_truth_error_probe")
-
-def handle_slam(msg):
-    result["slam_count"] += 1
-    slam_samples.append((time.monotonic(), point(msg)))
-
-def handle_truth(msg):
-    result["truth_count"] += 1
-    truth_samples.append((time.monotonic(), point(msg)))
-
-slam_sub = node.create_subscription(Odometry, slam_topic, handle_slam, qos_profile_sensor_data)
-truth_sub = node.create_subscription(Odometry, truth_topic, handle_truth, qos_profile_sensor_data)
-deadline = time.monotonic() + 10.0
-while time.monotonic() < deadline:
-    rclpy.spin_once(node, timeout_sec=0.1)
-errors = []
-for stamp, slam_point in slam_samples:
-    if not truth_samples:
-        continue
-    nearest_stamp, truth_point = min(truth_samples, key=lambda sample: abs(sample[0] - stamp))
-    if abs(nearest_stamp - stamp) <= 0.25:
-        errors.append(math.dist(slam_point, truth_point))
-errors.sort()
-result["paired_count"] = len(errors)
-if errors:
-    result["error_mean_m"] = sum(errors) / len(errors)
-    result["error_max_m"] = errors[-1]
-    result["error_p95_m"] = errors[min(len(errors) - 1, int(math.ceil(0.95 * len(errors))) - 1)]
-node.destroy_subscription(slam_sub)
-node.destroy_subscription(truth_sub)
-node.destroy_node()
-rclpy.shutdown()
-print(json.dumps(result, sort_keys=True))
-"""
-    rc, output = host._docker_run_ros_shell_capture(
-        config=config,
-        image=image,
-        shell_command=f"python3 - <<'PY'\n{script}\nPY",
-        name=None,
-        network="host",
-        envs=_baseline_env(config),
-    )
-    _write_text(config.artifact_dir / "truth_error_probe.txt", output)
+    write_text(config.artifact_dir / artifact_name, output)
     return {"rc": rc, "output": output, "result": _last_json_line(output) if rc == 0 else {}}
 
 
@@ -534,7 +235,7 @@ def _float_or_none(value: Any) -> float | None:
         return None
 
 
-def _append_slam_odom_quality_blockers(*, blockers: list[str], p3: Any, slam_odom_result: dict[str, Any]) -> None:
+def append_slam_odom_quality_blockers(*, blockers: list[str], p3: Any, slam_odom_result: dict[str, Any]) -> None:
     if not slam_odom_result.get("received"):
         blockers.append(f"P3 did not receive {p3.slam_odom_topic}")
     if slam_odom_result.get("frame_id") != p3.odom_frame_id:
@@ -557,34 +258,34 @@ def _append_slam_odom_quality_blockers(*, blockers: list[str], p3: Any, slam_odo
         blockers.append("SLAM odom stationary drift exceeds threshold")
 
 
-def _slam_backend_print_command(config: RunConfig, *, runtime_config: Path) -> tuple[int, str]:
+def slam_backend_print_command(config: RunConfig, *, runtime_config: Path) -> tuple[int, str]:
     p3 = config.orchestration.slam_backend
     command = " ".join(
         shlex.quote(arg)
         for arg in [
             "python3",
             "-m",
-            "navlab.slam.cli",
+            "navlab.common.slam.cli",
             "print-command",
             "--config",
-            host._workspace_path(runtime_config),
+            host.workspace_path(runtime_config),
             "--backend",
             p3.backend,
         ]
     )
-    return host._docker_run_ros_shell_capture(
+    return host.docker_run_ros_shell_capture(
         config=config,
         image=config.slam_image,
         shell_command=f"source /opt/navlab_ws/install/setup.bash && {command}",
         name=None,
         network=None,
-        envs={"NAVLAB_SLAM_RUNTIME_CONFIG": host._workspace_path(runtime_config)},
+        envs={"NAVLAB_SLAM_RUNTIME_CONFIG": host.workspace_path(runtime_config)},
     )
 
 
 def _write_foxglove_notes(config: RunConfig) -> None:
     p3 = config.orchestration.slam_backend
-    _write_text(
+    write_text(
         config.artifact_dir / "foxglove_notes.md",
         "\n".join(
             [
@@ -605,17 +306,17 @@ def _write_foxglove_notes(config: RunConfig) -> None:
     )
 
 
-def _build_p3_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict[str, Any]:
+def build_p3_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict[str, Any]:
     p3 = config.orchestration.slam_backend
     blockers: list[str] = []
-    baseline_doctor = _build_doctor_summary(config)
+    baseline_doctor = build_doctor_summary(config)
     if not baseline_doctor.get("ok"):
         blockers.extend(str(item) for item in baseline_doctor.get("blockers", []))
     if p3.uses_gazebo_truth_as_input:
         blockers.append("P3 SLAM backend must not use Gazebo truth as the SLAM odom source")
     if p3.slam_odom_topic in {p3.truth_diagnostic_topic, p3.odometry_topic}:
         blockers.append("P3 canonical SLAM odom topic must be distinct from diagnostic truth / odometry input")
-    rc, command = _slam_backend_print_command(config, runtime_config=runtime_config)
+    rc, command = slam_backend_print_command(config, runtime_config=runtime_config)
     if rc != 0:
         blockers.append(f"SLAM backend command could not be built rc={rc}")
     summary = {
@@ -626,7 +327,7 @@ def _build_p3_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict
             "backend": p3.backend,
             "slam_image": config.slam_image,
             "runtime_config": str(runtime_config),
-            "runtime_config_sha256": _file_sha256(runtime_config) if runtime_config.is_file() else "",
+            "runtime_config_sha256": file_sha256(runtime_config) if runtime_config.is_file() else "",
             "command": command.strip(),
             "scan_topic": p3.scan_topic,
             "imu_topic": p3.imu_topic,
@@ -641,7 +342,3 @@ def _build_p3_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict
         "official_baseline_doctor": baseline_doctor,
     }
     return summary
-
-
-
-

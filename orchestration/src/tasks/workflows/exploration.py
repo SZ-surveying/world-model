@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import shlex
 import time
@@ -14,74 +13,130 @@ from python_on_whales import DockerClient
 from python_on_whales.exceptions import DockerException
 from rich.console import Console
 
-from navlab.gazebo_sensor.airframe_disturbance import (
+from navlab.sim.gazebo_sensor.airframe_disturbance import (
     AirframeDisturbanceProfile,
     apply_profile_to_iris_sdf,
     estimate_disturbance_metrics,
     profile_from_library,
 )
 from src import host
-from src.config import RunConfig, load_task_invocation_config
+from src.configs.run_config import RunConfig
+from src.configs.task_config import (
+    load_task_config_data,
+    optional_task_table,
+    resolve_task_config_path,
+    resolve_task_float,
+    resolve_task_str,
+)
+from src.tasks.helpers.artifacts import file_sha256, write_json, write_text
 from src.tasks.helpers.fcu import (
     P4_CONTROLLER_CONTAINER,
-    _append_controller_blockers,
-    _append_owner_blockers,
-    _start_p4_controller_container,
-    _wait_for_controller_summary,
-    _write_controller_runtime_script,
-    _write_p4_runtime_config,
+    append_controller_blockers,
+    append_owner_blockers,
+    start_p4_controller_container,
+    wait_for_controller_summary,
+    write_controller_runtime_script,
+    write_p4_runtime_config,
 )
 from src.tasks.helpers.frame_contract import (
-    _append_p5_blockers,
-    _run_frame_probe,
-    _write_frame_probe_script,
-    _write_p5_runtime_config,
+    append_p5_blockers,
+    run_frame_probe,
+    write_frame_probe_script,
+    write_p5_runtime_config,
 )
 from src.tasks.helpers.landing import apply_landing_gate
-from src.tasks.helpers.motion import _build_p7_doctor_summary
+from src.tasks.helpers.motion import build_p7_doctor_summary
 from src.tasks.helpers.navlab_models import (
     GAZEBO_SENSOR_CONTAINER,
     OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
-    _capture_container_log,
-    _collect_laser_scan_sample,
-    _collect_topic_info,
-    _collect_x2_status,
-    _file_sha256,
-    _profile_topics,
-    _remove_container,
-    _start_gazebo_sensor_container,
-    _write_p1_bridge_override,
-    _write_p1_vendor_profile,
+    capture_container_log,
+    collect_laser_scan_sample,
+    collect_topic_info,
+    collect_x2_status,
+    remove_container,
+    start_gazebo_sensor_container,
+    write_p1_bridge_override,
+    write_p1_vendor_profile,
 )
 from src.tasks.helpers.official_stack import (
-    _collect_official_dds_probe,
-    _collect_ros_graph,
-    _load_rosbag_metadata_counts,
-    _validate_official_rosbag_profile,
-    _write_json,
-    _write_text,
+    collect_official_dds_probe,
+    collect_ros_graph,
+)
+from src.tasks.helpers.rosbag_profiles import (
+    load_rosbag_metadata_counts,
+    profile_topics,
+    validate_official_rosbag_profile,
 )
 from src.tasks.helpers.sensors import (
     OFFICIAL_GAZEBO_IRIS_PARAMS,
     OFFICIAL_IRIS_WITH_LIDAR_MODEL,
-    _collect_imu_probe,
-    _collect_rangefinder_probe,
-    _write_p2_model_overlay,
-    _write_p2_param_overlay,
-    _write_p2_sensor_config,
+    collect_imu_probe,
+    collect_rangefinder_probe,
+    write_p2_model_overlay,
+    write_p2_param_overlay,
+    write_p2_sensor_config,
 )
 from src.tasks.helpers.slam import (
     SLAM_BACKEND_CONTAINER,
-    _append_slam_odom_quality_blockers,
-    _collect_odometry_probe,
-    _start_p3_slam_container,
-    _write_p3_slam_runtime_config,
+    append_slam_odom_quality_blockers,
+    collect_odometry_probe,
+    start_p3_slam_container,
+    write_p3_slam_runtime_config,
 )
-from src.tasks.helpers.slam_hover import _baseline_env, _build_p6_doctor_summary, _load_json, _source_official_setup
+from src.tasks.helpers.slam_hover import baseline_env, build_p6_doctor_summary, load_json, source_official_setup
 
 P8_ROSBAG_CONTAINER = "navlab-p8-rosbag"
 SUPPORTED_SIMULATION_PROFILES = ("ideal", "mild_disturbance")
 MILD_DISTURBANCE_AIRFRAME_PROFILE = "mild_bias"
+
+
+@dataclass(frozen=True, slots=True)
+class ExplorationTaskConfig:
+    task_name: str
+    path: Path | None
+    path_source: str
+    duration_sec: float
+    duration_source: str
+    simulation_profile: str
+    simulation_profile_source: str
+
+    @classmethod
+    def from_file(
+        cls,
+        *,
+        task_config_path: str | Path | None = None,
+        cli_duration_sec: float | None = None,
+        cli_simulation_profile: str | None = None,
+    ) -> ExplorationTaskConfig:
+        task_name = "exploration"
+        path, path_source = resolve_task_config_path(task_name, task_config_path)
+        data = load_task_config_data(task_name, task_config_path=task_config_path)
+        task = optional_task_table(data, path)
+        duration_sec, duration_source = resolve_task_float(task, "duration_sec", cli_duration_sec, 150.0)
+        simulation_profile, simulation_profile_source = resolve_task_str(
+            task,
+            "simulation_profile",
+            cli_simulation_profile,
+            "ideal",
+        )
+        return cls(
+            task_name=task_name,
+            path=path if path and path.is_file() else None,
+            path_source=path_source,
+            duration_sec=duration_sec,
+            duration_source=duration_source,
+            simulation_profile=simulation_profile,
+            simulation_profile_source=simulation_profile_source,
+        )
+
+    def to_summary(self) -> dict[str, Any]:
+        return {
+            "duration_sec": {"value": self.duration_sec, "source": self.duration_source},
+            "simulation_profile": {
+                "value": self.simulation_profile,
+                "source": self.simulation_profile_source,
+            },
+        }
 
 
 def _normalize_simulation_profile(value: str) -> str:
@@ -92,7 +147,7 @@ def _normalize_simulation_profile(value: str) -> str:
     return profile
 
 
-def _airframe_profile_for_simulation_profile(simulation_profile: str) -> AirframeDisturbanceProfile | None:
+def airframe_profile_for_simulation_profile(simulation_profile: str) -> AirframeDisturbanceProfile | None:
     if simulation_profile == "mild_disturbance":
         return profile_from_library(MILD_DISTURBANCE_AIRFRAME_PROFILE)
     return None
@@ -124,34 +179,34 @@ def _p8_airframe_runtime_config(config: RunConfig, *, profile: AirframeDisturban
     }
 
 
-def _write_p8_model_overlay(
+def write_p8_model_overlay(
     config: RunConfig,
     path: Path,
     *,
     airframe_profile: AirframeDisturbanceProfile | None,
 ) -> dict[str, Any]:
-    base_summary = _write_p2_model_overlay(config, path)
+    base_summary = write_p2_model_overlay(config, path)
     if airframe_profile is None:
         return base_summary
     rendered, disturbance_summary = apply_profile_to_iris_sdf(path.read_text(encoding="utf-8"), airframe_profile)
     path.write_text(rendered, encoding="utf-8")
     return {
         **base_summary,
-        "overlay_sha256": _file_sha256(path),
+        "overlay_sha256": file_sha256(path),
         "airframe_disturbance": disturbance_summary,
         "disturbance_injection_layer": config.orchestration.airframe_disturbance.injection_layer,
         "esc_lag_claim": config.orchestration.airframe_disturbance.esc_lag_model,
     }
 
 
-def _write_p8_sensor_config(
+def write_p8_sensor_config(
     config: RunConfig,
     path: Path,
     *,
     vendor_profile: Path,
     airframe_profile: AirframeDisturbanceProfile | None,
 ) -> dict[str, Any]:
-    summary = _write_p2_sensor_config(config, path, vendor_profile=vendor_profile)
+    summary = write_p2_sensor_config(config, path, vendor_profile=vendor_profile)
     if airframe_profile is None:
         return summary
     data = summary["data"]
@@ -160,13 +215,13 @@ def _write_p8_sensor_config(
         profile=airframe_profile,
     )
     path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
-    return {"path": str(path), "workspace_path": host._workspace_path(path), "sha256": _file_sha256(path), "data": data}
+    return {"path": str(path), "workspace_path": host.workspace_path(path), "sha256": file_sha256(path), "data": data}
 
 
 def _collect_p8_lidar_x2_preflight(config: RunConfig, *, image: str) -> dict[str, Any]:
     p2 = config.orchestration.rangefinder_imu
-    lidar_sample = _collect_laser_scan_sample(config, image=image, topic=p2.x2_scan_input_topic)
-    x2_status = _collect_x2_status(config, image=image)
+    lidar_sample = collect_laser_scan_sample(config, image=image, topic=p2.x2_scan_input_topic)
+    x2_status = collect_x2_status(config, image=image)
     x2_sample = x2_status.get("result", {}).get("sample") or {}
     latest_ideal_age = x2_sample.get("latest_scan_ideal_age_sec")
     ready = bool(
@@ -185,7 +240,7 @@ def _collect_p8_lidar_x2_preflight(config: RunConfig, *, image: str) -> dict[str
     }
 
 
-def _apply_replay_profile(config: RunConfig, replay_profile: str | None) -> RunConfig:
+def apply_replay_profile(config: RunConfig, replay_profile: str | None) -> RunConfig:
     if not replay_profile:
         return config
     if replay_profile not in {"conservative", "display"}:
@@ -224,10 +279,10 @@ def _message_counts(config: RunConfig) -> dict[str, int]:
     metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
     if not metadata.is_file():
         return {}
-    return _load_rosbag_metadata_counts(metadata)
+    return load_rosbag_metadata_counts(metadata)
 
 
-def _append_replay_slam_health_blockers(*, blockers: list[str], p3: Any, slam_odom_result: dict[str, Any]) -> None:
+def append_replay_slam_health_blockers(*, blockers: list[str], p3: Any, slam_odom_result: dict[str, Any]) -> None:
     if not slam_odom_result.get("received"):
         blockers.append(f"P3 did not receive {p3.slam_odom_topic}")
     if slam_odom_result.get("frame_id") != p3.odom_frame_id:
@@ -241,7 +296,7 @@ def _append_replay_slam_health_blockers(*, blockers: list[str], p3: Any, slam_od
         blockers.append("SLAM odom latest sample is stale")
 
 
-def _write_p8_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
+def write_p8_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
     p8 = config.orchestration.exploration_gate
     landing = config.orchestration.landing
     data = {
@@ -318,7 +373,7 @@ def _write_p8_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
-    return {"path": str(path), "workspace_path": host._workspace_path(path), "sha256": _file_sha256(path), "data": data}
+    return {"path": str(path), "workspace_path": host.workspace_path(path), "sha256": file_sha256(path), "data": data}
 
 
 def _exploration_probe_script(spec: dict[str, Any]) -> str:
@@ -788,12 +843,12 @@ raise SystemExit(0 if ExplorationGateProbe().run()["ok"] else 30)
 '''
 
 
-def _write_exploration_probe_script(config: RunConfig, script_path: Path) -> dict[str, Any]:
+def write_exploration_probe_script(config: RunConfig, script_path: Path) -> dict[str, Any]:
     p4 = config.orchestration.fcu_controller
     p8 = config.orchestration.exploration_gate
     summary_file = config.artifact_dir / "exploration_gate_summary.json"
     spec = {
-        "summary_file": host._workspace_path(summary_file),
+        "summary_file": host.workspace_path(summary_file),
         "owner_name": p4.owner_name,
         "owner_id": p4.owner_id,
         "ready_timeout_sec": p4.readiness_timeout_sec,
@@ -847,27 +902,27 @@ def _write_exploration_probe_script(config: RunConfig, script_path: Path) -> dic
         "exploration_claim": p8.exploration_claim,
     }
     script_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_text(script_path, _exploration_probe_script(spec))
+    write_text(script_path, _exploration_probe_script(spec))
     return {
         "path": str(script_path),
-        "workspace_path": host._workspace_path(script_path),
-        "sha256": _file_sha256(script_path),
+        "workspace_path": host.workspace_path(script_path),
+        "sha256": file_sha256(script_path),
         "summary_file": str(summary_file),
         "spec": spec,
     }
 
 
-def _run_exploration_probe(config: RunConfig, *, script_path: Path) -> dict[str, Any]:
-    rc, output = host._docker_run_ros_shell_capture(
+def run_exploration_probe(config: RunConfig, *, script_path: Path) -> dict[str, Any]:
+    rc, output = host.docker_run_ros_shell_capture(
         config=config,
         image=config.orchestration.official_baseline.runtime_image,
-        shell_command=f"python3 {shlex.quote(host._workspace_path(script_path))}",
+        shell_command=f"python3 {shlex.quote(host.workspace_path(script_path))}",
         name=None,
         network="host",
-        envs=_baseline_env(config),
+        envs=baseline_env(config),
     )
-    _write_text(config.artifact_dir / "exploration_gate_probe.txt", output)
-    summary = _load_json(config.artifact_dir / "exploration_gate_summary.json")
+    write_text(config.artifact_dir / "exploration_gate_probe.txt", output)
+    summary = load_json(config.artifact_dir / "exploration_gate_summary.json")
     if not summary:
         summary = {"ok": False, "blocked": True, "blockers": [f"exploration probe failed rc={rc}"], "output": output}
     summary["rc"] = rc
@@ -876,7 +931,7 @@ def _run_exploration_probe(config: RunConfig, *, script_path: Path) -> dict[str,
 
 def _p8_rosbag_shell_command(config: RunConfig, *, duration_sec: float) -> tuple[Path, list[str], list[str], str]:
     profile_path = Path(config.exploration_gate_rosbag_profile)
-    required, optional, topics = _profile_topics(profile_path)
+    required, optional, topics = profile_topics(profile_path)
     if not profile_path.is_file() or not topics:
         return profile_path, required, optional, ""
     container_rosbag = Path("/workspace") / config.artifact_dir / "rosbag"
@@ -897,10 +952,10 @@ def _p8_rosbag_shell_command(config: RunConfig, *, duration_sec: float) -> tuple
 
 
 def _start_p8_rosbag_recording(config: RunConfig, *, duration_sec: float) -> None:
-    _remove_container(P8_ROSBAG_CONTAINER)
+    remove_container(P8_ROSBAG_CONTAINER)
     profile_path, required, optional, command = _p8_rosbag_shell_command(config, duration_sec=duration_sec)
     if not command:
-        _write_json(
+        write_json(
             config.artifact_dir / "rosbag_profile_summary.json",
             {
                 "ok": False,
@@ -914,19 +969,19 @@ def _start_p8_rosbag_recording(config: RunConfig, *, duration_sec: float) -> Non
         return
     DockerClient().run(
         config.orchestration.official_baseline.runtime_image,
-        ["bash", "-lc", _source_official_setup(command)],
+        ["bash", "-lc", source_official_setup(command)],
         detach=True,
         name=P8_ROSBAG_CONTAINER,
         networks=["host"],
         volumes=[(Path.cwd(), "/workspace")],
         workdir="/workspace",
-        envs={**_baseline_env(config), "PYTHONPATH": "/workspace"},
+        envs={**baseline_env(config), "PYTHONPATH": "/workspace"},
     )
 
 
 def _finish_p8_rosbag_recording(config: RunConfig) -> dict[str, Any]:
     profile_path = Path(config.exploration_gate_rosbag_profile)
-    required, optional, _topics = _profile_topics(profile_path)
+    required, optional, _topics = profile_topics(profile_path)
     metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
     try:
         rc = DockerClient().wait(P8_ROSBAG_CONTAINER)
@@ -936,7 +991,7 @@ def _finish_p8_rosbag_recording(config: RunConfig) -> dict[str, Any]:
         output = DockerClient().logs(P8_ROSBAG_CONTAINER, tail=2000)
     except DockerException as exc:
         output = str(exc)
-    _write_text(config.artifact_dir / "rosbag_record.txt", str(output))
+    write_text(config.artifact_dir / "rosbag_record.txt", str(output))
     for _ in range(160):
         if metadata.is_file():
             break
@@ -951,9 +1006,9 @@ def _finish_p8_rosbag_recording(config: RunConfig) -> dict[str, Any]:
             "reason": f"rosbag record failed rc={rc}",
             "record_output": str(output),
         }
-        _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
+        write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
         return summary
-    summary = _validate_official_rosbag_profile(
+    summary = validate_official_rosbag_profile(
         profile=profile_path,
         metadata=metadata,
         required=required,
@@ -961,11 +1016,11 @@ def _finish_p8_rosbag_recording(config: RunConfig) -> dict[str, Any]:
     )
     summary["rosbag_path"] = str(config.artifact_dir / "rosbag")
     summary["mcap_path"] = str(config.artifact_dir / "rosbag" / "rosbag_0.mcap")
-    _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
+    write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
     return summary
 
 
-def _build_p8_doctor_summary(
+def build_p8_doctor_summary(
     config: RunConfig,
     *,
     runtime_config: Path,
@@ -975,17 +1030,17 @@ def _build_p8_doctor_summary(
     p6_runtime = config.artifact_dir / "p8_doctor_p6_slam_hover_runtime.toml"
     p7_runtime = config.artifact_dir / "p8_doctor_p7_motion_gate_runtime.toml"
     p6_doctor = (
-        _build_p6_doctor_summary(config, runtime_config=p6_runtime)
+        build_p6_doctor_summary(config, runtime_config=p6_runtime)
         if include_dependencies
         else {"ok": True, "blockers": [], "skipped": "acceptance already launched P6 prerequisites"}
     )
     p7_doctor = (
-        _build_p7_doctor_summary(config, runtime_config=p7_runtime, include_dependencies=False)
+        build_p7_doctor_summary(config, runtime_config=p7_runtime, include_dependencies=False)
         if include_dependencies
         else {"ok": True, "blockers": [], "skipped": "acceptance already launched P7 prerequisites"}
     )
     profile_path = Path(p8.rosbag_profile)
-    required, optional, topics = _profile_topics(profile_path)
+    required, optional, topics = profile_topics(profile_path)
     blockers = [str(item) for item in p6_doctor.get("blockers", [])]
     blockers.extend(str(item) for item in p7_doctor.get("blockers", []))
     if not profile_path.is_file() or not topics:
@@ -1006,7 +1061,7 @@ def _build_p8_doctor_summary(
         "blockers": blockers,
         "p8_exploration_gate_doctor": {
             "runtime_config": str(runtime_config),
-            "runtime_config_sha256": _file_sha256(runtime_config) if runtime_config.is_file() else "",
+            "runtime_config_sha256": file_sha256(runtime_config) if runtime_config.is_file() else "",
             "dependency_checks_included": include_dependencies,
             "strategy": p8.strategy,
             "slam_odom_topic": p8.slam_odom_topic,
@@ -1037,7 +1092,7 @@ def _build_p8_doctor_summary(
     }
 
 
-def _append_p8_blockers(
+def append_p8_blockers(
     *,
     blockers: list[str],
     exploration_summary: dict[str, Any],
@@ -1089,7 +1144,7 @@ def _append_p8_blockers(
 
 def _write_foxglove_notes(config: RunConfig) -> None:
     p8 = config.orchestration.exploration_gate
-    _write_text(
+    write_text(
         config.artifact_dir / "foxglove_notes.md",
         "\n".join(
             [
@@ -1132,10 +1187,10 @@ def run_exploration_gate_doctor(
         run_id=config.run_id,
     )
     runtime_config = artifact_dir / "p8_exploration_gate_runtime.toml"
-    _write_p8_runtime_config(config, runtime_config)
+    write_p8_runtime_config(config, runtime_config)
     console.print("[bold cyan]Checking P8 official maze exploration gate prerequisites[/bold cyan]")
-    summary = _build_p8_doctor_summary(config, runtime_config=runtime_config, include_dependencies=False)
-    _write_json(artifact_dir / "summary.json", summary)
+    summary = build_p8_doctor_summary(config, runtime_config=runtime_config, include_dependencies=False)
+    write_json(artifact_dir / "summary.json", summary)
     color = "green" if summary["ok"] else "red"
     console.print(f"[{color}]P8 exploration gate doctor rc={0 if summary['ok'] else 20}[/{color}]")
     console.print(f"[bold]Summary:[/bold] {artifact_dir / 'summary.json'}")
@@ -1153,26 +1208,23 @@ def run_exploration_gate_acceptance(
     simulation_profile: str | None = None,
 ) -> int:
     console = console or Console()
-    task_config = load_task_invocation_config(
-        "exploration",
+    task_config = ExplorationTaskConfig.from_file(
         task_config_path=task_config_path,
         cli_duration_sec=duration_sec,
-        default_duration_sec=150.0,
         cli_simulation_profile=simulation_profile,
-        default_simulation_profile="ideal",
     )
     duration_sec = task_config.duration_sec
     simulation_profile = _normalize_simulation_profile(task_config.simulation_profile)
-    airframe_profile = _airframe_profile_for_simulation_profile(simulation_profile)
+    airframe_profile = airframe_profile_for_simulation_profile(simulation_profile)
     config = RunConfig.from_config(
         config_path=config_path,
         task_name="exploration",
         task_config_path=task_config_path,
         duration_sec=duration_sec,
     )
-    config = _apply_replay_profile(config, replay_profile)
+    config = apply_replay_profile(config, replay_profile)
     config.artifact_dir.mkdir(parents=True, exist_ok=True)
-    host._render_run_config(console, config)
+    host.render_run_config(console, config)
     baseline = config.orchestration.official_baseline
     p2 = config.orchestration.rangefinder_imu
     p3 = config.orchestration.slam_backend
@@ -1191,30 +1243,30 @@ def run_exploration_gate_acceptance(
     controller_script = config.artifact_dir / "p8_fcu_controller_runtime.py"
     frame_probe_script = config.artifact_dir / "p8_frame_contract_probe.py"
     exploration_probe_script = config.artifact_dir / "p8_exploration_gate_probe.py"
-    _write_p1_bridge_override(bridge_override)
-    _write_p1_vendor_profile(vendor_profile, virtual_serial_link=p2.x2_virtual_serial_link)
+    write_p1_bridge_override(bridge_override)
+    write_p1_vendor_profile(vendor_profile, virtual_serial_link=p2.x2_virtual_serial_link)
 
     summary: dict[str, Any] | None = None
     try:
-        model_overlay_summary = _write_p8_model_overlay(config, model_overlay, airframe_profile=airframe_profile)
-        param_overlay_summary = _write_p2_param_overlay(config, param_overlay)
-        sensor_config_summary = _write_p8_sensor_config(
+        model_overlay_summary = write_p8_model_overlay(config, model_overlay, airframe_profile=airframe_profile)
+        param_overlay_summary = write_p2_param_overlay(config, param_overlay)
+        sensor_config_summary = write_p8_sensor_config(
             config,
             sensor_config,
             vendor_profile=vendor_profile,
             airframe_profile=airframe_profile,
         )
-        slam_runtime_summary = _write_p3_slam_runtime_config(config, slam_runtime_config)
-        p4_runtime_summary = _write_p4_runtime_config(config, p4_runtime_config)
-        p5_runtime_summary = _write_p5_runtime_config(config, p5_runtime_config)
-        p8_runtime_summary = _write_p8_runtime_config(config, p8_runtime_config)
+        slam_runtime_summary = write_p3_slam_runtime_config(config, slam_runtime_config)
+        p4_runtime_summary = write_p4_runtime_config(config, p4_runtime_config)
+        p5_runtime_summary = write_p5_runtime_config(config, p5_runtime_config)
+        p8_runtime_summary = write_p8_runtime_config(config, p8_runtime_config)
         landing_budget_sec = (
             config.orchestration.landing.max_return_home_duration_sec
             + config.orchestration.landing.pre_land_hold_sec
             + config.orchestration.landing.max_landing_duration_sec
             + 20.0
         )
-        controller_script_summary = _write_controller_runtime_script(
+        controller_script_summary = write_controller_runtime_script(
             config,
             controller_script,
             duration_sec=max(150.0, duration_sec + landing_budget_sec + 60.0),
@@ -1222,8 +1274,8 @@ def run_exploration_gate_acceptance(
             enable_motion_intent_control=True,
             hover_status_topic=p8.hover_status_topic,
         )
-        frame_probe_script_summary = _write_frame_probe_script(config, frame_probe_script)
-        exploration_probe_script_summary = _write_exploration_probe_script(config, exploration_probe_script)
+        frame_probe_script_summary = write_frame_probe_script(config, frame_probe_script)
+        exploration_probe_script_summary = write_exploration_probe_script(config, exploration_probe_script)
 
         if replay_profile:
             console.print(
@@ -1236,7 +1288,7 @@ def run_exploration_gate_acceptance(
                 f"simulation_profile={simulation_profile}[/bold cyan]"
             )
         try:
-            host._compose_stop(config)
+            host.compose_stop(config)
         except DockerException:
             pass
         official_volume_overrides = [
@@ -1244,40 +1296,40 @@ def run_exploration_gate_acceptance(
             (model_overlay.resolve(), OFFICIAL_IRIS_WITH_LIDAR_MODEL),
             (param_overlay.resolve(), OFFICIAL_GAZEBO_IRIS_PARAMS),
         ]
-        host._start_official_baseline_container(config, volume_overrides=official_volume_overrides)
+        host.start_official_baseline_container(config, volume_overrides=official_volume_overrides)
         time.sleep(min(max(duration_sec, 1.0), 10.0))
-        _start_gazebo_sensor_container(config, sensor_config=sensor_config)
+        start_gazebo_sensor_container(config, sensor_config=sensor_config)
         time.sleep(8.0)
-        rangefinder_preflight = _collect_rangefinder_probe(
+        rangefinder_preflight = collect_rangefinder_probe(
             config,
             image=baseline.runtime_image,
             artifact_name="p8_rangefinder_preflight_probe.txt",
         )
         if not rangefinder_preflight.get("result", {}).get("range_received"):
             console.print("[yellow]P8 rangefinder preflight missed data; restarting gazebo sensor once[/yellow]")
-            _capture_container_log(config, container=GAZEBO_SENSOR_CONTAINER, output_name="gazebo_sensor_preflight_tail.log")
-            _start_gazebo_sensor_container(config, sensor_config=sensor_config)
+            capture_container_log(config, container=GAZEBO_SENSOR_CONTAINER, output_name="gazebo_sensor_preflight_tail.log")
+            start_gazebo_sensor_container(config, sensor_config=sensor_config)
             time.sleep(8.0)
-            rangefinder_preflight = _collect_rangefinder_probe(
+            rangefinder_preflight = collect_rangefinder_probe(
                 config,
                 image=baseline.runtime_image,
                 artifact_name="p8_rangefinder_preflight_retry_probe.txt",
             )
         if not rangefinder_preflight.get("result", {}).get("range_received"):
             console.print("[yellow]P8 rangefinder preflight still missed data; restarting official baseline once[/yellow]")
-            _capture_container_log(
+            capture_container_log(
                 config,
                 container=GAZEBO_SENSOR_CONTAINER,
                 output_name="gazebo_sensor_preflight_retry_tail.log",
             )
-            _remove_container(GAZEBO_SENSOR_CONTAINER)
-            host._remove_official_baseline_container()
+            remove_container(GAZEBO_SENSOR_CONTAINER)
+            host.remove_official_baseline_container()
             time.sleep(2.0)
-            host._start_official_baseline_container(config, volume_overrides=official_volume_overrides)
+            host.start_official_baseline_container(config, volume_overrides=official_volume_overrides)
             time.sleep(12.0)
-            _start_gazebo_sensor_container(config, sensor_config=sensor_config)
+            start_gazebo_sensor_container(config, sensor_config=sensor_config)
             time.sleep(10.0)
-            rangefinder_preflight = _collect_rangefinder_probe(
+            rangefinder_preflight = collect_rangefinder_probe(
                 config,
                 image=baseline.runtime_image,
                 artifact_name="p8_rangefinder_preflight_baseline_retry_probe.txt",
@@ -1285,53 +1337,53 @@ def run_exploration_gate_acceptance(
         lidar_preflight = _collect_p8_lidar_x2_preflight(config, image=baseline.runtime_image)
         if not lidar_preflight.get("ok"):
             console.print("[yellow]P8 lidar/x2 preflight missed Gazebo ideal scan; restarting official baseline once[/yellow]")
-            _capture_container_log(
+            capture_container_log(
                 config,
                 container=GAZEBO_SENSOR_CONTAINER,
                 output_name="p8_gazebo_sensor_preflight_lidar_tail.log",
             )
-            _remove_container(GAZEBO_SENSOR_CONTAINER)
-            host._remove_official_baseline_container()
+            remove_container(GAZEBO_SENSOR_CONTAINER)
+            host.remove_official_baseline_container()
             time.sleep(2.0)
-            host._start_official_baseline_container(config, volume_overrides=official_volume_overrides)
+            host.start_official_baseline_container(config, volume_overrides=official_volume_overrides)
             time.sleep(12.0)
-            _start_gazebo_sensor_container(config, sensor_config=sensor_config)
+            start_gazebo_sensor_container(config, sensor_config=sensor_config)
             time.sleep(10.0)
-            rangefinder_preflight = _collect_rangefinder_probe(
+            rangefinder_preflight = collect_rangefinder_probe(
                 config,
                 image=baseline.runtime_image,
                 artifact_name="p8_rangefinder_preflight_lidar_retry_probe.txt",
             )
             lidar_preflight = _collect_p8_lidar_x2_preflight(config, image=baseline.runtime_image)
-        _start_p3_slam_container(config, runtime_config=slam_runtime_config)
+        start_p3_slam_container(config, runtime_config=slam_runtime_config)
         time.sleep(4.0)
         _start_p8_rosbag_recording(config, duration_sec=max(120.0, min(duration_sec + landing_budget_sec, 240.0)))
         time.sleep(2.0)
-        _start_p4_controller_container(config, script_path=controller_script)
-        frame_summary = _run_frame_probe(config, script_path=frame_probe_script)
-        exploration_summary = _run_exploration_probe(config, script_path=exploration_probe_script)
+        start_p4_controller_container(config, script_path=controller_script)
+        frame_summary = run_frame_probe(config, script_path=frame_probe_script)
+        exploration_summary = run_exploration_probe(config, script_path=exploration_probe_script)
         landing_wait_sec = (
             config.orchestration.landing.max_return_home_duration_sec
             + config.orchestration.landing.pre_land_hold_sec
             + config.orchestration.landing.max_landing_duration_sec
             + 20.0
         )
-        controller_summary = _wait_for_controller_summary(config, timeout_sec=landing_wait_sec)
+        controller_summary = wait_for_controller_summary(config, timeout_sec=landing_wait_sec)
         rosbag_profile = _finish_p8_rosbag_recording(config)
         counts = _message_counts(config)
 
-        graph = _collect_ros_graph(config, config.artifact_dir, image=baseline.runtime_image, network="host")
-        probe = _collect_official_dds_probe(config, config.artifact_dir, image=baseline.runtime_image, network="host")
-        x2_status = _collect_x2_status(config, image=baseline.runtime_image)
-        rangefinder_probe = _collect_rangefinder_probe(config, image=baseline.runtime_image)
-        imu_probe = _collect_imu_probe(config, image=baseline.runtime_image)
-        slam_odom_probe = _collect_odometry_probe(
+        graph = collect_ros_graph(config, config.artifact_dir, image=baseline.runtime_image, network="host")
+        probe = collect_official_dds_probe(config, config.artifact_dir, image=baseline.runtime_image, network="host")
+        x2_status = collect_x2_status(config, image=baseline.runtime_image)
+        rangefinder_probe = collect_rangefinder_probe(config, image=baseline.runtime_image)
+        imu_probe = collect_imu_probe(config, image=baseline.runtime_image)
+        slam_odom_probe = collect_odometry_probe(
             config,
             image=baseline.runtime_image,
             topic=p8.slam_odom_topic,
             artifact_name="p8_slam_odom_probe.txt",
         )
-        topic_info = _collect_topic_info(
+        topic_info = collect_topic_info(
             config,
             image=baseline.runtime_image,
             topics=(
@@ -1376,7 +1428,7 @@ def run_exploration_gate_acceptance(
                 config.orchestration.airframe_disturbance.status_topic,
             ),
         )
-        doctor = _build_p8_doctor_summary(config, runtime_config=p8_runtime_config, include_dependencies=False)
+        doctor = build_p8_doctor_summary(config, runtime_config=p8_runtime_config, include_dependencies=False)
         blockers: list[str] = []
         if not doctor.get("ok"):
             blockers.extend(str(item) for item in doctor.get("blockers", []))
@@ -1426,36 +1478,36 @@ def run_exploration_gate_acceptance(
             if counts.get(airframe_status_topic, 0) <= 0:
                 blockers.append(f"{airframe_status_topic} was not recorded for P8 mild disturbance")
         if replay_profile:
-            _append_replay_slam_health_blockers(
+            append_replay_slam_health_blockers(
                 blockers=blockers,
                 p3=p3,
                 slam_odom_result=slam_odom_probe.get("result", {}),
             )
         else:
-            _append_slam_odom_quality_blockers(
+            append_slam_odom_quality_blockers(
                 blockers=blockers,
                 p3=p3,
                 slam_odom_result=slam_odom_probe.get("result", {}),
             )
-        _append_controller_blockers(blockers=blockers, controller=controller_summary)
+        append_controller_blockers(blockers=blockers, controller=controller_summary)
         owner_summary = exploration_summary.get("owner", {}) if exploration_summary else {}
         if not owner_summary and controller_summary:
             owner_summary = controller_summary.get("owner", {})
         cmd_vel_publishers = topic_info.get(p4.cmd_vel_topic, {}).get("publisher_nodes", [])
-        _append_owner_blockers(
+        append_owner_blockers(
             blockers=blockers,
             owner_summary=owner_summary,
             cmd_vel_publishers=cmd_vel_publishers,
             p4=p4,
         )
-        _append_p5_blockers(
+        append_p5_blockers(
             blockers=blockers,
             frame_summary=frame_summary,
             rosbag_profile={"ok": True},
             counts={p5.status_topic: max(1, counts.get(p5.status_topic, 0))},
             p5=p5,
         )
-        _append_p8_blockers(
+        append_p8_blockers(
             blockers=blockers,
             exploration_summary=exploration_summary,
             rosbag_profile=rosbag_profile,
@@ -1543,21 +1595,21 @@ def run_exploration_gate_acceptance(
         }
         landing_summary = controller_summary.get("landing") if isinstance(controller_summary.get("landing"), dict) else None
         summary = apply_landing_gate(summary, config, task_name="exploration", landing=landing_summary)
-        _write_json(config.artifact_dir / "summary.json", summary)
+        write_json(config.artifact_dir / "summary.json", summary)
         _write_foxglove_notes(config)
     finally:
-        host._capture_official_baseline_log(config=config)
-        _capture_container_log(config, container=GAZEBO_SENSOR_CONTAINER, output_name="gazebo_sensor_tail.log")
-        _capture_container_log(config, container=SLAM_BACKEND_CONTAINER, output_name="slam_backend_tail.log")
-        _capture_container_log(config, container=P4_CONTROLLER_CONTAINER, output_name="fcu_controller_tail.log")
-        _capture_container_log(config, container=P8_ROSBAG_CONTAINER, output_name="rosbag_tail.log")
-        _remove_container(P8_ROSBAG_CONTAINER)
-        _remove_container(P4_CONTROLLER_CONTAINER)
-        _remove_container(SLAM_BACKEND_CONTAINER)
-        _remove_container(GAZEBO_SENSOR_CONTAINER)
-        host._remove_official_baseline_container()
+        host.capture_official_baseline_log(config=config)
+        capture_container_log(config, container=GAZEBO_SENSOR_CONTAINER, output_name="gazebo_sensor_tail.log")
+        capture_container_log(config, container=SLAM_BACKEND_CONTAINER, output_name="slam_backend_tail.log")
+        capture_container_log(config, container=P4_CONTROLLER_CONTAINER, output_name="fcu_controller_tail.log")
+        capture_container_log(config, container=P8_ROSBAG_CONTAINER, output_name="rosbag_tail.log")
+        remove_container(P8_ROSBAG_CONTAINER)
+        remove_container(P4_CONTROLLER_CONTAINER)
+        remove_container(SLAM_BACKEND_CONTAINER)
+        remove_container(GAZEBO_SENSOR_CONTAINER)
+        host.remove_official_baseline_container()
         try:
-            host._compose_stop(config)
+            host.compose_stop(config)
         except DockerException:
             pass
     if summary is None:
@@ -1568,7 +1620,7 @@ def run_exploration_gate_acceptance(
             "config_sources": config.config_sources_summary(),
             "task_parameters": task_config.to_summary(),
         }
-        _write_json(config.artifact_dir / "summary.json", summary)
+        write_json(config.artifact_dir / "summary.json", summary)
     color = "green" if summary["ok"] else "red"
     console.print(f"[{color}]P8 exploration gate acceptance completed rc={0 if summary['ok'] else 30}[/{color}]")
     console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")

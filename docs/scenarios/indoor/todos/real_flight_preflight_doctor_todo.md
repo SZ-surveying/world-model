@@ -75,8 +75,8 @@ real preflight doctor 只做真机起飞前最基础的非执行性检查：
 - [x] 依赖检查按 `fcu_bridge_mode` 注册器展开；`navlab_mavlink` 不要求 MAVROS / `mavros_msgs`。
 - [x] `navlab_mavlink` 检查本地 ROS package，例如 `navlab_slam_bringup`、`navlab_external_nav_bridge`、`ydlidar_ros2_driver`。
 - [x] 检查 SLAM 相关 package 存在，例如 `navlab_slam_bringup`。
-- [x] 检查 companion Python 入口可 import，例如 `navlab.companion.cli`。
-- [x] 检查 SLAM Python 入口可 import，例如 `navlab.slam.cli`。
+- [x] 检查 companion Python 入口可 import。当前过渡入口是 `navlab.sim.companion.runtime.cli`，目标是 real/sim companion runtime 分包。
+- [x] 检查 SLAM Python 入口可 import。当前过渡入口是 `navlab.common.slam.cli`，目标是 real/sim SLAM runtime 分包。
 - [x] summary 记录 command、ROS package、Python module 三类依赖结果。
 - [x] 依赖检查输出更清晰的 console table / panel。
 - [x] 依赖 blocker 使用稳定字符串，例如 `required_command_missing`、`required_ros_package_missing`、`required_python_module_missing`。

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from navlab.gazebo_sensor.airframe_disturbance import (
+from navlab.sim.gazebo_sensor.airframe_disturbance import (
     AirframeDisturbanceGateThresholds,
     AirframeDisturbanceProfile,
     apply_profile_to_iris_sdf,

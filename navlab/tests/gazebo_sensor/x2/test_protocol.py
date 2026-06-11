@@ -5,7 +5,7 @@ import struct
 
 import pytest
 
-from navlab.gazebo_sensor.x2.protocol import (
+from navlab.sim.gazebo_sensor.x2.protocol import (
     DISTANCE_SCALE,
     PH,
     PH_BYTES,

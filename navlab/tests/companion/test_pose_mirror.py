@@ -4,7 +4,7 @@ import json
 from math import isclose, pi
 from types import SimpleNamespace
 
-from navlab.companion.nodes.pose_mirror import (
+from navlab.real.companion.nodes.pose_mirror import (
     MavlinkTelemetryStatus,
     NedPoseSample,
     PoseMirrorStatus,
@@ -20,6 +20,7 @@ from navlab.companion.nodes.pose_mirror import (
     next_imu_output_stamp_nanoseconds,
     next_monotonic_stamp_nanoseconds,
     normalize_mavlink_param_value,
+    parse_ekf_source_set_from_statustext,
     stamp_fields_to_nanoseconds,
 )
 
@@ -165,7 +166,10 @@ def test_encode_mavlink_telemetry_status_is_json_with_message_counts() -> None:
             local_position_present=True,
             local_position_age_ms=12.3456,
             local_position_valid=True,
-            active_source_set="SRC1",
+            active_source_set="SRC2",
+            configured_external_nav_source_set="SRC1",
+            observed_ekf_source_set="SRC2",
+            observed_ekf_source_set_text="Using EKF Source Set 2",
             external_nav_seen_by_fcu=True,
             ekf_source_set_switch={
                 "enabled": True,
@@ -198,7 +202,10 @@ def test_encode_mavlink_telemetry_status_is_json_with_message_counts() -> None:
     assert data["mode_name"] == "GUIDED"
     assert data["local_position"]["age_ms"] == 12.346
     assert data["local_position_valid"] is True
-    assert data["active_source_set"] == "SRC1"
+    assert data["active_source_set"] == "SRC2"
+    assert data["configured_external_nav_source_set"] == "SRC1"
+    assert data["observed_ekf_source_set"] == "SRC2"
+    assert data["observed_ekf_source_set_text"] == "Using EKF Source Set 2"
     assert data["external_nav_seen_by_fcu"] is True
     assert data["ekf_source_set_switch"]["target_source_set"] == "SRC1"
     assert data["ekf_source_set_switch"]["ack_result"] == 0
@@ -208,6 +215,12 @@ def test_encode_mavlink_telemetry_status_is_json_with_message_counts() -> None:
     assert data["command_acks"][0]["command"] == 400
     assert data["statustext"][0]["text"] == "Mode GUIDED"
     assert data["message_counts"]["LOCAL_POSITION_NED"] == 5
+
+
+def test_parse_ekf_source_set_from_statustext() -> None:
+    assert parse_ekf_source_set_from_statustext("Using EKF Source Set 2") == "SRC2"
+    assert parse_ekf_source_set_from_statustext("EKF3 source set changed to 1") == "SRC1"
+    assert parse_ekf_source_set_from_statustext("Mode GUIDED") is None
 
 
 def test_normalize_mavlink_param_value_preserves_int_params() -> None:

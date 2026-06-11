@@ -3,8 +3,8 @@ from __future__ import annotations
 from math import isclose
 
 from navlab.common.perception.contract import DEFAULT_SCAN_CONTRACT
-from navlab.companion.nodes.world_markers import _apply_uav_pose, _build_local_marker_offsets
-from navlab.companion.world_markers import (
+from navlab.sim.companion.nodes.world_markers import apply_uav_pose, build_local_marker_offsets
+from navlab.sim.companion.runtime.world_markers import (
     MarkerPose,
     compute_forward_clearance,
     load_world_marker_specs,
@@ -215,15 +215,15 @@ def test_figure8_origin_and_both_loops_are_navigable_corridors() -> None:
 def test_uav_marker_specs_follow_runtime_pose() -> None:
     specs = load_world_marker_specs(FIGURE8_WORLD)
     root_pose = load_world_model_pose(FIGURE8_WORLD, "navlab_iq_quad")
-    local_offsets = _build_local_marker_offsets(specs, root_pose=root_pose)
+    local_offsets = build_local_marker_offsets(specs, root_pose=root_pose)
     by_name = {spec.namespace: spec for spec in specs}
 
-    moved_body = _apply_uav_pose(
+    moved_body = apply_uav_pose(
         by_name["navlab_iq_quad_body"],
         current_pose=MarkerPose(x=1.0, y=2.0, z=0.2, yaw=0.0),
         local_offsets=local_offsets,
     )
-    moved_rotor = _apply_uav_pose(
+    moved_rotor = apply_uav_pose(
         by_name["navlab_iq_quad_rotor_0_disc"],
         current_pose=MarkerPose(x=1.0, y=2.0, z=0.2, yaw=0.0),
         local_offsets=local_offsets,
@@ -238,11 +238,11 @@ def test_uav_marker_specs_follow_runtime_pose() -> None:
 def test_obstacle_marker_stays_static_when_uav_pose_changes() -> None:
     specs = load_world_marker_specs(FIGURE8_WORLD)
     root_pose = load_world_model_pose(FIGURE8_WORLD, "navlab_iq_quad")
-    local_offsets = _build_local_marker_offsets(specs, root_pose=root_pose)
+    local_offsets = build_local_marker_offsets(specs, root_pose=root_pose)
     by_name = {spec.namespace: spec for spec in specs}
 
     obstacle = by_name["inner_right_island"]
-    resolved = _apply_uav_pose(
+    resolved = apply_uav_pose(
         obstacle,
         current_pose=MarkerPose(x=2.5, y=-0.7, z=1.0, yaw=1.2),
         local_offsets=local_offsets,

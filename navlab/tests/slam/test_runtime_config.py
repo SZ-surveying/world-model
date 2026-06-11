@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from navlab.slam.backends import SlamBackend, SlamBackendRegistry
-from navlab.slam.config import RuntimeConfig
-from navlab.slam.runtime import build_command
+from navlab.common.slam.backends import SlamBackend, SlamBackendRegistry
+from navlab.common.slam.config import RuntimeConfig
+from navlab.common.slam.runtime import build_command
 
 
 def test_slam_runtime_config_loads_cartographer_contract() -> None:

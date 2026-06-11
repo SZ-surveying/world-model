@@ -1,24 +1,28 @@
 from __future__ import annotations
 
+import functools
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, cast
 
 import typer
 from rich.console import Console
 
-from src.config import load_motor_debug_task_config
-from src.tasks.build import BuildTask, ImageKind
-from src.tasks.built_in.motor_debug import build_motor_debug_plan
-from src.tasks.doctor import DoctorTask
-from src.tasks.real_prepare import (
+from navlab.common.logging import init_logger
+from navlab.real.companion.nodes.motor_debug import build_motor_debug_plan
+from src.configs.project_config import init_project_config
+from src.images import ImageKind, run_image_build
+from src.tasks.built_in.motor_debug import MotorDebugTaskConfig
+from src.tasks.registry import TaskRegistry
+from src.workflows.real.common_doctor import run_real_common_doctor
+from src.workflows.real.preflight import run_real_preflight_doctor, run_runtime_doctor
+from src.workflows.real.prepare import (
     RealPreparePhaseResult,
     execute_real_prepare_phase,
-    run_real_common_doctor,
-    run_real_task_doctor,
     stop_real_prepare_phase,
 )
-from src.tasks.registry import TaskRegistry
+from src.workflows.real.task_doctor import run_real_task_doctor
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
@@ -33,7 +37,33 @@ class RealPrepareCommonDoctorChainResult:
     interrupted: bool = False
 
 
+def _init_runtime_app(config_path: str | None, log_path: str | None) -> None:
+    init_project_config(config_path)
+    if log_path is not None:
+        init_logger(log_path)
+
+
+def with_runtime_init(func: Callable[..., object] | None = None) -> Callable[..., object]:
+    def decorator(fn: Callable[..., object]) -> Callable[..., object]:
+        @functools.wraps(fn)
+        def wrapper(*args: object, **kwargs: object) -> object:
+            config_path = kwargs.get("orchestration_config") or kwargs.get("config")
+            log_path = kwargs.get("log_file")
+            _init_runtime_app(
+                str(config_path) if config_path is not None else None,
+                str(log_path) if log_path is not None else None,
+            )
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    if func is None:
+        return decorator
+    return decorator(func)
+
+
 @app.command("build")
+@with_runtime_init
 def image_build_command(
     kind: Annotated[
         str,
@@ -44,11 +74,11 @@ def image_build_command(
         typer.Option("--tag", help="Override the configured NavLab image tag strategy"),
     ] = None,
 ) -> None:
-    task = cast(BuildTask, TaskRegistry.create("build"))
-    raise typer.Exit(task.run(kind=cast(ImageKind, kind), tag=tag, console=console))
+    raise typer.Exit(run_image_build(kind=cast(ImageKind, kind), tag=tag, console=console))
 
 
 @app.command("doctor")
+@with_runtime_init
 def runtime_doctor_command(
     orchestration_config: Annotated[
         str | None,
@@ -81,9 +111,8 @@ def runtime_doctor_command(
             )
         )
 
-    task = cast(DoctorTask, TaskRegistry.create("doctor"))
     raise typer.Exit(
-        task.run(
+        run_runtime_doctor(
             config_path=orchestration_config,
             task_config_path=task_config,
             console=console,
@@ -95,6 +124,7 @@ def runtime_doctor_command(
 
 
 @app.command("run")
+@with_runtime_init
 def run_task_command(
     task_name: Annotated[
         str,
@@ -202,7 +232,7 @@ def run_task_command(
         )
         no_props_confirmed = _confirmation_value("NAVLAB_CONFIRM_NO_PROPS", cli_value=confirm_no_props)
         if normalized == "motor-debug":
-            motor_debug_config = load_motor_debug_task_config(
+            motor_debug_config = MotorDebugTaskConfig.from_file(
                 task_config_path=task_config,
                 cli_motor_percent=motor_percent,
                 cli_motor_sec=motor_sec,
@@ -449,8 +479,7 @@ def _run_real_doctor_chain(
 
 
 def _run_real_preflight_only(*, orchestration_config: str | None, force: bool) -> int:
-    doctor = cast(DoctorTask, TaskRegistry.create("doctor"))
-    return doctor.run(
+    return run_real_preflight_doctor(
         config_path=orchestration_config,
         task_config_path=None,
         console=console,
@@ -571,7 +600,7 @@ def _confirmation_value(env_name: str, *, cli_value: bool) -> bool:
 
 
 def _runtime_backend_mode_from_env() -> tuple[str, str]:
-    from src.project_config import DEFAULT_RUNTIME_BACKEND, DEFAULT_RUNTIME_MODE
+    from src.configs.project_config import DEFAULT_RUNTIME_BACKEND, DEFAULT_RUNTIME_MODE
 
     backend = os.environ.get("NAVLAB_RUNTIME_BACKEND", DEFAULT_RUNTIME_BACKEND).strip().lower()
     mode = os.environ.get("NAVLAB_RUNTIME_MODE", DEFAULT_RUNTIME_MODE).strip().lower()

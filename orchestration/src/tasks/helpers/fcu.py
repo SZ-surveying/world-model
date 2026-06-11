@@ -1,55 +1,22 @@
 from __future__ import annotations
 
 import json
-import os
 import shlex
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import tomli_w
 from python_on_whales import DockerClient
-from python_on_whales.exceptions import DockerException
-from rich.console import Console
 
 from src import host
-from src.config import RunConfig
-from src.tasks.helpers.official_stack import (
-    _build_doctor_summary,
-    _collect_official_dds_probe,
-    _collect_ros_graph,
-    _validate_official_rosbag_profile,
-    _write_json,
-    _write_text,
-)
+from src.configs.run_config import RunConfig
+from src.tasks.helpers.artifacts import file_sha256, write_text
 from src.tasks.helpers.navlab_models import (
-    GAZEBO_SENSOR_CONTAINER,
-    OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
-    _capture_container_log,
-    _collect_topic_info,
-    _file_sha256,
-    _profile_topics,
-    _remove_container,
-    _start_gazebo_sensor_container,
-    _write_p1_bridge_override,
-    _write_p1_vendor_profile,
+    remove_container,
 )
-from src.tasks.helpers.sensors import (
-    OFFICIAL_GAZEBO_IRIS_PARAMS,
-    OFFICIAL_IRIS_WITH_LIDAR_MODEL,
-    _collect_imu_probe,
-    _collect_rangefinder_probe,
-    _write_p2_model_overlay,
-    _write_p2_param_overlay,
-    _write_p2_sensor_config,
-)
-from src.tasks.helpers.slam import (
-    SLAM_BACKEND_CONTAINER,
-    _build_p3_doctor_summary,
-    _start_p3_slam_container,
-    _write_p3_slam_runtime_config,
-)
+from src.tasks.helpers.official_stack import build_doctor_summary
+from src.tasks.helpers.rosbag_profiles import profile_topics
 
 P4_CONTROLLER_CONTAINER = "navlab-p4-fcu-controller"
 P4_ROSBAG_CONTAINER = "navlab-p4-rosbag"
@@ -66,7 +33,7 @@ def _baseline_env(config: RunConfig) -> dict[str, str]:
     }
 
 
-def _write_p4_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
+def write_p4_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
     p4 = config.orchestration.fcu_controller
     data = {
         "fcu_controller": {
@@ -122,7 +89,7 @@ def _write_p4_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
-    return {"path": str(path), "workspace_path": host._workspace_path(path), "sha256": _file_sha256(path), "data": data}
+    return {"path": str(path), "workspace_path": host.workspace_path(path), "sha256": file_sha256(path), "data": data}
 
 
 def _controller_runtime_script(spec: dict[str, Any]) -> str:
@@ -1056,7 +1023,7 @@ raise SystemExit(main())
 """
 
 
-def _write_controller_runtime_script(
+def write_controller_runtime_script(
     config: RunConfig,
     script_path: Path,
     *,
@@ -1070,7 +1037,7 @@ def _write_controller_runtime_script(
     summary_file = config.artifact_dir / "controller_runtime_summary.json"
     spec = {
         "duration_sec": duration_sec,
-        "summary_file": host._workspace_path(summary_file),
+        "summary_file": host.workspace_path(summary_file),
         "control_route": p4.control_route,
         "mavlink_bootstrap_endpoint": p4.mavlink_bootstrap_endpoint,
         "mavlink_bootstrap_source_system": p4.mavlink_bootstrap_source_system,
@@ -1126,17 +1093,17 @@ def _write_controller_runtime_script(
         "uses_gazebo_truth_as_input": config.orchestration.landing.uses_gazebo_truth_as_input,
     }
     script_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_text(script_path, _controller_runtime_script(spec))
+    write_text(script_path, _controller_runtime_script(spec))
     return {
         "path": str(script_path),
-        "workspace_path": host._workspace_path(script_path),
-        "sha256": _file_sha256(script_path),
+        "workspace_path": host.workspace_path(script_path),
+        "sha256": file_sha256(script_path),
         "summary_file": str(summary_file),
         "spec": spec,
     }
 
 
-def _source_official_setup(command: str) -> str:
+def source_official_setup(command: str) -> str:
     return (
         "source /opt/ros/jazzy/setup.bash && "
         "source /opt/navlab_official_ws/install/setup.bash && "
@@ -1144,14 +1111,14 @@ def _source_official_setup(command: str) -> str:
     )
 
 
-def _start_p4_controller_container(config: RunConfig, *, script_path: Path) -> None:
-    _remove_container(P4_CONTROLLER_CONTAINER)
+def start_p4_controller_container(config: RunConfig, *, script_path: Path) -> None:
+    remove_container(P4_CONTROLLER_CONTAINER)
     DockerClient().run(
         config.orchestration.official_baseline.runtime_image,
         [
             "bash",
             "-lc",
-            _source_official_setup(f"python3 {shlex.quote(host._workspace_path(script_path))}"),
+            source_official_setup(f"python3 {shlex.quote(host.workspace_path(script_path))}"),
         ],
         detach=True,
         name=P4_CONTROLLER_CONTAINER,
@@ -1160,87 +1127,6 @@ def _start_p4_controller_container(config: RunConfig, *, script_path: Path) -> N
         workdir="/workspace",
         envs={**_baseline_env(config), "PYTHONPATH": "/workspace"},
     )
-
-
-def _p4_rosbag_shell_command(config: RunConfig, *, duration_sec: float) -> tuple[Path, list[str], list[str], str]:
-    profile_path = Path(config.fcu_controller_rosbag_profile)
-    required, optional, topics = _profile_topics(profile_path)
-    if not profile_path.is_file() or not topics:
-        return profile_path, required, optional, ""
-    container_rosbag = Path("/workspace") / config.artifact_dir / "rosbag"
-    topic_args = " ".join(shlex.quote(topic) for topic in topics)
-    command = (
-        f"rm -rf {shlex.quote(str(container_rosbag))} && "
-        f"mkdir -p {shlex.quote(str(container_rosbag.parent))} && "
-        "set +e; "
-        f"timeout --signal=INT {duration_sec:g} "
-        f"ros2 bag record -s mcap -o {shlex.quote(str(container_rosbag))} --topics {topic_args}; "
-        "rc=$?; "
-        "set -e; "
-        'if [ "$rc" != "0" ] && [ "$rc" != "124" ] && [ "$rc" != "130" ]; then exit "$rc"; fi; '
-        f"for i in $(seq 1 40); do [ -f {shlex.quote(str(container_rosbag / 'metadata.yaml'))} ] && exit 0; "
-        "sleep 0.25; done; exit 2"
-    )
-    return profile_path, required, optional, command
-
-
-def _start_p4_rosbag_recording(config: RunConfig, *, duration_sec: float) -> None:
-    _remove_container(P4_ROSBAG_CONTAINER)
-    profile_path, required, optional, command = _p4_rosbag_shell_command(config, duration_sec=duration_sec)
-    if not command:
-        _write_json(
-            config.artifact_dir / "rosbag_profile_summary.json",
-            {
-                "ok": False,
-                "recorded": False,
-                "profile": str(profile_path),
-                "required_topics": required,
-                "optional_topics": optional,
-                "reason": "rosbag profile missing or empty",
-            },
-        )
-        return
-    DockerClient().run(
-        config.orchestration.official_baseline.runtime_image,
-        ["bash", "-lc", _source_official_setup(command)],
-        detach=True,
-        name=P4_ROSBAG_CONTAINER,
-        networks=["host"],
-        volumes=[(Path.cwd(), "/workspace")],
-        workdir="/workspace",
-        envs={**_baseline_env(config), "PYTHONPATH": "/workspace"},
-    )
-
-
-def _finish_p4_rosbag_recording(config: RunConfig) -> dict[str, Any]:
-    profile_path = Path(config.fcu_controller_rosbag_profile)
-    required, optional, _topics = _profile_topics(profile_path)
-    metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
-    for _ in range(160):
-        if metadata.is_file():
-            break
-        time.sleep(0.25)
-    if not metadata.is_file():
-        summary = {
-            "ok": False,
-            "recorded": False,
-            "profile": str(profile_path),
-            "required_topics": required,
-            "optional_topics": optional,
-            "reason": "rosbag metadata was not produced",
-        }
-        _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
-        return summary
-    summary = _validate_official_rosbag_profile(
-        profile=profile_path,
-        metadata=metadata,
-        required=required,
-        optional=optional,
-    )
-    summary["rosbag_path"] = str(config.artifact_dir / "rosbag")
-    summary["mcap_path"] = str(config.artifact_dir / "rosbag" / "rosbag_0.mcap")
-    _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
-    return summary
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -1252,7 +1138,7 @@ def _load_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _wait_for_controller_summary(config: RunConfig, *, timeout_sec: float) -> dict[str, Any]:
+def wait_for_controller_summary(config: RunConfig, *, timeout_sec: float) -> dict[str, Any]:
     summary_path = config.artifact_dir / "controller_runtime_summary.json"
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
@@ -1267,12 +1153,12 @@ def _message_counts(config: RunConfig) -> dict[str, int]:
     metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
     if not metadata.is_file():
         return {}
-    from src.tasks.helpers.official_stack import _load_rosbag_metadata_counts
+    from src.tasks.helpers.rosbag_profiles import load_rosbag_metadata_counts
 
-    return _load_rosbag_metadata_counts(metadata)
+    return load_rosbag_metadata_counts(metadata)
 
 
-def _append_owner_blockers(
+def append_owner_blockers(
     *,
     blockers: list[str],
     owner_summary: dict[str, Any],
@@ -1292,7 +1178,7 @@ def _append_owner_blockers(
         blockers.append("direct set pose count is non-zero")
 
 
-def _append_controller_blockers(*, blockers: list[str], controller: dict[str, Any]) -> None:
+def append_controller_blockers(*, blockers: list[str], controller: dict[str, Any]) -> None:
     if not controller:
         blockers.append("P4 controller runtime summary is missing")
         return
@@ -1319,14 +1205,14 @@ def _append_controller_blockers(*, blockers: list[str], controller: dict[str, An
         blockers.append("controller did not publish setpoint output diagnostics")
 
 
-def _build_p4_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict[str, Any]:
+def build_p4_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict[str, Any]:
     p4 = config.orchestration.fcu_controller
-    baseline_doctor = _build_doctor_summary(config)
+    baseline_doctor = build_doctor_summary(config)
     blockers = [str(item) for item in baseline_doctor.get("blockers", [])]
     if p4.control_route not in SUPPORTED_CONTROL_ROUTES:
         blockers.append(f"control_route={p4.control_route!r} is not supported")
     profile_path = Path(p4.rosbag_profile)
-    required, optional, topics = _profile_topics(profile_path)
+    required, optional, topics = profile_topics(profile_path)
     if not profile_path.is_file() or not topics:
         blockers.append("P4 rosbag profile is missing or empty")
     interface_checks: dict[str, dict[str, Any]] = {}
@@ -1335,7 +1221,7 @@ def _build_p4_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict
         "ardupilot_msgs/srv/ArmMotors",
         "ardupilot_msgs/srv/Takeoff",
     ):
-        rc, output = host._docker_run_ros_shell_capture(
+        rc, output = host.docker_run_ros_shell_capture(
             config=config,
             image=config.orchestration.official_baseline.runtime_image,
             shell_command=f"ros2 interface show {shlex.quote(interface)}",
@@ -1348,7 +1234,7 @@ def _build_p4_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict
             blockers.append(f"official control interface {interface} is missing")
     pymavlink_check: dict[str, Any] = {"required": p4.control_route == "mavlink_bootstrap_plus_dds_cmd_vel"}
     if p4.control_route == "mavlink_bootstrap_plus_dds_cmd_vel":
-        rc, output = host._docker_run_ros_shell_capture(
+        rc, output = host.docker_run_ros_shell_capture(
             config=config,
             image=config.orchestration.official_baseline.runtime_image,
             shell_command="python3 - <<'PY'\nimport pymavlink\nprint('pymavlink ok')\nPY",
@@ -1369,7 +1255,7 @@ def _build_p4_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict
             "mavlink_bootstrap_claim": p4.control_route == "mavlink_bootstrap_plus_dds_cmd_vel",
             "mavlink_bootstrap_endpoint": p4.mavlink_bootstrap_endpoint,
             "runtime_config": str(runtime_config),
-            "runtime_config_sha256": _file_sha256(runtime_config) if runtime_config.is_file() else "",
+            "runtime_config_sha256": file_sha256(runtime_config) if runtime_config.is_file() else "",
             "owner_name": p4.owner_name,
             "owner_id": p4.owner_id,
             "required_services": [
@@ -1396,7 +1282,7 @@ def _build_p4_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict
 
 def _write_foxglove_notes(config: RunConfig) -> None:
     p4 = config.orchestration.fcu_controller
-    _write_text(
+    write_text(
         config.artifact_dir / "foxglove_notes.md",
         "\n".join(
             [

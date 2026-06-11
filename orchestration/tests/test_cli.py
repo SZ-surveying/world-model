@@ -47,18 +47,17 @@ def test_real_preflight_doctor_is_not_a_top_level_command() -> None:
 
 def test_runtime_doctor_stops_when_real_preflight_fails(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
-    from src.tasks.real_preflight import RealPreflightDoctorTask
 
     calls: list[dict[str, object]] = []
 
-    def fake_run(self, **kwargs):  # noqa: ANN001
+    def fake_run(**kwargs):  # noqa: ANN001
         calls.append(kwargs)
         return 7
 
     def fake_prepare(**kwargs):  # noqa: ANN001
         raise AssertionError("prepare must not start when preflight fails")
 
-    monkeypatch.setattr(RealPreflightDoctorTask, "run", fake_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     runner = CliRunner()
 
@@ -77,11 +76,10 @@ def test_runtime_doctor_stops_when_real_preflight_fails(monkeypatch) -> None:  #
 
 def test_runtime_doctor_runs_preflight_prepare_common_doctor_and_stops(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
-    from src.tasks.real_preflight import RealPreflightDoctorTask
 
     calls: list[str] = []
 
-    def fake_run(self, **kwargs):  # noqa: ANN001
+    def fake_run(**kwargs):  # noqa: ANN001
         calls.append(f"preflight:force={kwargs['force_install']}")
         return 0
 
@@ -96,7 +94,7 @@ def test_runtime_doctor_runs_preflight_prepare_common_doctor_and_stops(monkeypat
     def fake_stop(result):  # noqa: ANN001
         calls.append("stop_prepare")
 
-    monkeypatch.setattr(RealPreflightDoctorTask, "run", fake_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     monkeypatch.setattr(cli, "run_real_common_doctor", fake_common_doctor)
     monkeypatch.setattr(cli, "stop_real_prepare_phase", fake_stop)
@@ -115,11 +113,10 @@ def test_runtime_doctor_runs_preflight_prepare_common_doctor_and_stops(monkeypat
 
 def test_runtime_doctor_stops_prepare_when_common_doctor_fails(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
-    from src.tasks.real_preflight import RealPreflightDoctorTask
 
     calls: list[str] = []
 
-    def fake_run(self, **kwargs):  # noqa: ANN001
+    def fake_run(**kwargs):  # noqa: ANN001
         calls.append("preflight")
         return 0
 
@@ -134,7 +131,7 @@ def test_runtime_doctor_stops_prepare_when_common_doctor_fails(monkeypatch) -> N
     def fake_stop(result):  # noqa: ANN001
         calls.append("stop_prepare")
 
-    monkeypatch.setattr(RealPreflightDoctorTask, "run", fake_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     monkeypatch.setattr(cli, "run_real_common_doctor", fake_common_doctor)
     monkeypatch.setattr(cli, "stop_real_prepare_phase", fake_stop)
@@ -152,11 +149,10 @@ def test_runtime_doctor_stops_prepare_when_common_doctor_fails(monkeypatch) -> N
 
 def test_runtime_doctor_can_keep_prepare_running(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
-    from src.tasks.real_preflight import RealPreflightDoctorTask
 
     calls: list[str] = []
 
-    def fake_run(self, **kwargs):  # noqa: ANN001
+    def fake_run(**kwargs):  # noqa: ANN001
         calls.append("preflight")
         return 0
 
@@ -171,7 +167,7 @@ def test_runtime_doctor_can_keep_prepare_running(monkeypatch) -> None:  # noqa: 
     def fake_stop(result):  # noqa: ANN001
         calls.append("stop_prepare")
 
-    monkeypatch.setattr(RealPreflightDoctorTask, "run", fake_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     monkeypatch.setattr(cli, "run_real_common_doctor", fake_common_doctor)
     monkeypatch.setattr(cli, "stop_real_prepare_phase", fake_stop)
@@ -189,7 +185,7 @@ def test_runtime_doctor_can_keep_prepare_running(monkeypatch) -> None:  # noqa: 
 
 
 def test_run_wrapper_dispatches_hover(monkeypatch) -> None:  # noqa: ANN001
-    from src.tasks.hover import HoverAcceptanceTask
+    from src.tasks.built_in.hover import HoverAcceptanceTask
 
     calls: list[dict[str, object]] = []
 
@@ -209,7 +205,7 @@ def test_run_wrapper_dispatches_hover(monkeypatch) -> None:  # noqa: ANN001
 
 
 def test_run_wrapper_dry_run_skips_simulation_champion(monkeypatch) -> None:  # noqa: ANN001
-    from src.tasks.hover import HoverAcceptanceTask
+    from src.tasks.built_in.hover import HoverAcceptanceTask
 
     def fake_run(self, **kwargs):  # noqa: ANN001
         raise AssertionError("dry-run must not execute the hover champion")
@@ -230,11 +226,10 @@ def test_run_wrapper_dry_run_skips_simulation_champion(monkeypatch) -> None:  # 
 
 def test_run_wrapper_real_dry_run_stops_after_preflight_prepare_and_task_doctor(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
-    from src.tasks.doctor import DoctorTask
 
     calls: list[str] = []
 
-    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+    def fake_doctor_run(**kwargs):  # noqa: ANN001
         calls.append("preflight")
         return 0
 
@@ -253,7 +248,7 @@ def test_run_wrapper_real_dry_run_stops_after_preflight_prepare_and_task_doctor(
     def fake_stop(result):  # noqa: ANN001
         calls.append("stop_prepare")
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     monkeypatch.setattr(cli, "run_real_common_doctor", fake_common_doctor)
     monkeypatch.setattr(cli, "run_real_task_doctor", fake_task_doctor)
@@ -273,19 +268,19 @@ def test_run_wrapper_real_dry_run_stops_after_preflight_prepare_and_task_doctor(
 
 
 def test_run_wrapper_blocks_when_real_preflight_fails(monkeypatch) -> None:  # noqa: ANN001
-    from src.tasks.doctor import DoctorTask
-    from src.tasks.hover import HoverAcceptanceTask
+    from src import cli
+    from src.tasks.built_in.hover import HoverAcceptanceTask
 
     doctor_calls: list[dict[str, object]] = []
 
-    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+    def fake_doctor_run(**kwargs):  # noqa: ANN001
         doctor_calls.append(kwargs)
         return 7
 
     def fake_hover_run(self, **kwargs):  # noqa: ANN001
         raise AssertionError("real mode must not run hover acceptance directly")
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(HoverAcceptanceTask, "run", fake_hover_run)
     runner = CliRunner()
 
@@ -300,19 +295,19 @@ def test_run_wrapper_blocks_when_real_preflight_fails(monkeypatch) -> None:  # n
 
 
 def test_run_wrapper_real_motor_debug_dry_run_plans_without_spinning(monkeypatch) -> None:  # noqa: ANN001
+    from src import cli
     from src.tasks.built_in.motor_debug import BuiltInMotorDebugTask
-    from src.tasks.doctor import DoctorTask
 
     calls: list[str] = []
 
-    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+    def fake_doctor_run(**kwargs):  # noqa: ANN001
         calls.append("preflight")
         return 0
 
     def fake_motor_debug(self, **kwargs):  # noqa: ANN001
         raise AssertionError("motor-debug dry-run must not spin motors")
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(BuiltInMotorDebugTask, "run", fake_motor_debug)
     runner = CliRunner()
 
@@ -336,16 +331,16 @@ def test_run_wrapper_real_motor_debug_dry_run_plans_without_spinning(monkeypatch
 
 
 def test_run_wrapper_real_motor_debug_requires_no_props_and_safety(monkeypatch) -> None:  # noqa: ANN001
+    from src import cli
     from src.tasks.built_in.motor_debug import BuiltInMotorDebugTask
-    from src.tasks.doctor import DoctorTask
 
-    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+    def fake_doctor_run(**kwargs):  # noqa: ANN001
         return 0
 
     def fake_motor_debug(self, **kwargs):  # noqa: ANN001
         raise AssertionError("motor-debug must not run without confirmations")
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(BuiltInMotorDebugTask, "run", fake_motor_debug)
     runner = CliRunner()
 
@@ -379,12 +374,11 @@ def test_run_wrapper_motor_debug_is_real_only() -> None:
 def test_run_wrapper_real_motor_debug_dispatches_with_confirmations(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
     from src.tasks.built_in.motor_debug import BuiltInMotorDebugTask
-    from src.tasks.doctor import DoctorTask
 
     calls: list[dict[str, object]] = []
     events: list[str] = []
 
-    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+    def fake_doctor_run(**kwargs):  # noqa: ANN001
         events.append("preflight")
         return 0
 
@@ -408,7 +402,7 @@ def test_run_wrapper_real_motor_debug_dispatches_with_confirmations(monkeypatch)
     def fake_stop(_result):  # noqa: ANN001
         events.append("stop-prepare")
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     monkeypatch.setattr(cli, "run_real_common_doctor", fake_common_doctor)
     monkeypatch.setattr(cli, "run_real_task_doctor", fake_task_doctor)
@@ -446,11 +440,10 @@ def test_run_wrapper_real_motor_debug_dispatches_with_confirmations(monkeypatch)
 def test_run_wrapper_real_motor_debug_interrupt_stops_prepare(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
     from src.tasks.built_in.motor_debug import BuiltInMotorDebugTask
-    from src.tasks.doctor import DoctorTask
 
     events: list[str] = []
 
-    def fake_doctor_run(self, **_kwargs):  # noqa: ANN001
+    def fake_doctor_run(**_kwargs):  # noqa: ANN001
         events.append("preflight")
         return 0
 
@@ -473,7 +466,7 @@ def test_run_wrapper_real_motor_debug_interrupt_stops_prepare(monkeypatch) -> No
     def fake_stop(_result):  # noqa: ANN001
         events.append("stop-prepare")
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     monkeypatch.setattr(cli, "run_real_common_doctor", fake_common_doctor)
     monkeypatch.setattr(cli, "run_real_task_doctor", fake_task_doctor)
@@ -503,11 +496,10 @@ def test_run_wrapper_real_motor_debug_interrupt_stops_prepare(monkeypatch) -> No
 def test_run_wrapper_real_motor_debug_accepts_env_confirmations(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
     from src.tasks.built_in.motor_debug import BuiltInMotorDebugTask
-    from src.tasks.doctor import DoctorTask
 
     calls: list[dict[str, object]] = []
 
-    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+    def fake_doctor_run(**kwargs):  # noqa: ANN001
         return 0
 
     def fake_motor_debug(self, **kwargs):  # noqa: ANN001
@@ -523,7 +515,7 @@ def test_run_wrapper_real_motor_debug_accepts_env_confirmations(monkeypatch) -> 
     def fake_task_doctor(**kwargs):  # noqa: ANN001
         return 0
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     monkeypatch.setattr(cli, "run_real_common_doctor", fake_common_doctor)
     monkeypatch.setattr(cli, "run_real_task_doctor", fake_task_doctor)
@@ -552,16 +544,16 @@ def test_run_wrapper_real_motor_debug_accepts_env_confirmations(monkeypatch) -> 
 
 
 def test_run_wrapper_real_motor_debug_env_overrides_cli_confirmations(monkeypatch) -> None:  # noqa: ANN001
+    from src import cli
     from src.tasks.built_in.motor_debug import BuiltInMotorDebugTask
-    from src.tasks.doctor import DoctorTask
 
-    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+    def fake_doctor_run(**kwargs):  # noqa: ANN001
         return 0
 
     def fake_motor_debug(self, **kwargs):  # noqa: ANN001
         raise AssertionError("env=false must override CLI confirmation flags")
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(BuiltInMotorDebugTask, "run", fake_motor_debug)
     runner = CliRunner()
 
@@ -591,11 +583,10 @@ def test_run_wrapper_real_motor_debug_env_overrides_cli_confirmations(monkeypatc
 
 def test_run_wrapper_dispatches_real_prepare_and_task_doctor_in_order(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
-    from src.tasks.doctor import DoctorTask
 
     calls: list[str] = []
 
-    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+    def fake_doctor_run(**kwargs):  # noqa: ANN001
         calls.append("preflight")
         assert kwargs["task_config_path"] is None
         return 0
@@ -615,7 +606,7 @@ def test_run_wrapper_dispatches_real_prepare_and_task_doctor_in_order(monkeypatc
     def fake_stop(result):  # noqa: ANN001
         calls.append("stop_prepare")
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     monkeypatch.setattr(cli, "run_real_common_doctor", fake_common_doctor)
     monkeypatch.setattr(cli, "run_real_task_doctor", fake_task_doctor)
@@ -635,11 +626,10 @@ def test_run_wrapper_dispatches_real_prepare_and_task_doctor_in_order(monkeypatc
 
 def test_run_wrapper_skip_doctor_starts_at_task_doctor(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
-    from src.tasks.doctor import DoctorTask
 
     calls: list[str] = []
 
-    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+    def fake_doctor_run(**kwargs):  # noqa: ANN001
         raise AssertionError("preflight must be skipped")
 
     def fake_prepare(**kwargs):  # noqa: ANN001
@@ -652,7 +642,7 @@ def test_run_wrapper_skip_doctor_starts_at_task_doctor(monkeypatch) -> None:  # 
         calls.append(f"task_doctor:{kwargs['task_name']}")
         return 0
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     monkeypatch.setattr(cli, "run_real_common_doctor", fake_common_doctor)
     monkeypatch.setattr(cli, "run_real_task_doctor", fake_task_doctor)
@@ -679,11 +669,10 @@ def test_run_wrapper_skip_doctor_starts_at_task_doctor(monkeypatch) -> None:  # 
 
 def test_run_wrapper_blocks_real_flight_without_operator_safety(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
-    from src.tasks.doctor import DoctorTask
 
     calls: list[str] = []
 
-    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+    def fake_doctor_run(**kwargs):  # noqa: ANN001
         calls.append("preflight")
         return 0
 
@@ -702,7 +691,7 @@ def test_run_wrapper_blocks_real_flight_without_operator_safety(monkeypatch) -> 
     def fake_stop(result):  # noqa: ANN001
         calls.append("stop_prepare")
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     monkeypatch.setattr(cli, "run_real_common_doctor", fake_common_doctor)
     monkeypatch.setattr(cli, "run_real_task_doctor", fake_task_doctor)
@@ -725,11 +714,10 @@ def test_run_wrapper_blocks_real_flight_without_operator_safety(monkeypatch) -> 
 
 def test_run_wrapper_does_not_start_task_doctor_when_prepare_fails(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
-    from src.tasks.doctor import DoctorTask
 
     calls: list[str] = []
 
-    def fake_doctor_run(self, **kwargs):  # noqa: ANN001
+    def fake_doctor_run(**kwargs):  # noqa: ANN001
         calls.append("preflight")
         return 0
 
@@ -740,7 +728,7 @@ def test_run_wrapper_does_not_start_task_doctor_when_prepare_fails(monkeypatch) 
     def fake_task_doctor(**kwargs):  # noqa: ANN001
         raise AssertionError("task doctor must not run when prepare failed")
 
-    monkeypatch.setattr(DoctorTask, "run", fake_doctor_run)
+    monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
     monkeypatch.setattr(cli, "execute_real_prepare_phase", fake_prepare)
     monkeypatch.setattr(cli, "run_real_task_doctor", fake_task_doctor)
     runner = CliRunner()

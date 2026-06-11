@@ -5,14 +5,14 @@ import random
 import time
 from pathlib import Path
 
-from navlab.gazebo_sensor.x2.emulator import (
+from navlab.sim.gazebo_sensor.x2.emulator import (
     X2SerialEmulator,
     X2SerialEmulatorConfig,
     build_static_scan_samples,
     jittered_scan_frequency_hz,
     samples_per_scan,
 )
-from navlab.gazebo_sensor.x2.protocol import LIDAR_CMD_SCAN, LIDAR_CMD_STOP, PH_BYTES
+from navlab.sim.gazebo_sensor.x2.protocol import LIDAR_CMD_SCAN, LIDAR_CMD_STOP, PH_BYTES
 
 
 def _read_available(fd: int, *, min_bytes: int = 1, timeout_sec: float = 0.5) -> bytes:

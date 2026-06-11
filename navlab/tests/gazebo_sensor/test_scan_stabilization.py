@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from navlab.gazebo_sensor.scan_stabilization import (
+from navlab.sim.gazebo_sensor.scan_stabilization import (
     angle_to_scan_bin,
     scan_attitude_time_offset_ms,
     stabilize_scan_ranges,

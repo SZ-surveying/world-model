@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from navlab.gazebo_sensor.scan_integrity import evaluate_scan_quality, quaternion_to_rpy_deg
+from navlab.sim.gazebo_sensor.scan_integrity import evaluate_scan_quality, quaternion_to_rpy_deg
 
 
 def test_quaternion_to_rpy_deg_identity() -> None:

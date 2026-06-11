@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tomllib
 
-from navlab.companion.config import RuntimeConfig, load_config
+from navlab.sim.companion.runtime.config import RuntimeConfig, load_config
 
 
 def test_companion_config_reads_companion_section() -> None:

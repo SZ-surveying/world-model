@@ -2,24 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shlex
-import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from python_on_whales.exceptions import DockerException
-from rich.console import Console
-
 from src import host
-from src.config import RunConfig
-from src.tasks.helpers.artifacts import _write_json, _write_text
-from src.tasks.helpers.rosbag_profiles import _load_rosbag_metadata_counts, _validate_official_rosbag_profile
+from src.configs.run_config import RunConfig
+from src.tasks.helpers.artifacts import write_text
 
 CARTOGRAPHER_CONFIG_PATH = Path(
-    "navlab/slam/ros/localization/navlab_cartographer_adapter/config/navlab_cartographer_2d.lua"
+    "navlab/common/slam/ros/localization/navlab_cartographer_adapter/config/navlab_cartographer_2d.lua"
 )
 KNOWN_EXTERNAL_NAV_ROUTES = ("official_dds", "mavlink_fallback", "diagnostic_only", "unknown")
 OFFICIAL_REFERENCES = {
@@ -64,13 +57,13 @@ def _cartographer_config_summary() -> dict[str, Any]:
 
 
 def _cartographer_dependency_summary(config: RunConfig) -> dict[str, Any]:
-    prefix_rc, prefix_output = host._docker_run_ros_shell_capture(
+    prefix_rc, prefix_output = host.docker_run_ros_shell_capture(
         config=config,
         image=config.slam_image,
         shell_command="timeout --signal=INT 8s ros2 pkg prefix cartographer_ros",
         name=None,
     )
-    executables_rc, executables_output = host._docker_run_ros_shell_capture(
+    executables_rc, executables_output = host.docker_run_ros_shell_capture(
         config=config,
         image=config.slam_image,
         shell_command="timeout --signal=INT 8s ros2 pkg executables cartographer_ros",
@@ -116,13 +109,9 @@ def _official_baseline_common(config: RunConfig) -> dict[str, Any]:
     }
 
 
-def _route_is_official(route: str) -> bool:
-    return route == "official_dds"
-
-
 def _official_ros_dependency_summary(config: RunConfig) -> dict[str, Any]:
     baseline = config.orchestration.official_baseline
-    image_rc, _image_output = host._docker_run_ros_shell_capture(
+    image_rc, _image_output = host.docker_run_ros_shell_capture(
         config=config,
         image=baseline.runtime_image,
         shell_command="true",
@@ -159,7 +148,7 @@ def _official_ros_dependency_summary(config: RunConfig) -> dict[str, Any]:
         }
     packages: dict[str, dict[str, Any]] = {}
     for package in baseline.required_ros_packages:
-        rc, output = host._docker_run_ros_shell_capture(
+        rc, output = host.docker_run_ros_shell_capture(
             config=config,
             image=baseline.runtime_image,
             shell_command=f"timeout --signal=INT 8s ros2 pkg prefix {shlex.quote(package)}",
@@ -172,7 +161,7 @@ def _official_ros_dependency_summary(config: RunConfig) -> dict[str, Any]:
         }
     binaries: dict[str, dict[str, Any]] = {}
     for binary in baseline.micro_ros_agent_binaries:
-        rc, output = host._docker_run_ros_shell_capture(
+        rc, output = host.docker_run_ros_shell_capture(
             config=config,
             image=baseline.runtime_image,
             shell_command=(
@@ -205,7 +194,7 @@ def _official_ros_dependency_summary(config: RunConfig) -> dict[str, Any]:
     }
 
 
-def _build_doctor_summary(config: RunConfig) -> dict[str, Any]:
+def build_doctor_summary(config: RunConfig) -> dict[str, Any]:
     official_baseline = {
         **_official_baseline_common(config),
         **_cartographer_dependency_summary(config),
@@ -241,7 +230,7 @@ def _build_doctor_summary(config: RunConfig) -> dict[str, Any]:
     }
 
 
-def _collect_ros_graph(config: RunConfig, artifact_dir: Path, *, image: str, network: str | None) -> dict[str, Any]:
+def collect_ros_graph(config: RunConfig, artifact_dir: Path, *, image: str, network: str | None) -> dict[str, Any]:
     baseline = config.orchestration.official_baseline
     commands = {
         "ros2_node_list": "ros2 node list",
@@ -249,7 +238,7 @@ def _collect_ros_graph(config: RunConfig, artifact_dir: Path, *, image: str, net
     }
     collected: dict[str, Any] = {}
     for key, command in commands.items():
-        rc, output = host._docker_run_ros_shell_capture(
+        rc, output = host.docker_run_ros_shell_capture(
             config=config,
             image=image,
             shell_command=command,
@@ -262,7 +251,7 @@ def _collect_ros_graph(config: RunConfig, artifact_dir: Path, *, image: str, net
                 "RMW_IMPLEMENTATION": baseline.rmw_implementation,
             },
         )
-        _write_text(artifact_dir / f"{key}.txt", output)
+        write_text(artifact_dir / f"{key}.txt", output)
         collected[key] = {
             "rc": rc,
             "output": output,
@@ -271,7 +260,7 @@ def _collect_ros_graph(config: RunConfig, artifact_dir: Path, *, image: str, net
     expected_ap_node = config.orchestration.official_baseline.expected_ap_node
     node_lines = collected.get("ros2_node_list", {}).get("lines", [])
     if expected_ap_node in node_lines:
-        rc, output = host._docker_run_ros_shell_capture(
+        rc, output = host.docker_run_ros_shell_capture(
             config=config,
             image=image,
             shell_command=f"ros2 node info {expected_ap_node}",
@@ -287,7 +276,7 @@ def _collect_ros_graph(config: RunConfig, artifact_dir: Path, *, image: str, net
     else:
         rc = 0
         output = f"skipped node info; {expected_ap_node} is not present in ros2 node list\n"
-    _write_text(artifact_dir / "ap_node_info.txt", output)
+    write_text(artifact_dir / "ap_node_info.txt", output)
     collected["ap_node_info"] = {
         "rc": rc,
         "output": output,
@@ -296,7 +285,7 @@ def _collect_ros_graph(config: RunConfig, artifact_dir: Path, *, image: str, net
     return collected
 
 
-def _collect_official_dds_probe(
+def collect_official_dds_probe(
     config: RunConfig,
     artifact_dir: Path,
     *,
@@ -355,7 +344,7 @@ node.destroy_node()
 rclpy.shutdown()
 print(json.dumps(result, sort_keys=True))
 """
-    rc, output = host._docker_run_ros_shell_capture(
+    rc, output = host.docker_run_ros_shell_capture(
         config=config,
         image=image,
         shell_command=f"python3 - <<'PY'\n{probe_script}\nPY",
@@ -368,7 +357,7 @@ print(json.dumps(result, sort_keys=True))
             "RMW_IMPLEMENTATION": baseline.rmw_implementation,
         },
     )
-    _write_text(artifact_dir / "official_dds_probe.txt", output)
+    write_text(artifact_dir / "official_dds_probe.txt", output)
     parsed: dict[str, Any] = {}
     if rc == 0:
         for line in reversed([line.strip() for line in output.splitlines() if line.strip()]):
@@ -384,127 +373,8 @@ print(json.dumps(result, sort_keys=True))
     }
 
 
-def _rosbag_profile_summary(config: RunConfig) -> dict[str, Any]:
-    profile_path = Path(config.official_baseline_rosbag_profile)
-    required: list[str] = []
-    optional: list[str] = []
-    if profile_path.is_file():
-        for raw_line in profile_path.read_text(encoding="utf-8").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split(maxsplit=1)
-            if len(parts) != 2:
-                continue
-            kind, topic = parts
-            if kind == "required":
-                required.append(topic)
-            elif kind == "optional":
-                optional.append(topic)
-    return {
-        "ok": profile_path.is_file(),
-        "profile": str(profile_path),
-        "required_topics": required,
-        "optional_topics": optional,
-        "recorded": False,
-        "reason": "P0 graph acceptance records ROS graph artifacts; rosbag capture is a later official bringup step.",
-    }
-
-
-def _official_rosbag_topics(config: RunConfig) -> tuple[list[str], list[str], list[str]]:
-    profile_summary = _rosbag_profile_summary(config)
-    required = list(profile_summary["required_topics"])
-    optional = list(profile_summary["optional_topics"])
-    return required, optional, [*required, *optional]
-
-
-def _record_official_rosbag(
-    config: RunConfig,
-    artifact_dir: Path,
-    *,
-    image: str,
-    network: str | None,
-    duration_sec: float = 8.0,
-) -> dict[str, Any]:
-    profile_path = Path(config.official_baseline_rosbag_profile)
-    required, optional, topics = _official_rosbag_topics(config)
-    if not profile_path.is_file():
-        summary = {
-            "ok": False,
-            "recorded": False,
-            "profile": str(profile_path),
-            "required_topics": required,
-            "optional_topics": optional,
-            "reason": "rosbag profile does not exist",
-        }
-        _write_json(artifact_dir / "rosbag_profile_summary.json", summary)
-        return summary
-    if not topics:
-        summary = {
-            "ok": False,
-            "recorded": False,
-            "profile": str(profile_path),
-            "required_topics": required,
-            "optional_topics": optional,
-            "reason": "rosbag profile has no topics",
-        }
-        _write_json(artifact_dir / "rosbag_profile_summary.json", summary)
-        return summary
-
-    container_rosbag = Path("/workspace") / artifact_dir / "rosbag"
-    topic_args = " ".join(shlex.quote(topic) for topic in topics)
-    command = (
-        f"rm -rf {shlex.quote(str(container_rosbag))} && "
-        f"mkdir -p {shlex.quote(str(container_rosbag.parent))} && "
-        "set +e; "
-        f"timeout --signal=INT {duration_sec:g} "
-        f"ros2 bag record -s mcap -o {shlex.quote(str(container_rosbag))} --topics {topic_args}; "
-        "rc=$?; "
-        "set -e; "
-        'if [ "$rc" != "0" ] && [ "$rc" != "124" ] && [ "$rc" != "130" ]; then exit "$rc"; fi; '
-        f"for i in $(seq 1 40); do [ -f {shlex.quote(str(container_rosbag / 'metadata.yaml'))} ] && exit 0; "
-        "sleep 0.25; done; exit 2"
-    )
-    baseline = config.orchestration.official_baseline
-    rc, output = host._docker_run_ros_shell_capture(
-        config=config,
-        image=image,
-        shell_command=command,
-        name=None,
-        network=network,
-        envs={
-            "DDS_ENABLE": baseline.dds_enable,
-            "DDS_DOMAIN_ID": baseline.dds_domain_id,
-            "ROS_DOMAIN_ID": baseline.dds_domain_id,
-            "RMW_IMPLEMENTATION": baseline.rmw_implementation,
-        },
-    )
-    _write_text(artifact_dir / "rosbag_record.txt", output)
-    metadata = artifact_dir / "rosbag" / "metadata.yaml"
-    if rc != 0 or not metadata.is_file():
-        summary = {
-            "ok": False,
-            "recorded": False,
-            "profile": str(profile_path),
-            "required_topics": required,
-            "optional_topics": optional,
-            "reason": f"rosbag record failed rc={rc}",
-            "record_output": output,
-        }
-        _write_json(artifact_dir / "rosbag_profile_summary.json", summary)
-        return summary
-    summary = _validate_official_rosbag_profile(
-        profile=profile_path,
-        metadata=metadata,
-        required=required,
-        optional=optional,
-    )
-    _write_json(artifact_dir / "rosbag_profile_summary.json", summary)
-    return summary
-
-
 def _write_foxglove_notes(artifact_dir: Path) -> None:
-    _write_text(
+    write_text(
         artifact_dir / "foxglove_notes.md",
         "\n".join(
             [
@@ -523,148 +393,3 @@ def _write_foxglove_notes(artifact_dir: Path) -> None:
         )
         + "\n",
     )
-
-
-
-def run_official_baseline_doctor(*, config_path: str | Path | None = None, console: Console | None = None) -> int:
-    console = console or Console()
-    config = RunConfig.from_config(config_path=config_path)
-    artifact_dir = Path(
-        os.environ.get("ARTIFACT_DIR", f"artifacts/ros/navlab_official_baseline_doctor/{config.run_id}")
-    )
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    console.print("[bold cyan]Checking official baseline prerequisites[/bold cyan]")
-    summary = _build_doctor_summary(config)
-    _write_json(artifact_dir / "summary.json", summary)
-    color = "green" if summary["ok"] else "red"
-    console.print(f"[{color}]Official baseline doctor rc={0 if summary['ok'] else 20}[/{color}]")
-    console.print(f"[bold]Summary:[/bold] {artifact_dir / 'summary.json'}")
-    return 0 if summary["ok"] else 20
-
-
-
-def run_official_baseline_acceptance(
-    *,
-    config_path: str | Path | None = None,
-    duration_sec: float = 30.0,
-    console: Console | None = None,
-) -> int:
-    console = console or Console()
-    config = RunConfig.from_config(config_path=config_path, duration_sec=duration_sec)
-    config.artifact_dir.mkdir(parents=True, exist_ok=True)
-    host._render_run_config(console, config)
-    summary: dict[str, Any] | None = None
-    try:
-        console.print("[bold cyan]Starting SITL + Gazebo stack for official baseline graph check[/bold cyan]")
-        try:
-            host._compose_stop(config)
-        except DockerException:
-            pass
-        host._start_official_baseline_container(config)
-        time.sleep(min(max(duration_sec, 1.0), 10.0))
-        baseline = config.orchestration.official_baseline
-        graph = _collect_ros_graph(
-            config,
-            config.artifact_dir,
-            image=baseline.runtime_image,
-            network="host",
-        )
-        probe = _collect_official_dds_probe(
-            config,
-            config.artifact_dir,
-            image=baseline.runtime_image,
-            network="host",
-        )
-        rosbag_profile = _record_official_rosbag(
-            config,
-            config.artifact_dir,
-            image=baseline.runtime_image,
-            network="host",
-        )
-        node_lines = graph["ros2_node_list"]["lines"]
-        topic_lines = graph["ros2_topic_list"]["lines"]
-        probe_result = probe["result"]
-        graph_ap_topics = [topic for topic in topic_lines if topic.startswith("/ap/")]
-        probe_confirmed_ap_topics = []
-        if probe_result.get("time_received") and probe_result.get("time_topic"):
-            probe_confirmed_ap_topics.append(str(probe_result["time_topic"]))
-        ap_topics = sorted(set(graph_ap_topics + probe_confirmed_ap_topics))
-        missing_required_ap_topics = [
-            topic for topic in baseline.required_ap_topics if topic not in ap_topics
-        ]
-        official_baseline = {
-            **_official_baseline_common(config),
-            **_cartographer_dependency_summary(config),
-            **_official_ros_dependency_summary(config),
-            **_cartographer_config_summary(),
-            "ap_node_present": baseline.expected_ap_node in node_lines,
-            "graph_ap_topics": graph_ap_topics,
-            "probe_confirmed_ap_topics": probe_confirmed_ap_topics,
-            "ap_topics": ap_topics,
-            "missing_required_ap_topics": missing_required_ap_topics,
-            "ap_node_info_rc": graph["ap_node_info"]["rc"],
-            "official_dds_probe_rc": probe["rc"],
-            "official_dds_probe": probe_result,
-            "official_dds_time_received": bool(probe_result.get("time_received")),
-            "official_dds_prearm_service_available": bool(
-                probe_result.get("prearm_service_available")
-            ),
-            "official_dds_prearm_success": probe_result.get("prearm_success"),
-            "process_status": host._compose_ps_status(config),
-            "official_container": host.OFFICIAL_BASELINE_CONTAINER,
-        }
-        blockers: list[str] = []
-        if not official_baseline["cartographer_ros_present"]:
-            blockers.append("cartographer_ros is not present in the configured SLAM image")
-        if not official_baseline["official_runtime_image_available"]:
-            blockers.append(official_baseline["official_runtime_image_error"])
-        if official_baseline["missing_official_ros_packages"]:
-            blockers.append(
-                "official ROS packages are missing from the configured runtime image: "
-                f"{official_baseline['missing_official_ros_packages']}"
-            )
-        if not official_baseline["micro_ros_agent_available"]:
-            blockers.append(
-                "Micro-XRCE-DDS / micro-ROS-Agent executable is missing from the configured runtime image"
-            )
-        if official_baseline["direct_set_pose"]:
-            blockers.append("direct Gazebo set-pose behavior is not allowed in P0 official baseline")
-        if not official_baseline["official_dds_time_received"]:
-            blockers.append("official DDS probe did not receive /ap/v1/time")
-        if not official_baseline["official_dds_prearm_service_available"]:
-            blockers.append("official DDS probe did not find /ap/v1/prearm_check service")
-        if not rosbag_profile.get("ok"):
-            blockers.append("official baseline rosbag profile did not pass")
-        if not _route_is_official(baseline.external_nav_route):
-            blockers.append(f"external_nav_route={baseline.external_nav_route!r} is not official_dds")
-        if baseline.gazebo_bringup_mode != "official_gz_bringup":
-            blockers.append(
-                f"gazebo_bringup_mode={baseline.gazebo_bringup_mode!r} is not official_gz_bringup"
-            )
-        summary = {
-            "ok": not blockers,
-            "blocked": bool(blockers),
-            "blockers": blockers,
-            "official_baseline": official_baseline,
-            "rosbag_profile": rosbag_profile,
-        }
-        _write_json(config.artifact_dir / "summary.json", summary)
-        _write_foxglove_notes(config.artifact_dir)
-    finally:
-        host._capture_official_baseline_log(config=config)
-        host._remove_official_baseline_container()
-        try:
-            host._compose_stop(config)
-        except DockerException:
-            pass
-    if summary is None:
-        summary = {
-            "ok": False,
-            "blocked": True,
-            "blockers": ["official baseline acceptance did not produce a summary"],
-        }
-        _write_json(config.artifact_dir / "summary.json", summary)
-    color = "green" if summary["ok"] else "red"
-    console.print(f"[{color}]Official baseline acceptance completed rc={0 if summary['ok'] else 30}[/{color}]")
-    console.print(f"[bold]Summary:[/bold] {config.artifact_dir / 'summary.json'}")
-    return 0 if summary["ok"] else 30

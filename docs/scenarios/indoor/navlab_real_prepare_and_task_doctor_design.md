@@ -92,7 +92,9 @@ run <task>
 - `ros2` CLI 可用。
 - 所选 `fcu_bridge_mode` 相关 package 存在。默认 `navlab_mavlink` 不要求 MAVROS。
 - SLAM package 存在，例如 `navlab_slam_bringup`、`navlab_cartographer_adapter`。
-- companion / SLAM Python 入口可 import，例如 `navlab.companion.cli`、`navlab.slam.cli`。
+- companion / SLAM Python 入口可 import。当前过渡入口仍可能是
+  `navlab.sim.companion.runtime.cli`、`navlab.common.slam.cli`；目标边界是 real/sim runtime
+  分别进入 `navlab.real.*` 和 `navlab.sim.*`，共享纯工具进入 `navlab.common`。
 - 配置中没有 Gazebo/SITL/X2 virtual serial/SDF overlay 作为 real source claim。
 
 preflight doctor 可以短暂打开串口证明物理边界，但必须立即关闭。后续运行时串口

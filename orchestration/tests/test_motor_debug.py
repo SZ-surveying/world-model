@@ -5,18 +5,25 @@ from io import StringIO
 from pathlib import Path
 
 from rich.console import Console
-from src.config import RunConfig, load_motor_debug_task_config
+from src.configs.run_config import RunConfig
 from src.tasks.built_in import motor_debug as motor_debug_module
 from src.tasks.built_in.motor_debug import (
     BuiltInMotorDebugTask,
-    _command_rejection_blockers,
-    _ensure_guided_mode,
-    _mavlink_router_endpoint,
-    _print_motor_debug_run_start,
-    _print_motor_debug_summary,
-    _send_arm_disarm,
-    _wait_command_ack,
+    MotorDebugTaskConfig,
+    mavlink_router_endpoint,
+    motor_debug_runtime_command,
+    print_motor_debug_run_start,
+    print_motor_debug_summary,
+)
+
+from navlab.real.companion.nodes import motor_debug as motor_debug_runtime
+from navlab.real.companion.nodes.motor_debug import (
+    TASK_RESULT_SCHEMA_VERSION,
     build_motor_debug_plan,
+    command_rejection_blockers,
+    ensure_guided_mode,
+    send_arm_disarm,
+    wait_command_ack,
 )
 
 
@@ -91,6 +98,7 @@ def test_motor_debug_plan_requires_guided_mode() -> None:
     plan = build_motor_debug_plan(motor_percent=5.0, motor_sec=1.0, motor_count=4)
 
     assert plan["ok"] is True
+    assert plan["schema_version"] == TASK_RESULT_SCHEMA_VERSION
     assert plan["guided_mode_required"] is True
     assert plan["required_mode"] == "GUIDED"
 
@@ -98,21 +106,34 @@ def test_motor_debug_plan_requires_guided_mode() -> None:
 def test_motor_debug_guided_gate_sets_and_observes_guided() -> None:
     master = _FakeMaster(mapping={"GUIDED": 4}, heartbeats=[_Heartbeat(0), _Heartbeat(4)])
 
-    result = _ensure_guided_mode(master, mode_name="GUIDED", timeout_sec=0.1)
+    result = ensure_guided_mode(master, mode_name="GUIDED", timeout_sec=0.1)
 
     assert result["ok"] is True
     assert master.set_modes == [4]
     assert result["observed_mode_id"] == 4
 
 
-def test_motor_debug_guided_gate_blocks_missing_guided_mode() -> None:
-    master = _FakeMaster(mapping={"STABILIZE": 0}, heartbeats=[])
+def test_motor_debug_guided_gate_uses_arducopter_guided_id_when_mapping_is_wrong() -> None:
+    master = _FakeMaster(mapping={"GUIDED": 15}, heartbeats=[_Heartbeat(0), _Heartbeat(4)])
 
-    result = _ensure_guided_mode(master, mode_name="GUIDED", timeout_sec=0.1)
+    result = ensure_guided_mode(master, mode_name="GUIDED", timeout_sec=0.1)
 
-    assert result["ok"] is False
-    assert result["blocker"] == "motor_debug_required_mode_missing:GUIDED"
-    assert master.set_modes == []
+    assert result["ok"] is True
+    assert master.set_modes == [4]
+    assert result["mode_id"] == 4
+    assert result["mode_mapping_mode_id"] == 15
+    assert result["observed_mode_id"] == 4
+
+
+def test_motor_debug_guided_gate_uses_arducopter_guided_id_when_mapping_is_missing() -> None:
+    master = _FakeMaster(mapping={"STABILIZE": 0}, heartbeats=[_Heartbeat(4)])
+
+    result = ensure_guided_mode(master, mode_name="GUIDED", timeout_sec=0.1)
+
+    assert result["ok"] is True
+    assert result["mode_id"] == 4
+    assert result["mode_mapping_has_mode"] is False
+    assert master.set_modes == [4]
 
 
 def test_motor_debug_sends_arm_then_disarm_commands(monkeypatch) -> None:  # noqa: ANN001
@@ -123,10 +144,10 @@ def test_motor_debug_sends_arm_then_disarm_commands(monkeypatch) -> None:  # noq
         wait_commands.append(_args[1])
         return {"command": _args[1], "result": 0, "accepted": True}
 
-    monkeypatch.setattr(motor_debug_module, "_wait_command_ack", fake_wait_command_ack)
+    monkeypatch.setattr(motor_debug_runtime, "wait_command_ack", fake_wait_command_ack)
 
-    arm_ack = _send_arm_disarm(master, 1, 0, _FakeMavlink, arm=True)
-    disarm_ack = _send_arm_disarm(master, 1, 0, _FakeMavlink, arm=False)
+    arm_ack = send_arm_disarm(master, 1, 0, _FakeMavlink, arm=True)
+    disarm_ack = send_arm_disarm(master, 1, 0, _FakeMavlink, arm=False)
 
     assert arm_ack["accepted"] is True
     assert disarm_ack["accepted"] is True
@@ -164,8 +185,8 @@ def test_motor_debug_sends_arm_then_disarm_commands(monkeypatch) -> None:  # noq
 def test_motor_debug_command_ack_includes_mav_result_and_statustext() -> None:
     master = _FakeMessageMaster([_FakeStatusText(), _FakeAck()])
 
-    ack = _wait_command_ack(master, 400, timeout_sec=0.1)
-    blockers = _command_rejection_blockers(prefix="motor_debug_arm_rejected", ack=ack)
+    ack = wait_command_ack(master, 400, timeout_sec=0.1)
+    blockers = command_rejection_blockers(prefix="motor_debug_arm_rejected", ack=ack)
 
     assert ack["accepted"] is False
     assert ack["result"] == 4
@@ -180,8 +201,8 @@ def test_motor_debug_command_ack_includes_mav_result_and_statustext() -> None:
 def test_motor_debug_command_ack_drains_statustext_after_failure() -> None:
     master = _FakeMessageMaster([_FakeAck(), _FakeStatusText()])
 
-    ack = _wait_command_ack(master, 400, timeout_sec=0.1)
-    blockers = _command_rejection_blockers(prefix="motor_debug_arm_rejected", ack=ack)
+    ack = wait_command_ack(master, 400, timeout_sec=0.1)
+    blockers = command_rejection_blockers(prefix="motor_debug_arm_rejected", ack=ack)
 
     assert ack["accepted"] is False
     assert ack["result_name"] == "MAV_RESULT_FAILED"
@@ -193,7 +214,7 @@ def test_motor_debug_command_ack_drains_statustext_after_failure() -> None:
 
 
 def test_motor_debug_uses_own_task_config_and_real_prepare_common_config() -> None:
-    task_config = load_motor_debug_task_config()
+    task_config = MotorDebugTaskConfig.from_file()
     real_prepare_config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
 
     assert task_config.path == Path("orchestration/configs/motor_debug.toml").resolve()
@@ -205,7 +226,23 @@ def test_motor_debug_uses_own_task_config_and_real_prepare_common_config() -> No
     ).resolve()
     assert real_prepare_config.orchestration.real_prepare.mavlink_router_serial_port == "/dev/ttyUSB1"
     assert real_prepare_config.orchestration.real_prepare.mavlink_router_baud == 115200
-    assert _mavlink_router_endpoint(real_prepare_config) == "udpin:127.0.0.1:14550"
+    assert mavlink_router_endpoint(real_prepare_config) == "udpin:127.0.0.1:14550"
+
+
+def test_motor_debug_runtime_command_uses_navlab_real_module(tmp_path: Path) -> None:
+    command = motor_debug_runtime_command(
+        serial="/dev/ttyUSB1",
+        baud=115200,
+        endpoint="udpin:127.0.0.1:14550",
+        motor_percent=5.0,
+        motor_sec=5.0,
+        motor_count=4,
+        summary_path=tmp_path / "summary.json",
+    )
+
+    assert command[1:4] == ["-m", "navlab.real.companion.nodes.motor_debug", "--serial"]
+    assert "--summary-path" in command
+    assert str(tmp_path / "summary.json") in command
 
 
 def test_motor_debug_task_run_reads_task_config_and_real_prepare_common_config(monkeypatch, tmp_path) -> None:  # noqa: ANN001
@@ -237,7 +274,19 @@ def test_motor_debug_task_run_reads_task_config_and_real_prepare_common_config(m
         }
 
     monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path))
-    monkeypatch.setattr(motor_debug_module, "_run_motor_debug_sequence", fake_sequence)
+    monkeypatch.setattr(motor_debug_module, "run_motor_debug_sequence", fake_sequence)
+    monkeypatch.setattr(
+        motor_debug_module,
+        "collect_motor_debug_common_state",
+        lambda *_args, **_kwargs: {
+            "active_source_set": "not_observed",
+            "configured_external_nav_source_set": "SRC2",
+            "observed_ekf_source_set": "not_observed",
+            "ekf_source_set_switch": {"enabled": True, "target_source_set": "SRC2", "sent": True, "ack_result": 0},
+            "ek3_src2": {"posxy": "6", "velxy": "6", "velz": "6", "yaw": "6", "posz": "1"},
+            "gps_source_sets": ["SRC1"],
+        },
+    )
 
     stream = StringIO()
     rc = BuiltInMotorDebugTask().run(config_path="orchestration/config.real.toml", console=Console(file=stream))
@@ -258,9 +307,11 @@ def test_motor_debug_task_run_reads_task_config_and_real_prepare_common_config(m
         }
     ]
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["schema_version"] == TASK_RESULT_SCHEMA_VERSION
     assert summary["logs"][0]["process"] == "companion"
     assert summary["logs"][0]["path"] == str(tmp_path / "logs" / "companion.log")
     assert summary["logs"][0]["entries"] >= 2
+    assert summary["common_state"]["configured_external_nav_source_set"] == "SRC2"
     assert (tmp_path / "logs" / "companion.log").is_file()
 
 
@@ -268,9 +319,9 @@ def test_motor_debug_run_start_panel_shows_runtime_gate() -> None:
     stream = StringIO()
     console = Console(file=stream, force_terminal=False, width=100)
     config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
-    task_config = load_motor_debug_task_config()
+    task_config = MotorDebugTaskConfig.from_file()
 
-    _print_motor_debug_run_start(console, config=config, task_config=task_config, summary_path=Path("summary.json"))
+    print_motor_debug_run_start(console, config=config, task_config=task_config, summary_path=Path("summary.json"))
 
     output = stream.getvalue()
     assert "NavLab Real Motor Debug Run" in output
@@ -297,6 +348,14 @@ def test_motor_debug_summary_uses_doctor_style_panels() -> None:
         "motor_sec": 5.0,
         "required_mode": "GUIDED",
         "guided_mode": {"ok": None},
+        "common_state": {
+            "active_source_set": "not_observed",
+            "configured_external_nav_source_set": "SRC2",
+            "observed_ekf_source_set": "not_observed",
+            "ekf_source_set_switch": {"enabled": True, "target_source_set": "SRC2", "sent": True, "ack_result": 0},
+            "ek3_src2": {"posxy": "6", "velxy": "6", "velz": "6", "yaw": "6", "posz": "1"},
+            "gps_source_sets": ["SRC1"],
+        },
         "shutdown_claim": "not_evaluated",
         "blockers": ["motor_debug_failed:test"],
         "logs": [
@@ -309,7 +368,7 @@ def test_motor_debug_summary_uses_doctor_style_panels() -> None:
         ],
     }
 
-    _print_motor_debug_summary(console, summary=summary, summary_path=Path("artifacts/ros/example/summary.json"))
+    print_motor_debug_summary(console, summary=summary, summary_path=Path("artifacts/ros/example/summary.json"))
 
     output = stream.getvalue()
     assert "NavLab Real Motor Debug" in output
@@ -317,6 +376,13 @@ def test_motor_debug_summary_uses_doctor_style_panels() -> None:
     assert "Serial" in output
     assert "/dev/ttyUSB1 @ 115200" in output
     assert "udpin:127.0.0.1:14550" in output
+    assert "ExternalNav config" in output
+    assert "EKF active src" in output
+    assert "SRC2" in output
+    assert "EK3 SRC2" in output
+    assert "velz=6" in output
+    assert "GPS EKF src" in output
+    assert "SRC1" in output
     assert "Blockers" in output
     assert "- motor_debug_failed:test" in output
     assert "Logs" in output

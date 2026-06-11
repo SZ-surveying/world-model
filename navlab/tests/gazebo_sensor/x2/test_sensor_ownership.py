@@ -3,17 +3,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from navlab.gazebo_sensor.config import X2SensorRuntimeConfig, load_down_rangefinder_config
+from navlab.sim.gazebo_sensor.config import X2SensorRuntimeConfig, load_down_rangefinder_config
 
 
 def test_x2_sensor_code_lives_under_sensor_package() -> None:
-    assert Path("navlab/gazebo_sensor/x2/protocol.py").is_file()
-    assert Path("navlab/gazebo_sensor/config.py").is_file()
-    assert Path("navlab/gazebo_sensor/x2/emulator.py").is_file()
-    assert Path("navlab/gazebo_sensor/cli.py").is_file()
-    assert Path("navlab/gazebo_sensor/runtime.py").is_file()
-    assert Path("navlab/gazebo_sensor/x2/scan_source.py").is_file()
-    assert not Path("navlab/sim").exists()
+    assert Path("navlab/sim/gazebo_sensor/x2/protocol.py").is_file()
+    assert Path("navlab/sim/gazebo_sensor/config.py").is_file()
+    assert Path("navlab/sim/gazebo_sensor/x2/emulator.py").is_file()
+    assert Path("navlab/sim/gazebo_sensor/cli.py").is_file()
+    assert Path("navlab/sim/gazebo_sensor/runtime.py").is_file()
+    assert Path("navlab/sim/gazebo_sensor/x2/scan_source.py").is_file()
+    assert not Path("navlab/gazebo_sensor").exists()
 
 
 def test_gazebo_sensor_docker_target_owns_vendor_driver_dependency() -> None:

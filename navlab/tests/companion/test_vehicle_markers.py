@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from math import isclose, pi
 
-from navlab.companion.nodes.vehicle_markers import (
+from navlab.sim.companion.nodes.vehicle_markers import (
     rotate_planar,
     vehicle_marker_parts,
     yaw_from_quaternion,

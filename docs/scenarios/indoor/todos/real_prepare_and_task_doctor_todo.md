@@ -253,7 +253,7 @@ simulation 完整对照：
 | Contract | simulation 来源 | simulation topic / 参数 | real 对应来源 |
 |---|---|---|---|
 | height source | Gazebo down range sensor | `/rangefinder/down/scan_ideal`，只作为仿真输入 | FCU MAVLink `DISTANCE_SENSOR` 下视测距，优先 `orientation=25` / `MAV_SENSOR_ROTATION_PITCH_270` |
-| ROS height evidence | `navlab.gazebo_sensor.rangefinder` | `/rangefinder/down/range`、`/rangefinder/down/status` | NavLab real rangefinder bridge 发布同名 topic |
+| ROS height evidence | `navlab.sim.gazebo_sensor.rangefinder` | `/rangefinder/down/range`、`/rangefinder/down/status` | NavLab real rangefinder bridge 发布同名 topic |
 | FCU height evidence | Gazebo rangefinder sender -> MAVLink | `DISTANCE_SENSOR` 被 FCU/EKF/altitude controller 消费 | 真实 FCU 已输出 `DISTANCE_SENSOR`；bridge 只观测/转发，不伪造高度 |
 | altitude hold mode | SITL hover / landing 使用 FCU 高度控制闭环 | rangefinder 支撑 FCU altitude hold / takeoff / landing | real hover / landing 必须显式声明并检查当前定高模式，例如 FCU rangefinder altitude hold、GUIDED altitude hold 或等价配置 |
 | validity gate | min/max/current distance + status JSON | status 中记录 source、count、fresh、validity | 按 `min_distance`、`max_distance`、`current_distance`、orientation、quality/filter 过滤 |

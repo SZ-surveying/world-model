@@ -21,10 +21,10 @@ navlab-doctor *args='':
 
 # Run a built-in task through the unified wrapper: hover, exploration, or scan-robustness.
 navlab-run task duration_sec='' *args='':
-    if [ -n "{{duration_sec}}" ]; then \
+    if [ -n "{{duration_sec}}" ] && [[ "{{duration_sec}}" != -* ]]; then \
         {{orchestration_cmd}} run {{task}} --duration-sec {{duration_sec}} {{args}}; \
     else \
-        {{orchestration_cmd}} run {{task}} {{args}}; \
+        {{orchestration_cmd}} run {{task}} {{duration_sec}} {{args}}; \
     fi
 
 # Command tools
@@ -32,10 +32,6 @@ navlab-run task duration_sec='' *args='':
 # Build a Foxglove-lite replay MCAP with the official maze overlay.
 foxglove-replay date='':
     {{command_cmd}} foxglove build-replay {{date}}
-
-# Dry-run the Foxglove-lite replay build for the latest run or a given run id.
-foxglove-replay-dry-run date='':
-    {{command_cmd}} foxglove build-replay {{date}} --dry-run
 
 # Upload the latest raw/full P8 MCAP by default; pass --lite to upload/generate the lite MCAP.
 foxglove-upload date='' *args='':

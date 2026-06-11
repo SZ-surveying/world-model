@@ -1,0 +1,134 @@
+name: Main Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/main-validation.yml"
+      - "scripts/check-python.sh"
+      - "scripts/format-python.sh"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "justfile"
+      - "navlab/**"
+      - "orchestration/**"
+      - "scripts/command/**"
+      - "scripts/*.py"
+  push:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/main-validation.yml"
+      - "scripts/check-python.sh"
+      - "scripts/format-python.sh"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "justfile"
+      - "navlab/**"
+      - "orchestration/**"
+      - "scripts/command/**"
+      - "scripts/*.py"
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  changes:
+    name: Detect Changed Areas
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed Python areas
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            python:
+              - '.github/workflows/main-validation.yml'
+              - 'scripts/check-python.sh'
+              - 'scripts/format-python.sh'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'justfile'
+              - 'navlab/**'
+              - 'orchestration/**'
+              - 'scripts/command/**'
+              - 'scripts/*.py'
+
+  python:
+    name: Python CI
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Run Python checks
+        env:
+          PYTHON_CHECK_PROFILE: ci
+        run: ./scripts/check-python.sh
+
+  summary:
+    name: Validation Summary
+    if: always()
+    needs:
+      - changes
+      - python
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish summary
+        env:
+          PYTHON_CHANGED: ${{ needs.changes.outputs.python }}
+          PYTHON_RESULT: ${{ needs.python.result }}
+        run: |
+          label_for() {
+            local changed="$1"
+            local result="$2"
+
+            if [ "$changed" != "true" ]; then
+              echo "⚪ skipped"
+              return
+            fi
+
+            case "$result" in
+              success) echo "✅ success" ;;
+              failure) echo "❌ failure" ;;
+              cancelled) echo "🟡 cancelled" ;;
+              skipped) echo "⚪ skipped" ;;
+              *) echo "🟣 $result" ;;
+            esac
+          }
+
+          PYTHON_STATUS="$(label_for "$PYTHON_CHANGED" "$PYTHON_RESULT")"
+
+          {
+            echo "## Main Validation Summary"
+            echo
+            echo "| Area | Changed | Result |"
+            echo "| --- | --- | --- |"
+            if [ "$PYTHON_CHANGED" = "true" ]; then
+              echo "| python | yes | $PYTHON_STATUS |"
+            else
+              echo "| python | no | $PYTHON_STATUS |"
+            fi
+            echo
+            echo "Notes:"
+            echo "- \`Changed = no\` means validation was skipped because no matching files changed."
+          } >> "$GITHUB_STEP_SUMMARY"

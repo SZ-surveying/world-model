@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from navlab.gazebo_sensor.config import (
+from navlab.sim.gazebo_sensor.config import (
     DownRangefinderRuntimeConfig,
     load_down_rangefinder_config,
     load_x2_protocol_config,
@@ -53,7 +53,7 @@ def test_x2_vendor_profile_matches_protocol_baseline() -> None:
 
 
 def test_x2_runtime_config_passes_jitter_and_seed_to_emulator() -> None:
-    from navlab.gazebo_sensor.config import X2SensorRuntimeConfig
+    from navlab.sim.gazebo_sensor.config import X2SensorRuntimeConfig
 
     runtime = X2SensorRuntimeConfig.load()
     emulator = runtime.emulator_config()

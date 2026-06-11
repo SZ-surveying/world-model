@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from types import SimpleNamespace
 
-from navlab.companion.nodes.gazebo_truth_odom import (
+from navlab.sim.companion.nodes.gazebo_truth_odom import (
     Pose2D,
     child_frame_matches,
     normalize_angle,

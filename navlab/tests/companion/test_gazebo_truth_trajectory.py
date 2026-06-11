@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 
-from navlab.companion.nodes.gazebo_truth_trajectory import (
+from navlab.sim.companion.nodes.gazebo_truth_trajectory import (
     TrajectorySample,
     sample_from_odom,
     summarize_trajectory,

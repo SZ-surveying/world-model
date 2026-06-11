@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-def _profile_topics(profile_path: Path) -> tuple[list[str], list[str], list[str]]:
+def profile_topics(profile_path: Path) -> tuple[list[str], list[str], list[str]]:
     required: list[str] = []
     optional: list[str] = []
     if profile_path.is_file():
@@ -24,7 +24,7 @@ def _profile_topics(profile_path: Path) -> tuple[list[str], list[str], list[str]
     return required, optional, [*required, *optional]
 
 
-def _load_rosbag_metadata_counts(metadata: Path) -> dict[str, int]:
+def load_rosbag_metadata_counts(metadata: Path) -> dict[str, int]:
     content = metadata.read_text(encoding="utf-8")
     counts: dict[str, int] = {}
     topic_matches = list(re.finditer(r"name: (/[^\n]+)", content))
@@ -37,14 +37,14 @@ def _load_rosbag_metadata_counts(metadata: Path) -> dict[str, int]:
     return counts
 
 
-def _validate_official_rosbag_profile(
+def validate_official_rosbag_profile(
     *,
     profile: Path,
     metadata: Path,
     required: list[str],
     optional: list[str],
 ) -> dict[str, Any]:
-    counts = _load_rosbag_metadata_counts(metadata)
+    counts = load_rosbag_metadata_counts(metadata)
     missing_required = [topic for topic in required if topic not in counts]
     zero_count_required = [topic for topic in required if counts.get(topic, 0) <= 0]
     present_optional = [topic for topic in optional if counts.get(topic, 0) > 0]

@@ -4,19 +4,19 @@ import threading
 import time
 from pathlib import Path
 
-from navlab.gazebo_sensor.runtime import (
+from navlab.sim.gazebo_sensor.runtime import (
     X2SensorLaunchConfig,
     build_down_rangefinder_bridge_command,
     build_down_rangefinder_sender_command,
     build_emulator_command,
+    build_scan_ideal_bridge_command,
     build_scan_integrity_filter_command,
     build_scan_stabilization_filter_command,
-    build_scan_ideal_bridge_command,
     build_scan_time_normalizer_command,
     build_vendor_driver_command,
     wait_for_virtual_serial_link,
 )
-from navlab.gazebo_sensor.scan_time_normalizer import monotonic_scan_stamp_ns
+from navlab.sim.gazebo_sensor.scan_time_normalizer import monotonic_scan_stamp_ns
 
 
 def _runtime_config() -> X2SensorLaunchConfig:
@@ -57,7 +57,7 @@ def test_x2_sensor_runtime_bridges_gazebo_scan_ideal() -> None:
 def test_x2_sensor_runtime_emulator_consumes_scan_ideal() -> None:
     command = build_emulator_command(_runtime_config())
 
-    assert command == [command[0], "-m", "navlab.gazebo_sensor.cli"]
+    assert command == [command[0], "-m", "navlab.sim.gazebo_sensor.cli"]
     assert "--scan-ideal-topic" not in command
     assert "--range-noise-stddev-m" not in command
     assert "--dropout-rate" not in command
@@ -75,7 +75,7 @@ def test_down_rangefinder_runtime_bridges_gazebo_scan() -> None:
 def test_down_rangefinder_sender_runs_in_gazebo_sensor_runtime() -> None:
     command = build_down_rangefinder_sender_command()
 
-    assert command == [command[0], "-m", "navlab.gazebo_sensor.rangefinder"]
+    assert command == [command[0], "-m", "navlab.sim.gazebo_sensor.rangefinder"]
 
 
 def test_x2_sensor_runtime_vendor_driver_uses_profile() -> None:
@@ -99,7 +99,7 @@ def test_x2_sensor_runtime_vendor_driver_uses_profile() -> None:
 def test_x2_sensor_runtime_normalizes_vendor_scan_time() -> None:
     command = build_scan_time_normalizer_command()
 
-    assert command == [command[0], "-m", "navlab.gazebo_sensor.scan_time_normalizer"]
+    assert command == [command[0], "-m", "navlab.sim.gazebo_sensor.scan_time_normalizer"]
 
 
 def test_scan_time_normalizer_uses_monotonic_fallback_for_zero_stamp() -> None:
@@ -118,13 +118,13 @@ def test_scan_time_normalizer_keeps_preferred_stamp_when_valid() -> None:
 def test_x2_sensor_runtime_can_launch_scan_integrity_filter() -> None:
     command = build_scan_integrity_filter_command()
 
-    assert command == [command[0], "-m", "navlab.gazebo_sensor.scan_integrity"]
+    assert command == [command[0], "-m", "navlab.sim.gazebo_sensor.scan_integrity"]
 
 
 def test_x2_sensor_runtime_can_launch_scan_stabilization_filter() -> None:
     command = build_scan_stabilization_filter_command()
 
-    assert command == [command[0], "-m", "navlab.gazebo_sensor.scan_stabilization"]
+    assert command == [command[0], "-m", "navlab.sim.gazebo_sensor.scan_stabilization"]
 
 
 def test_x2_sensor_runtime_waits_for_virtual_serial_link(tmp_path: Path) -> None:

@@ -1,12 +1,145 @@
 # Decisions
 
+## 2026-06-11: Real prepare and doctor phases have separate modules
+
+Decision: keep real prepare startup/cleanup in `src.workflows.real.prepare`,
+common FCU/ExternalNav checks in `src.workflows.real.common_doctor`, and task
+doctor orchestration in `src.workflows.real.task_doctor`.
+
+Basis: user clarified that `real_prepare` should not own common doctor or
+task-specific doctor behavior.
+
+Reason: prepare starts and stops services; common doctor evaluates shared FCU
+and ExternalNav state after prepare; task doctor delegates task-specific checks
+to the task object itself through `OrchestrationTask.build_real_task_doctor`.
+Tasks that do not override that hook are skipped for task-specific doctor
+checks instead of being hard-coded in a central branch.
+
+Decision: real-runtime preflight/prepare/common-doctor/task-doctor modules live
+under `src.workflows.real`, not `src.tasks`.
+
+Basis: user clarified these modules are orchestration workflow phases rather
+than user-facing tasks.
+
+Reason: `src.tasks` should contain runnable task objects and task hooks.
+Workflow phases coordinate runtime services, doctor gates, cleanup, and panels.
+The hidden real-preflight registry entry may keep a small compatibility shim
+under `src.tasks.built_in` only for registry compatibility.
+
+## 2026-06-11: SITL companion nodes move under `navlab.sim`
+
+Decision: move the remaining SITL mission, replay, marker, odom-relay, and scan
+feature ROS entrypoints from the legacy companion node package into
+`navlab.sim.companion.nodes`.
+
+Basis: these nodes are used by simulation/acceptance flows, publish `/sim/*` or
+Gazebo/replay artifacts, or run SITL-only mission controllers. They do not
+belong in an unqualified top-level companion runtime namespace.
+
+Reason: the target package boundary is safety-domain first. `navlab` should
+converge on top-level `common`, `real`, and `sim` packages only; remaining
+top-level packages are transitional migration surfaces.
+
+## 2026-06-11: `navlab` top-level runtime packages converge to `common`, `real`, and `sim`
+
+Decision: keep `navlab` top-level runtime ownership limited to `common`,
+`real`, and `sim`. Move the former top-level `companion`, `gazebo_sensor`,
+`slam`, and `interfaces` code under those domains instead of keeping
+transitional top-level packages.
+
+Basis: user clarified that code directly under `navlab` should be domain-neutral
+only when it is truly common; otherwise it should live under the real or sim
+safety-domain package.
+
+Reason: a three-package top-level boundary makes it obvious whether code may
+touch real hardware, simulation-only topics, or pure shared utilities.
+
+Update: SLAM backend/config wrappers now live under `navlab.common.slam`,
+Gazebo sensor runtime lives under `navlab.sim.gazebo_sensor`, simulation
+companion launcher/config/acceptance code lives under
+`navlab.sim.companion.runtime`, and ROS interface packages live under
+`navlab.common.interfaces`.
+
+## 2026-06-11: SLAM wrapper is shared common runtime
+
+Decision: move the SLAM backend registry, runtime config, and CLI wrapper to
+`navlab.common.slam`.
+
+Basis: codebase research and user clarification.
+
+Reason: the current SLAM wrapper does not own real hardware or Gazebo-specific
+behavior. It defines a shared backend launch/config contract used by both real
+and sim flows. Keeping it in `common` avoids duplicating launch arguments while
+still allowing future `navlab.real.slam` or `navlab.sim.slam` packages if the
+runtime behavior diverges.
+
+## 2026-06-11: FCU MAVLink companion nodes are real runtime nodes
+
+Decision: move the NavLab MAVLink bridge launcher, pose mirror, ExternalNav
+sender, and IMU bridge under `navlab.real.companion.nodes`.
+
+Basis: these entrypoints open MAVLink endpoints, request FCU streams, publish
+FCU-derived status, or send MAVLink ODOMETRY. That is real FCU runtime behavior,
+even when a SITL endpoint is used during development.
+
+Reason: keeping these nodes under the top-level companion namespace blurred the
+real/sim safety boundary. `orchestration` now keeps only the FCU bridge mode
+registry and configured process command; the running MAVLink bridge code lives
+inside the real runtime namespace.
+
+## 2026-06-11: Gazebo truth nodes are simulation runtime nodes
+
+Decision: move Gazebo truth odometry and Gazebo truth trajectory recording under
+`navlab.sim.companion.nodes`.
+
+Basis: these nodes consume Gazebo pose/odom topics and are SITL diagnostics, not
+shared companion behavior for the real aircraft.
+
+Reason: keeping Gazebo truth under the common companion node namespace made it
+look available in real runtime. The sim namespace makes the diagnostic nature
+explicit while preserving the same configured launch behavior.
+
+## 2026-06-11: Runtime result contracts live in top-level `contracts/proto`
+
+Decision: define language-neutral runtime artifact schemas under
+`contracts/proto`, beside `navlab` and `orchestration`, instead of placing them
+inside either package.
+
+Basis: orchestration provides output file paths, runtime tasks write result
+files, and orchestration reads those files for panels and CLI return codes. The
+same artifact should remain readable by future Python, Rust, or other-language
+tools.
+
+Reason: `navlab` owns runtime behavior and `orchestration` owns process/control
+flow. A sibling contract package avoids making either side the schema owner and
+prevents future non-Python readers from importing Python runtime modules just to
+parse task results.
+
+## 2026-06-11: Real runtime code moves under `navlab.real`
+
+Decision: move real hardware runtime code out of `orchestration/src/tasks` and into `navlab.real.*`; keep `orchestration` as the process/control plane.
+
+Basis: package-boundary design in `docs/general/navlab_real_sim_package_boundary_design.md` and the current conflict where task wrappers also owned runtime nodes.
+
+Reason: `navlab.real` is the safety boundary for code that may touch real serial devices, FCU links, or motor-affecting MAVLink commands. `orchestration` should provide config, paths, process lifecycle, doctor flow, and panels, but not directly own real runtime behavior.
+
+## 2026-06-11: Motor-debug runtime writes summary to an orchestration-provided file
+
+Decision: `orchestration` launches `navlab.real.companion.nodes.motor_debug` with `--summary-path`; the runtime writes the task summary file, and `orchestration` reads that file to add logs/task metadata and print panels.
+
+Basis: user clarified that orchestration should provide file storage locations while runtime tasks emit their results to files.
+
+Reason: a file contract keeps real MAVLink arm/hold/disarm behavior out of the orchestration process while preserving the existing artifact and panel workflow.
+
 ## 2026-06-10: FCU status fields are shared between bridge and common doctor
 
-Decision: define FCU common-doctor fields once in `navlab.common.fcu_status`, and use that same list for both MAVLink bridge parameter publication and common-doctor parsing.
+Decision: define FCU common-doctor fields once in `navlab.real.common.fcu_status`, and use that same list for both MAVLink bridge parameter publication and common-doctor parsing.
 
 Basis: real `motor-debug` common doctor showed `Mode/GPS/VISO/EK3` as `unknown` even though those values are available from MAVLink, because the doctor expected fields that `/navlab/mavlink/status` was not publishing.
 
 Reason: duplicating field names across the bridge and doctor creates silent drift. The bridge now requests the shared MAVLink parameters and publishes them under `/navlab/mavlink/status.parameters`; the doctor waits for that status to contain mode plus at least one shared parameter before summarizing.
+
+Update: this module moved from the old top-level common FCU-status location to `navlab.real.common.fcu_status` because EKF source-set and ArduPilot FCU parameters are real-runtime semantics, not top-level shared utility code.
 
 ## 2026-06-10: Motor-debug GUIDED is a run-stage gate
 
@@ -164,7 +297,7 @@ Reason: the previous 180-degree remapping plus driver reversion/inversion made `
 
 ## 2026-06-04: NavLab SLAM runtime uses a backend registry wrapper
 
-Decision: start SLAM through `navlab.slam.cli` and a backend registry instead of assembling Cartographer launch arguments in orchestration.
+Decision: start SLAM through `navlab.common.slam.cli` and a backend registry instead of assembling Cartographer launch arguments in orchestration.
 
 Basis: codebase research and future backend replacement requirement.
 
@@ -603,3 +736,27 @@ Decision: use the ArduPilot VIO tracking camera and GPS/Non-GPS transition docs 
 Basis: VIO and Cartographer differ in upstream sensor source, but both feed external pose into ArduPilot EKF. The GPS/Non-GPS transition doc also clarifies that EKF source sets can switch between GPS and non-GPS sources, which is relevant to interpreting `GPS 1: Bad fix` during an indoor arm attempt.
 
 Reason: NavLab should not treat ROS `/external_nav/status.ready=true` alone as proof that the FCU is ready to arm. Ground checks must also prove the FCU receives ExternalNav, local position changes consistently when the vehicle is moved, EKF origin/home are handled, and the active EKF source no longer depends on GPS for the indoor path. Future GPS/non-GPS transitions should use EKF source sets rather than ad hoc motor-debug overrides.
+
+## 2026-06-11: Orchestration config code lives under src.configs
+
+Decision: move orchestration configuration code into `orchestration/src/configs/`: `project_config.py` owns root project config, `run_config.py` owns `OrchestrationConfig` and `RunConfig`, and `task_config.py` owns shared task TOML helpers.
+
+Basis: the old top-level `config.py`, `project_config.py`, and `task_config.py` names made it unclear which config object should be read first.
+
+Reason: `ProjectConfig` is the root process-level config and must be initialized explicitly with `init_project_config()`. `load_project_config()` only returns the initialized singleton and raises if called before initialization. `RunConfig` remains a per-run/per-task object and now lives in `run_config.py`. Task-specific dataclasses stay in their task modules, while generic task config helpers live in `configs/task_config.py`.
+
+## 2026-06-11: Project paths are not RunConfig
+
+Decision: replace the former root `RuntimeConfig` name with `ProjectPaths` inside `ProjectConfig`.
+
+Basis: `RuntimeConfig` was easy to confuse with `RunConfig`, but it only represented project paths such as lab root, ArduPilot root, mavlink-router root, venv path, and the selected config file.
+
+Reason: `ProjectConfig.paths` is now clearly project/environment-level state. `RunConfig` is the single-run task execution state with run id, artifact dir, duration, and merged orchestration config.
+
+## 2026-06-11: Real prepare failures must distinguish runtime process errors from FCU readiness
+
+Decision: keep the real prepare ROS graph probe on the configured timeout and fix process launch failures at their source: `rangefinder_bridge` runs under system Python with the orchestration venv on `PYTHONPATH`, and moved ROS packages must be rebuilt so `install/` symlinks point at `navlab/common/slam/...`.
+
+Basis: `just navlab-doctor` initially failed with a 2 s `ros2 topic list` timeout, then with missing rangefinder/SLAM topics. The real logs showed `rangefinder_bridge` could import `rclpy` but not `pymavlink`, and `navlab_slam_bringup` / `navlab_cartographer_adapter` install symlinks still pointed at the deleted `navlab/slam/...` tree. After using the configured 5 s topic probe, adding the venv site-packages to the rangefinder command, and rebuilding the moved ROS packages, `just navlab-doctor` passed with prepare rc=0 and common doctor rc=0.
+
+Reason: these are not new FCU blockers or task-doctor policy questions. They are local runtime packaging issues caused by the real/sim package move and mixed ROS/system Python execution. Fixing them preserves the existing ExternalNav readiness contract instead of weakening the doctor checks.

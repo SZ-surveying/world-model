@@ -77,7 +77,7 @@ log_dir = "artifacts/runtime_logs"
 require_explicit_services = true
 
 [orchestration.runtime.process.services.companion]
-command = ["uv", "run", "--project", "navlab", "python", "-m", "navlab.companion.cli", "run"]
+command = ["uv", "run", "--project", "navlab", "python", "-m", "navlab.sim.companion.runtime.cli", "run"]
 cwd = "."
 env = { ROS_DOMAIN_ID = "${ROS_DOMAIN_ID}" }
 

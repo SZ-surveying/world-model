@@ -232,13 +232,17 @@ required_ros_packages = [
   "navlab_slam_imu_bridge",
   "ydlidar_ros2_driver"
 ]
-required_python_modules = ["navlab.companion.cli", "navlab.slam.cli"]
+required_python_modules = ["navlab.sim.companion.runtime.cli", "navlab.common.slam.cli"]
 
 [real_prepare]
 fcu_bridge_mode = "navlab_mavlink"
 ```
 
 preflight doctor 负责证明物理串口和依赖边界：
+
+Note: `navlab.sim.companion.runtime.cli` and `navlab.common.slam.cli` are transitional import
+checks. The target package boundary is `navlab.real`, `navlab.sim`, and
+`navlab.common`, with companion runtime split into real/sim packages.
 
 - serial device path 存在，例如 `/dev/ttyACM0`、`/dev/ttyUSB0` 或 udev symlink。
 - 当前用户有读写权限。
@@ -471,8 +475,8 @@ real preflight doctor summary 建议包含：
         "ydlidar_ros2_driver": {"present": true}
       },
       "required_python_modules": {
-        "navlab.companion.cli": true,
-        "navlab.slam.cli": true
+        "navlab.sim.companion.runtime.cli": true,
+        "navlab.common.slam.cli": true
       }
     },
     "serial_mavlink": {

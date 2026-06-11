@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 from src import host
-from src.config import RunConfig
+from src.configs.run_config import RunConfig
 
 LANDING_NOT_EVALUATED_BLOCKER = "landing_not_evaluated"
 RETURN_HOME_REQUIRED_BLOCKER = "return_home_required_before_landing_not_satisfied"
@@ -20,7 +20,7 @@ def _landing_policy(config: RunConfig, task_name: str) -> str:
 
 
 def _acceptance_stage(config: RunConfig) -> str:
-    return "real" if host._runtime_mode_name(config) == "real" else "simulation"
+    return "real" if host.runtime_mode_name(config) == "real" else "simulation"
 
 
 def _landing_config_summary(config: RunConfig, task_name: str) -> dict[str, Any]:

@@ -19,8 +19,12 @@ required_ros_packages = [
     "ydlidar_ros2_driver",
 ]
 required_python_modules = [
-    "navlab.companion.cli",
-    "navlab.slam.cli",
+    "navlab.sim.companion.runtime.cli",
+    "navlab.common.slam.cli",
+    "navlab.real.companion.nodes.mavlink_bridge",
+    "navlab.real.companion.nodes.pose_mirror",
+    "navlab.real.companion.nodes.external_nav",
+    "navlab.real.companion.nodes.imu_bridge",
 ]
 required_process_services = []
 

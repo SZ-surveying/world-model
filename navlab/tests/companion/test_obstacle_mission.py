@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from math import isclose
 
-from navlab.companion.nodes.obstacle_mission import (
+from navlab.sim.companion.nodes.obstacle_mission import (
     DEFAULT_ORIGIN_ALT_M,
     DEFAULT_ORIGIN_LAT_DEG,
     DEFAULT_ORIGIN_LON_DEG,
@@ -12,15 +12,15 @@ from navlab.companion.nodes.obstacle_mission import (
     MissionDecision,
     MissionInputs,
     ReactiveAvoidancePlanner,
-    _send_local_position_yaw_setpoint,
-    _send_gcs_heartbeat,
-    _set_ekf_origin,
-    _set_home_position,
-    _set_mode,
     choose_scan_yaw,
     decide_obstacle_mission,
     encode_mission_status,
     position_target_from_velocity,
+    send_gcs_heartbeat,
+    send_local_position_yaw_setpoint,
+    set_ekf_origin,
+    set_home_position,
+    set_mode,
     velocity_aligned_decision,
     yaw_for_velocity,
 )
@@ -223,9 +223,9 @@ class _FakeConnection:
 def test_fcu_initialization_sends_gcs_heartbeat_origin_and_home() -> None:
     connection = _FakeConnection()
 
-    _send_gcs_heartbeat(connection)
-    _set_ekf_origin(connection, 1, DEFAULT_ORIGIN_LAT_DEG, DEFAULT_ORIGIN_LON_DEG, DEFAULT_ORIGIN_ALT_M)
-    _set_home_position(connection, 1, 1, DEFAULT_ORIGIN_LAT_DEG, DEFAULT_ORIGIN_LON_DEG, DEFAULT_ORIGIN_ALT_M)
+    send_gcs_heartbeat(connection)
+    set_ekf_origin(connection, 1, DEFAULT_ORIGIN_LAT_DEG, DEFAULT_ORIGIN_LON_DEG, DEFAULT_ORIGIN_ALT_M)
+    set_home_position(connection, 1, 1, DEFAULT_ORIGIN_LAT_DEG, DEFAULT_ORIGIN_LON_DEG, DEFAULT_ORIGIN_ALT_M)
 
     heartbeat = connection.mav.calls[0]
     origin = connection.mav.calls[1]
@@ -242,7 +242,7 @@ def test_fcu_initialization_sends_gcs_heartbeat_origin_and_home() -> None:
 def test_local_position_yaw_setpoint_uses_position_fields_and_ignores_velocity() -> None:
     connection = _FakeConnection()
 
-    _send_local_position_yaw_setpoint(
+    send_local_position_yaw_setpoint(
         connection,
         target_system=1,
         target_component=1,
@@ -266,7 +266,7 @@ def test_local_position_yaw_setpoint_uses_position_fields_and_ignores_velocity()
 def test_set_mode_uses_arducopter_set_mode_and_ackable_command() -> None:
     connection = _FakeConnection()
 
-    _set_mode(connection, 1, 4)
+    set_mode(connection, 1, 4)
 
     assert connection.mav.calls[0][0] == "set_mode_send"
     assert connection.mav.calls[1][0] == "command_long_send"

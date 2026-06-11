@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from navlab.gazebo_sensor.x2.scan_source import IdealLaserScan, resample_ideal_scan_to_x2_samples
+from navlab.sim.gazebo_sensor.x2.scan_source import IdealLaserScan, resample_ideal_scan_to_x2_samples
 
 
 def test_resample_ideal_scan_uses_ros_front_left_rear_right_angles() -> None:

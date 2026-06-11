@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from src.config import RunConfig
+from src.configs.run_config import RunConfig
 from src.tasks.workflows import scan_robustness as p12
 
 
@@ -28,9 +28,9 @@ def test_p12_config_loads_airframe_disturbance_sections() -> None:
 def test_p12_doctor_summary_is_green_for_default_config(tmp_path: Path) -> None:
     config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260608_000000", artifact_dir=tmp_path)
     runtime = tmp_path / "p12_runtime.toml"
-    p12._write_p12_runtime_config(config, runtime)
+    p12.write_p12_runtime_config(config, runtime)
 
-    summary = p12._build_p12_doctor_summary(config, runtime_config=runtime)
+    summary = p12.build_p12_doctor_summary(config, runtime_config=runtime)
 
     assert summary["ok"] is True
     assert summary["p12_airframe_disturbance_doctor"]["motion_profile"] == "p9_representative_replay"
@@ -41,7 +41,7 @@ def test_p12_runtime_config_writes_landing_contract(tmp_path: Path) -> None:
     config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260608_000000", artifact_dir=tmp_path)
     runtime = tmp_path / "p12_runtime.toml"
 
-    summary = p12._write_p12_runtime_config(config, runtime)
+    summary = p12.write_p12_runtime_config(config, runtime)
 
     assert runtime.is_file()
     landing = summary["data"]["landing"]["runtime"]
@@ -55,7 +55,7 @@ def test_p12_config_validation_blocks_invalid_motor_array() -> None:
     bad_airframe = replace(config.orchestration.airframe_disturbance, thrust_multipliers=(1.0, 1.0))
     bad = replace(config, orchestration=replace(config.orchestration, airframe_disturbance=bad_airframe))
 
-    blockers = p12._validate_p12_config(bad)
+    blockers = p12.validate_p12_config(bad)
 
     assert "airframe_disturbance_config_invalid: thrust_multipliers length must match motor_count" in blockers
 
@@ -63,7 +63,7 @@ def test_p12_config_validation_blocks_invalid_motor_array() -> None:
 def test_p12_profile_sweep_keeps_hard_bias_as_expected_fault() -> None:
     config = RunConfig.from_config(config_path="orchestration/config.simulation.toml", run_id="20260608_000000")
 
-    summary = p12._build_p12_profile_sweep_summary(config)
+    summary = p12.build_p12_profile_sweep_summary(config)
 
     assert summary["profiles"]["clean"]["ok"] is True
     assert summary["profiles"]["nominal_realistic"]["ok"] is True
@@ -72,7 +72,7 @@ def test_p12_profile_sweep_keeps_hard_bias_as_expected_fault() -> None:
 
 
 def test_p12_fcu_mode_gate_accepts_guided_window() -> None:
-    summary = p12._evaluate_fcu_mode_payloads(
+    summary = p12.evaluate_fcu_mode_payloads(
         [
             (100, {"mode_number": 4, "state": "streaming", "armed": True}),
             (200, {"mode_number": "4", "state": "streaming", "armed": True}),
@@ -93,7 +93,7 @@ def test_p12_fcu_mode_gate_accepts_guided_window() -> None:
 
 
 def test_p12_fcu_mode_gate_blocks_non_guided_window() -> None:
-    summary = p12._evaluate_fcu_mode_payloads(
+    summary = p12.evaluate_fcu_mode_payloads(
         [
             (100, {"mode_number": 4, "state": "streaming", "armed": True}),
             (200, {"mode_number": 6, "state": "streaming", "armed": True}),
@@ -113,7 +113,7 @@ def test_p12_fcu_mode_gate_blocks_non_guided_window() -> None:
 
 
 def test_p12_fcu_mode_gate_blocks_missing_mode_number() -> None:
-    summary = p12._evaluate_fcu_mode_payloads(
+    summary = p12.evaluate_fcu_mode_payloads(
         [(100, {"state": "streaming", "armed": True})],
         required_mode_name="GUIDED",
         required_mode_number=4,
@@ -135,10 +135,10 @@ def test_p12_sensor_config_enables_airframe_runtime_and_raw_imu_bridge(tmp_path:
     vendor.write_text("x: y\n", encoding="utf-8")
     sensor_config = tmp_path / "sensor.toml"
     bridge = tmp_path / "bridge.yaml"
-    profile = p12._profile_for_name(config, "vibration")
+    profile = p12.profile_for_name(config, "vibration")
 
-    p12._write_p12_bridge_override(bridge, imu_raw_topic=config.orchestration.airframe_disturbance.imu_input_topic)
-    summary = p12._write_p12_sensor_config(config, sensor_config, vendor_profile=vendor, profile=profile)
+    p12.write_p12_bridge_override(bridge, imu_raw_topic=config.orchestration.airframe_disturbance.imu_input_topic)
+    summary = p12.write_p12_sensor_config(config, sensor_config, vendor_profile=vendor, profile=profile)
 
     airframe = summary["data"]["gazebo_sensor"]["airframe_disturbance"]
     assert 'ros_topic_name: "navlab/imu/raw"' in bridge.read_text(encoding="utf-8")

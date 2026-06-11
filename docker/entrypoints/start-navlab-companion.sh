@@ -10,4 +10,4 @@ set -u
 
 NAVLAB_RUNTIME_CONFIG="${NAVLAB_RUNTIME_CONFIG:-/workspace/navlab/config.toml}"
 
-exec /opt/companion-venv/bin/python -m navlab.companion.cli launch-companion --config "${NAVLAB_RUNTIME_CONFIG}"
+exec /opt/companion-venv/bin/python -m navlab.sim.companion.runtime.cli launch-companion --config "${NAVLAB_RUNTIME_CONFIG}"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from navlab.gazebo_sensor.x2.smoke import (
+from navlab.sim.gazebo_sensor.x2.smoke import (
     X2DriverSmokeConfig,
     build_emulator_command,
     build_rosbag_record_command,
@@ -28,7 +28,7 @@ def _smoke_config(tmp_path: Path) -> X2DriverSmokeConfig:
 def test_x2_driver_smoke_starts_emulator_with_static_ranges(tmp_path: Path) -> None:
     command = build_emulator_command(_smoke_config(tmp_path))
 
-    assert command == [command[0], "-m", "navlab.gazebo_sensor.cli"]
+    assert command == [command[0], "-m", "navlab.sim.gazebo_sensor.cli"]
     assert "--virtual-serial-link" not in command
     assert "--static-range-m" not in command
     assert "--auto-start" not in command

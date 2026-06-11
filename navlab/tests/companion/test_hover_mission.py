@@ -4,7 +4,7 @@ from math import isclose
 
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
-from navlab.companion.nodes.hover_mission import (
+from navlab.sim.companion.nodes.hover_mission import (
     HoverInputs,
     HoverRequirements,
     command_ack_success,

@@ -13,8 +13,6 @@ class TaskRegistry:
     _default_modules_loaded: ClassVar[bool] = False
     _public_task_names: ClassVar[frozenset[str]] = frozenset(
         {
-            "build",
-            "doctor",
             "hover",
             "exploration",
             "scan-robustness",
@@ -60,12 +58,9 @@ class TaskRegistry:
             return
         cls._default_modules_loaded = True
         for module_name in (
-            "src.tasks.build",
-            "src.tasks.doctor",
             "src.tasks.built_in.hover",
             "src.tasks.built_in.exploration",
             "src.tasks.built_in.motor_debug",
-            "src.tasks.built_in.real_preflight",
             "src.tasks.built_in.scan_robustness",
         ):
             import_module(module_name)

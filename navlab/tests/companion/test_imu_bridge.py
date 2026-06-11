@@ -4,7 +4,7 @@ import json
 from math import isclose
 from types import SimpleNamespace
 
-from navlab.companion.nodes.imu_bridge import (
+from navlab.real.companion.nodes.imu_bridge import (
     GRAVITY_MPS2,
     ImuBridgeStatus,
     encode_imu_status,

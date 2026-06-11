@@ -1,65 +1,26 @@
 from __future__ import annotations
 
 import json
-import os
 import shlex
-import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import tomli_w
-from python_on_whales import DockerClient
-from python_on_whales.exceptions import DockerException
-from rich.console import Console
 
 from src import host
-from src.config import RunConfig
+from src.configs.run_config import RunConfig
+from src.tasks.helpers.artifacts import file_sha256, write_text
 from src.tasks.helpers.fcu import (
-    P4_CONTROLLER_CONTAINER,
-    _append_controller_blockers,
-    _append_owner_blockers,
-    _build_p4_doctor_summary,
-    _start_p4_controller_container,
-    _wait_for_controller_summary,
-    _write_controller_runtime_script,
-    _write_p4_runtime_config,
+    build_p4_doctor_summary,
+    write_p4_runtime_config,
 )
 from src.tasks.helpers.official_stack import (
-    _build_doctor_summary,
-    _collect_official_dds_probe,
-    _collect_ros_graph,
-    _load_rosbag_metadata_counts,
-    _validate_official_rosbag_profile,
-    _write_json,
-    _write_text,
+    build_doctor_summary,
 )
-from src.tasks.helpers.navlab_models import (
-    GAZEBO_SENSOR_CONTAINER,
-    OFFICIAL_IRIS_3D_BRIDGE_CONFIG,
-    _capture_container_log,
-    _collect_topic_info,
-    _file_sha256,
-    _profile_topics,
-    _remove_container,
-    _start_gazebo_sensor_container,
-    _write_p1_bridge_override,
-    _write_p1_vendor_profile,
-)
-from src.tasks.helpers.sensors import (
-    OFFICIAL_GAZEBO_IRIS_PARAMS,
-    OFFICIAL_IRIS_WITH_LIDAR_MODEL,
-    _collect_imu_probe,
-    _collect_rangefinder_probe,
-    _write_p2_model_overlay,
-    _write_p2_param_overlay,
-    _write_p2_sensor_config,
-)
+from src.tasks.helpers.rosbag_profiles import load_rosbag_metadata_counts, profile_topics
 from src.tasks.helpers.slam import (
-    SLAM_BACKEND_CONTAINER,
-    _build_p3_doctor_summary,
-    _start_p3_slam_container,
-    _write_p3_slam_runtime_config,
+    build_p3_doctor_summary,
+    write_p3_slam_runtime_config,
 )
 
 P5_ROSBAG_CONTAINER = "navlab-p5-rosbag"
@@ -75,7 +36,7 @@ def _baseline_env(config: RunConfig) -> dict[str, str]:
     }
 
 
-def _write_p5_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
+def write_p5_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
     p5 = config.orchestration.frame_contract
     data = {
         "frame_contract": {
@@ -116,7 +77,7 @@ def _write_p5_runtime_config(config: RunConfig, path: Path) -> dict[str, Any]:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
-    return {"path": str(path), "workspace_path": host._workspace_path(path), "sha256": _file_sha256(path), "data": data}
+    return {"path": str(path), "workspace_path": host.workspace_path(path), "sha256": file_sha256(path), "data": data}
 
 
 def _frame_probe_script(spec: dict[str, Any]) -> str:
@@ -574,11 +535,11 @@ raise SystemExit(0 if FrameContractProbe().run()["ok"] else 30)
 """
 
 
-def _write_frame_probe_script(config: RunConfig, script_path: Path) -> dict[str, Any]:
+def write_frame_probe_script(config: RunConfig, script_path: Path) -> dict[str, Any]:
     p5 = config.orchestration.frame_contract
     summary_file = config.artifact_dir / "frame_contract_summary.json"
     spec = {
-        "summary_file": host._workspace_path(summary_file),
+        "summary_file": host.workspace_path(summary_file),
         "required_frames": list(p5.required_frames),
         "map_frame_id": p5.map_frame_id,
         "odom_frame_id": p5.odom_frame_id,
@@ -612,19 +573,19 @@ def _write_frame_probe_script(config: RunConfig, script_path: Path) -> dict[str,
         "uses_gazebo_truth_as_input": p5.uses_gazebo_truth_as_input,
     }
     script_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_text(script_path, _frame_probe_script(spec))
+    write_text(script_path, _frame_probe_script(spec))
     return {
         "path": str(script_path),
-        "workspace_path": host._workspace_path(script_path),
-        "sha256": _file_sha256(script_path),
+        "workspace_path": host.workspace_path(script_path),
+        "sha256": file_sha256(script_path),
         "summary_file": str(summary_file),
         "spec": spec,
     }
 
 
-def _run_frame_probe(config: RunConfig, *, script_path: Path) -> dict[str, Any]:
-    command = f"python3 {shlex.quote(host._workspace_path(script_path))}"
-    rc, output = host._docker_run_ros_shell_capture(
+def run_frame_probe(config: RunConfig, *, script_path: Path) -> dict[str, Any]:
+    command = f"python3 {shlex.quote(host.workspace_path(script_path))}"
+    rc, output = host.docker_run_ros_shell_capture(
         config=config,
         image=config.orchestration.official_baseline.runtime_image,
         shell_command=command,
@@ -632,110 +593,11 @@ def _run_frame_probe(config: RunConfig, *, script_path: Path) -> dict[str, Any]:
         network="host",
         envs=_baseline_env(config),
     )
-    _write_text(config.artifact_dir / "frame_contract_probe.txt", output)
+    write_text(config.artifact_dir / "frame_contract_probe.txt", output)
     summary = _load_json(config.artifact_dir / "frame_contract_summary.json")
     if not summary:
         summary = {"ok": False, "blockers": [f"frame probe failed rc={rc}"], "output": output}
     summary["rc"] = rc
-    return summary
-
-
-def _p5_rosbag_shell_command(config: RunConfig, *, duration_sec: float) -> tuple[Path, list[str], list[str], str]:
-    profile_path = Path(config.frame_contract_rosbag_profile)
-    required, optional, topics = _profile_topics(profile_path)
-    if not profile_path.is_file() or not topics:
-        return profile_path, required, optional, ""
-    container_rosbag = Path("/workspace") / config.artifact_dir / "rosbag"
-    topic_args = " ".join(shlex.quote(topic) for topic in topics)
-    command = (
-        f"rm -rf {shlex.quote(str(container_rosbag))} && "
-        f"mkdir -p {shlex.quote(str(container_rosbag.parent))} && "
-        "set +e; "
-        f"timeout --signal=INT {duration_sec:g} "
-        f"ros2 bag record -s mcap -o {shlex.quote(str(container_rosbag))} --topics {topic_args}; "
-        "rc=$?; "
-        "set -e; "
-        'if [ "$rc" != "0" ] && [ "$rc" != "124" ] && [ "$rc" != "130" ]; then exit "$rc"; fi; '
-        f"for i in $(seq 1 40); do [ -f {shlex.quote(str(container_rosbag / 'metadata.yaml'))} ] && exit 0; "
-        "sleep 0.25; done; exit 2"
-    )
-    return profile_path, required, optional, command
-
-
-def _start_p5_rosbag_recording(config: RunConfig, *, duration_sec: float) -> None:
-    _remove_container(P5_ROSBAG_CONTAINER)
-    profile_path, required, optional, command = _p5_rosbag_shell_command(config, duration_sec=duration_sec)
-    if not command:
-        _write_json(
-            config.artifact_dir / "rosbag_profile_summary.json",
-            {
-                "ok": False,
-                "recorded": False,
-                "profile": str(profile_path),
-                "required_topics": required,
-                "optional_topics": optional,
-                "reason": "rosbag profile missing or empty",
-            },
-        )
-        return
-    DockerClient().run(
-        config.orchestration.official_baseline.runtime_image,
-        [
-            "bash",
-            "-lc",
-            (
-                "source /opt/ros/jazzy/setup.bash && "
-                "source /opt/navlab_official_ws/install/setup.bash && "
-                f"{command}"
-            ),
-        ],
-        detach=True,
-        name=P5_ROSBAG_CONTAINER,
-        networks=["host"],
-        volumes=[(Path.cwd(), "/workspace")],
-        workdir="/workspace",
-        envs={**_baseline_env(config), "PYTHONPATH": "/workspace"},
-    )
-
-
-def _finish_p5_rosbag_recording(config: RunConfig) -> dict[str, Any]:
-    profile_path = Path(config.frame_contract_rosbag_profile)
-    required, optional, _topics = _profile_topics(profile_path)
-    metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
-    try:
-        rc = DockerClient().wait(P5_ROSBAG_CONTAINER)
-    except DockerException as exc:
-        rc = exc.return_code or 1
-    try:
-        output = DockerClient().logs(P5_ROSBAG_CONTAINER, tail=2000)
-    except DockerException as exc:
-        output = str(exc)
-    _write_text(config.artifact_dir / "rosbag_record.txt", str(output))
-    for _ in range(160):
-        if metadata.is_file():
-            break
-        time.sleep(0.25)
-    if rc != 0 or not metadata.is_file():
-        summary = {
-            "ok": False,
-            "recorded": False,
-            "profile": str(profile_path),
-            "required_topics": required,
-            "optional_topics": optional,
-            "reason": f"rosbag record failed rc={rc}",
-            "record_output": str(output),
-        }
-        _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
-        return summary
-    summary = _validate_official_rosbag_profile(
-        profile=profile_path,
-        metadata=metadata,
-        required=required,
-        optional=optional,
-    )
-    summary["rosbag_path"] = str(config.artifact_dir / "rosbag")
-    summary["mcap_path"] = str(config.artifact_dir / "rosbag" / "rosbag_0.mcap")
-    _write_json(config.artifact_dir / "rosbag_profile_summary.json", summary)
     return summary
 
 
@@ -752,20 +614,20 @@ def _message_counts(config: RunConfig) -> dict[str, int]:
     metadata = config.artifact_dir / "rosbag" / "metadata.yaml"
     if not metadata.is_file():
         return {}
-    return _load_rosbag_metadata_counts(metadata)
+    return load_rosbag_metadata_counts(metadata)
 
 
-def _build_p5_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict[str, Any]:
+def build_p5_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict[str, Any]:
     p5 = config.orchestration.frame_contract
-    baseline_doctor = _build_doctor_summary(config)
+    baseline_doctor = build_doctor_summary(config)
     p3_runtime_config = config.artifact_dir / "p5_doctor_p3_slam_runtime.toml"
-    _write_p3_slam_runtime_config(config, p3_runtime_config)
-    p3_doctor = _build_p3_doctor_summary(config, runtime_config=p3_runtime_config)
+    write_p3_slam_runtime_config(config, p3_runtime_config)
+    p3_doctor = build_p3_doctor_summary(config, runtime_config=p3_runtime_config)
     p4_runtime_config = config.artifact_dir / "p5_doctor_p4_fcu_controller_runtime.toml"
-    _write_p4_runtime_config(config, p4_runtime_config)
-    p4_doctor = _build_p4_doctor_summary(config, runtime_config=p4_runtime_config)
+    write_p4_runtime_config(config, p4_runtime_config)
+    p4_doctor = build_p4_doctor_summary(config, runtime_config=p4_runtime_config)
     profile_path = Path(p5.rosbag_profile)
-    required, optional, topics = _profile_topics(profile_path)
+    required, optional, topics = profile_topics(profile_path)
     blockers = [
         *[str(item) for item in baseline_doctor.get("blockers", [])],
         *[str(item) for item in p3_doctor.get("blockers", [])],
@@ -783,7 +645,7 @@ def _build_p5_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict
         "blockers": blockers,
         "p5_frame_contract_doctor": {
             "runtime_config": str(runtime_config),
-            "runtime_config_sha256": _file_sha256(runtime_config) if runtime_config.is_file() else "",
+            "runtime_config_sha256": file_sha256(runtime_config) if runtime_config.is_file() else "",
             "required_frames": list(p5.required_frames),
             "tf_chain": [p5.map_frame_id, p5.odom_frame_id, p5.base_frame_id],
             "sensor_frames": [p5.imu_frame_id, p5.laser_frame_id, p5.rangefinder_frame_id],
@@ -810,7 +672,7 @@ def _build_p5_doctor_summary(config: RunConfig, *, runtime_config: Path) -> dict
     return summary
 
 
-def _append_p5_blockers(
+def append_p5_blockers(
     *,
     blockers: list[str],
     frame_summary: dict[str, Any],
@@ -843,7 +705,7 @@ def _append_p5_blockers(
 
 def _write_foxglove_notes(config: RunConfig) -> None:
     p5 = config.orchestration.frame_contract
-    _write_text(
+    write_text(
         config.artifact_dir / "foxglove_notes.md",
         "\n".join(
             [
@@ -862,7 +724,3 @@ def _write_foxglove_notes(config: RunConfig) -> None:
         )
         + "\n",
     )
-
-
-
-

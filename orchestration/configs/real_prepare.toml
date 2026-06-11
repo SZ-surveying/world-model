@@ -50,7 +50,8 @@ command = [
     "--project",
     "orchestration",
     "python",
-    "orchestration/src/tasks/fcu_bridge/navlab_mavlink_bridge.py",
+    "-m",
+    "navlab.real.companion.nodes.mavlink_bridge",
     "--ros-distro",
     "humble",
     "--mavlink-endpoint",
@@ -76,7 +77,7 @@ required = true
 command = [
     "bash",
     "-lc",
-    "source /opt/ros/humble/setup.bash && source install/setup.bash && PYTHONPATH=.:$PYTHONPATH /usr/bin/python3 orchestration/src/tasks/lidar_bridge/ydlidar_x2_scan_bridge.py --port /dev/ttyUSB0 --baud 115200 --scan-topic /scan --frame-id laser_frame",
+    "source /opt/ros/humble/setup.bash && source install/setup.bash && PYTHONPATH=.:$PYTHONPATH /usr/bin/python3 -m navlab.real.companion.nodes.ydlidar_x2_scan --port /dev/ttyUSB0 --baud 115200 --scan-topic /scan --frame-id laser_frame",
 ]
 startup_timeout_sec = 10.0
 health_topics = ["/scan"]
@@ -117,7 +118,7 @@ required = true
 command = [
     "bash",
     "-lc",
-    "source /opt/ros/humble/setup.bash && source install/setup.bash && PYTHONPATH=.:$PYTHONPATH /usr/bin/python3 orchestration/src/tasks/rangefinder_bridge/fcu_distance_sensor_bridge.py --mavlink-endpoint tcp:127.0.0.1:5760 --range-topic /rangefinder/down/range --status-topic /rangefinder/down/status --frame-id rangefinder_down_frame --accepted-orientation 25",
+    "source /opt/ros/humble/setup.bash && source install/setup.bash && PYTHONPATH=.:$PWD/orchestration/.venv/lib/python3.11/site-packages:$PYTHONPATH /usr/bin/python3 -m navlab.real.companion.nodes.rangefinder_bridge --mavlink-endpoint tcp:127.0.0.1:5760 --range-topic /rangefinder/down/range --status-topic /rangefinder/down/status --frame-id rangefinder_down_frame --accepted-orientation 25",
 ]
 startup_timeout_sec = 8.0
 health_topics = ["/rangefinder/down/range", "/rangefinder/down/status"]

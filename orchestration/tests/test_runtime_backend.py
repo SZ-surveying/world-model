@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from python_on_whales.exceptions import DockerException
 from rich.console import Console
-from src.config import RunConfig
-from src.project_config import RuntimeConfig, load_orchestration_runtime_backend_config
+from src.configs.project_config import init_project_config, load_project_config
+from src.configs.run_config import RunConfig
 from src.runtime import (
     DockerBackend,
     ProbeSpec,
@@ -22,7 +22,6 @@ from src.runtime import (
     WorkspacePathMapper,
 )
 from src.runtime.errors import BackendConfigError, PathMappingError, RuntimeModeViolationError, ServiceStartError
-from src.tasks.helpers import scan_integrity as scan_integrity_gate
 
 
 class FakeDockerClient:
@@ -309,16 +308,9 @@ def test_load_runtime_backend_config_defaults_to_docker(tmp_path: Path, monkeypa
     config_file.write_text("", encoding="utf-8")
     monkeypatch.delenv("NAVLAB_RUNTIME_BACKEND", raising=False)
     monkeypatch.delenv("NAVLAB_RUNTIME_MODE", raising=False)
-    runtime = RuntimeConfig(
-        lab_root=tmp_path,
-        ardupilot_root=tmp_path / "ardupilot",
-        mavlink_router_root=tmp_path / "mavlink-router",
-        venv_path=tmp_path / ".venv",
-        config_file=config_file,
-        config_loaded=True,
-    )
 
-    config = load_orchestration_runtime_backend_config(runtime)
+    init_project_config(config_file)
+    config = load_project_config().runtime_backend
 
     assert config.backend.value == "docker"
     assert config.backend.source == "default"
@@ -340,17 +332,9 @@ def test_load_runtime_backend_config_env_rejects_missing_process_services(
     )
     monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
     monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
-    runtime = RuntimeConfig(
-        lab_root=tmp_path,
-        ardupilot_root=tmp_path / "ardupilot",
-        mavlink_router_root=tmp_path / "mavlink-router",
-        venv_path=tmp_path / ".venv",
-        config_file=config_file,
-        config_loaded=True,
-    )
 
     with pytest.raises(ValueError, match="process backend requires explicit services"):
-        load_orchestration_runtime_backend_config(runtime)
+        init_project_config(config_file)
 
 
 def test_load_runtime_backend_config_parses_process_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -380,22 +364,16 @@ forbidden_simulation_input_topics = ["/gazebo/*"]
     )
     monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
     monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
-    runtime = RuntimeConfig(
-        lab_root=tmp_path,
-        ardupilot_root=tmp_path / "ardupilot",
-        mavlink_router_root=tmp_path / "mavlink-router",
-        venv_path=tmp_path / ".venv",
-        config_file=config_file,
-        config_loaded=True,
-    )
 
-    config = load_orchestration_runtime_backend_config(runtime)
+    init_project_config(config_file)
+    project_config = load_project_config()
+    config = project_config.runtime_backend
 
     assert config.backend.value == "process"
     assert config.mode.value == "real"
-    assert config.process.log_dir == tmp_path / "logs"
+    assert config.process.log_dir == project_config.paths.lab_root / "logs"
     assert config.process.services["probe"].command == ("python", "-c", "print('ok')")
-    assert config.process.services["probe"].cwd == tmp_path
+    assert config.process.services["probe"].cwd == project_config.paths.lab_root
     assert config.process.services["probe"].env == {"ROS_DOMAIN_ID": "85"}
     assert config.real_sources.scan_source_claim.value == "real_x2"
     assert config.real_sources.fcu_source_claim.value == "real_ap"
@@ -408,17 +386,9 @@ def test_load_runtime_backend_config_rejects_unknown_backend(tmp_path: Path, mon
     config_file.write_text("", encoding="utf-8")
     monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "other")
     monkeypatch.delenv("NAVLAB_RUNTIME_MODE", raising=False)
-    runtime = RuntimeConfig(
-        lab_root=tmp_path,
-        ardupilot_root=tmp_path / "ardupilot",
-        mavlink_router_root=tmp_path / "mavlink-router",
-        venv_path=tmp_path / ".venv",
-        config_file=config_file,
-        config_loaded=True,
-    )
 
     with pytest.raises(ValueError, match="expected docker or process"):
-        load_orchestration_runtime_backend_config(runtime)
+        init_project_config(config_file)
 
 
 def test_load_runtime_backend_config_rejects_process_simulation_combo(
@@ -432,47 +402,9 @@ def test_load_runtime_backend_config_rejects_process_simulation_combo(
     )
     monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
     monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "simulation")
-    runtime = RuntimeConfig(
-        lab_root=tmp_path,
-        ardupilot_root=tmp_path / "ardupilot",
-        mavlink_router_root=tmp_path / "mavlink-router",
-        venv_path=tmp_path / ".venv",
-        config_file=config_file,
-        config_loaded=True,
-    )
 
     with pytest.raises(ValueError, match="docker\\+simulation and process\\+real"):
-        load_orchestration_runtime_backend_config(runtime)
-
-
-def test_runtime_mode_policy_blocks_simulation_service_in_real_mode(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src import host
-
-    config_file = tmp_path / "real.toml"
-    config_file.write_text(
-        """
-[orchestration.runtime]
-fail_on_mode_violation = true
-
-[orchestration.runtime.process]
-require_explicit_services = false
-""".strip(),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "process")
-    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
-    config = RunConfig.from_config(
-        config_path=config_file,
-        duration_sec=45.0,
-        run_id="20260608_000000",
-        artifact_dir=tmp_path / "artifact",
-    )
-
-    with pytest.raises(RuntimeModeViolationError, match="runtime_mode_violation:simulation_stack_requested"):
-        host._compose_up(config)
+        init_project_config(config_file)
 
 
 def test_real_mode_blocks_simulation_overlay_and_official_baseline(
@@ -480,7 +412,7 @@ def test_real_mode_blocks_simulation_overlay_and_official_baseline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from src import host
-    from src.tasks.helpers.sensors import _write_p2_model_overlay
+    from src.tasks.helpers.sensors import write_p2_model_overlay
 
     config_file = tmp_path / "real.toml"
     config_file.write_text(
@@ -503,16 +435,16 @@ require_explicit_services = false
     )
 
     with pytest.raises(RuntimeModeViolationError, match="runtime_mode_violation:sdf_overlay_requested"):
-        _write_p2_model_overlay(config, tmp_path / "overlay.sdf")
+        write_p2_model_overlay(config, tmp_path / "overlay.sdf")
     with pytest.raises(RuntimeModeViolationError, match="runtime_mode_violation:official_baseline_requested"):
-        host._start_official_baseline_container(config)
+        host.start_official_baseline_container(config)
 
 
 def test_real_preflight_summary_does_not_gate_on_ros_topics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
+    from src.workflows.real.preflight import DependencyProbe, SerialMavlinkProbe, build_real_preflight_summary
 
     config_file = tmp_path / "real.toml"
     config_file.write_text(
@@ -535,7 +467,7 @@ forbidden_simulation_input_topics = ["/gazebo/*", "/sim/x2/status"]
         artifact_dir=tmp_path / "artifact",
     )
 
-    summary = _build_real_preflight_summary(
+    summary = build_real_preflight_summary(
         config,
         serial_mavlink_probe=SerialMavlinkProbe(
             summary={"enabled": False, "heartbeat_seen": False},
@@ -561,7 +493,7 @@ def test_real_preflight_summary_blocks_non_process_real_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
+    from src.workflows.real.preflight import DependencyProbe, SerialMavlinkProbe, build_real_preflight_summary
 
     config_file = tmp_path / "simulation.toml"
     config_file.write_text(
@@ -575,7 +507,7 @@ require_explicit_services = false
     monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "simulation")
     config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
 
-    summary = _build_real_preflight_summary(
+    summary = build_real_preflight_summary(
         config,
         serial_mavlink_probe=SerialMavlinkProbe(summary={"enabled": False, "heartbeat_seen": False}, blockers=()),
         dependency_probe=DependencyProbe(
@@ -616,11 +548,18 @@ def test_real_preflight_loads_serial_mavlink_task_config() -> None:
     assert "cartographer_ros" in dependencies.required_ros_packages
     assert "navlab_slam_bringup" in dependencies.required_ros_packages
     assert "ydlidar_ros2_driver" in dependencies.required_ros_packages
-    assert dependencies.required_python_modules == ("navlab.companion.cli", "navlab.slam.cli")
+    assert dependencies.required_python_modules == (
+        "navlab.sim.companion.runtime.cli",
+        "navlab.common.slam.cli",
+        "navlab.real.companion.nodes.mavlink_bridge",
+        "navlab.real.companion.nodes.pose_mirror",
+        "navlab.real.companion.nodes.external_nav",
+        "navlab.real.companion.nodes.imu_bridge",
+    )
 
 
 def test_real_preflight_effective_dependencies_use_fcu_bridge_mode() -> None:
-    from src.tasks.real_preflight import _effective_real_preflight_dependencies
+    from src.workflows.real.preflight import effective_real_preflight_dependencies
 
     config = RunConfig.from_config(
         config_path="orchestration/config.real.toml",
@@ -628,7 +567,7 @@ def test_real_preflight_effective_dependencies_use_fcu_bridge_mode() -> None:
         run_id="20260609_000000",
     )
 
-    dependencies, blockers = _effective_real_preflight_dependencies(config)
+    dependencies, blockers = effective_real_preflight_dependencies(config)
 
     assert blockers == ()
     assert dependencies.required_command_groups == (("mavlink-routerd", "mavlink-router"), ("ros2",))
@@ -640,8 +579,8 @@ def test_real_preflight_effective_dependencies_use_fcu_bridge_mode() -> None:
 
 
 def test_real_preflight_dependency_probe_checks_host_real_hover_chain(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.config import RealPreflightDependencyConfig
-    from src.tasks import real_preflight
+    from src.configs.run_config import RealPreflightDependencyConfig
+    from src.workflows.real import preflight as real_preflight
 
     def fake_which(command: str) -> str | None:
         if command == "mavlink-routerd":
@@ -652,27 +591,30 @@ def test_real_preflight_dependency_probe_checks_host_real_hover_chain(monkeypatc
     settings = RealPreflightDependencyConfig(
         required_command_groups=(("mavlink-routerd", "mavlink-router"), ("ros2",)),
         required_ros_packages=("mavros", "navlab_slam_bringup"),
-        required_python_modules=("navlab.companion.cli", "navlab.slam.cli"),
+        required_python_modules=("navlab.sim.companion.runtime.cli", "navlab.common.slam.cli"),
         required_process_services=("companion", "slam"),
     )
 
-    probe = real_preflight._probe_real_preflight_dependencies(
+    probe = real_preflight.probe_real_preflight_dependencies(
         settings,
-        ros_distro="humble",
+        ros_distro="navlab_missing_ros_distro",
         process_service_names=("companion",),
     )
 
     assert probe.summary["required_command_groups"][0]["found"] is True
     assert probe.summary["required_command_groups"][1]["found"] is False
-    assert probe.summary["required_python_modules"]["navlab.companion.cli"] is True
-    assert probe.summary["ros_distro"] == "humble"
-    assert probe.summary["required_ros_packages"]["mavros"]["error"] == "ros2_distro_not_found:humble"
+    assert probe.summary["required_python_modules"]["navlab.sim.companion.runtime.cli"] is True
+    assert probe.summary["ros_distro"] == "navlab_missing_ros_distro"
+    assert (
+        probe.summary["required_ros_packages"]["mavros"]["error"]
+        == "ros2_distro_not_found:navlab_missing_ros_distro"
+    )
     assert "required_command_missing:ros2" in probe.blockers
     assert "required_process_service_missing:slam" in probe.blockers
 
 
 def test_real_preflight_serial_probe_blocks_missing_port(tmp_path: Path) -> None:
-    from src.tasks.real_preflight import _probe_serial_mavlink
+    from src.workflows.real.preflight import probe_serial_mavlink
 
     config_file = tmp_path / "real.toml"
     config_file.write_text(
@@ -689,7 +631,7 @@ baud = 115200
     )
     config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
 
-    result = _probe_serial_mavlink(config.orchestration.real_preflight.serial_mavlink)
+    result = probe_serial_mavlink(config.orchestration.real_preflight.serial_mavlink)
 
     assert result.summary["enabled"] is True
     assert result.summary["serial_open_ok"] is False
@@ -697,7 +639,7 @@ baud = 115200
 
 
 def test_real_preflight_serial_probe_rejects_network_endpoint(tmp_path: Path) -> None:
-    from src.tasks.real_preflight import _probe_serial_mavlink
+    from src.workflows.real.preflight import probe_serial_mavlink
 
     config_file = tmp_path / "real.toml"
     config_file.write_text(
@@ -714,17 +656,46 @@ baud = 115200
     )
     config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
 
-    result = _probe_serial_mavlink(config.orchestration.real_preflight.serial_mavlink)
+    result = probe_serial_mavlink(config.orchestration.real_preflight.serial_mavlink)
 
     assert result.summary["enabled"] is True
     assert result.blockers == ("serial_mavlink_endpoint_not_serial:udp:127.0.0.1:14550",)
+
+
+def test_real_preflight_serial_probe_blocks_busy_port(tmp_path: Path) -> None:
+    from src.workflows.real.preflight import probe_serial_mavlink
+
+    busy_port = tmp_path / "ttyUSB-test"
+    busy_port.write_text("", encoding="utf-8")
+    config_file = tmp_path / "real.toml"
+    config_file.write_text(
+        f"""
+[orchestration.runtime.process]
+require_explicit_services = false
+
+[serial_mavlink]
+enabled = true
+port = "{busy_port}"
+baud = 115200
+""".strip(),
+        encoding="utf-8",
+    )
+    config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
+
+    with busy_port.open("rb"):
+        result = probe_serial_mavlink(config.orchestration.real_preflight.serial_mavlink)
+
+    assert result.summary["enabled"] is True
+    assert result.summary["serial_open_ok"] is False
+    assert result.summary["busy_holders"]
+    assert any(str(blocker).startswith(f"serial_port_busy:{busy_port}:") for blocker in result.blockers)
 
 
 def test_real_preflight_blocks_serial_probe_without_topic_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
+    from src.workflows.real.preflight import DependencyProbe, SerialMavlinkProbe, build_real_preflight_summary
 
     config_file = tmp_path / "real.toml"
     config_file.write_text(
@@ -742,7 +713,7 @@ forbidden_simulation_input_topics = ["/gazebo/*"]
     monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
     config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
 
-    summary = _build_real_preflight_summary(
+    summary = build_real_preflight_summary(
         config,
         serial_mavlink_probe=SerialMavlinkProbe(
             summary={"enabled": True, "heartbeat_seen": False},
@@ -767,7 +738,7 @@ def test_real_preflight_allows_open_serial_before_prepare_heartbeat(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
+    from src.workflows.real.preflight import DependencyProbe, SerialMavlinkProbe, build_real_preflight_summary
 
     config_file = tmp_path / "real.toml"
     config_file.write_text(
@@ -784,7 +755,7 @@ fcu_bridge_mode = "navlab_mavlink"
     monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
     config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
 
-    summary = _build_real_preflight_summary(
+    summary = build_real_preflight_summary(
         config,
         serial_mavlink_probe=SerialMavlinkProbe(
             summary={"enabled": True, "serial_open_ok": True, "heartbeat_seen": False},
@@ -815,7 +786,7 @@ def test_real_preflight_summary_schema_for_successful_serial_probe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
+    from src.workflows.real.preflight import DependencyProbe, SerialMavlinkProbe, build_real_preflight_summary
 
     config_file = tmp_path / "real.toml"
     config_file.write_text(
@@ -853,14 +824,14 @@ takeoff_alt_m = 0.4
         "mode": "STABILIZE",
         "message_counts": {"HEARTBEAT": 1, "SYS_STATUS": 1, "ATTITUDE": 3},
     }
-    summary = _build_real_preflight_summary(
+    summary = build_real_preflight_summary(
         config,
         serial_mavlink_probe=SerialMavlinkProbe(summary=serial_summary, blockers=()),
         dependency_probe=DependencyProbe(
             summary={
                 "required_command_groups": [{"found": True}, {"found": True}],
                 "required_ros_packages": {"mavros": {"present": True}},
-                "required_python_modules": {"navlab.companion.cli": True, "navlab.slam.cli": True},
+                "required_python_modules": {"navlab.sim.companion.runtime.cli": True, "navlab.common.slam.cli": True},
             },
             blockers=(),
         ),
@@ -875,7 +846,7 @@ takeoff_alt_m = 0.4
 
 
 def test_real_preflight_softens_installable_ros_dependency_warnings() -> None:
-    from src.tasks.real_preflight import _soften_installable_dependency_blockers
+    from src.workflows.real.preflight import soften_installable_dependency_blockers
 
     summary = {
         "ok": False,
@@ -888,7 +859,7 @@ def test_real_preflight_softens_installable_ros_dependency_warnings() -> None:
         },
     }
 
-    _soften_installable_dependency_blockers(summary)
+    soften_installable_dependency_blockers(summary)
 
     assert summary["ok"] is True
     assert summary["blocked"] is False
@@ -898,7 +869,7 @@ def test_real_preflight_softens_installable_ros_dependency_warnings() -> None:
 
 
 def test_real_preflight_dependency_install_uses_configured_ros_distro(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.tasks import real_preflight
+    from src.workflows.real import preflight as real_preflight
 
     commands: list[list[str]] = []
 
@@ -906,15 +877,15 @@ def test_real_preflight_dependency_install_uses_configured_ros_distro(monkeypatc
         commands.append(command)
         result["commands"].append(command)
 
-    monkeypatch.setattr(real_preflight, "_run_install_command", fake_run_install_command)
-    monkeypatch.setattr(real_preflight, "_elevated_command", lambda command: [command])
+    monkeypatch.setattr(real_preflight, "run_install_command", fake_run_install_command)
+    monkeypatch.setattr(real_preflight, "elevated_command", lambda command: [command])
     monkeypatch.setattr(
         real_preflight.shutil,
         "which",
         lambda command: "/usr/bin/colcon" if command == "colcon" else None,
     )
 
-    result = real_preflight._install_missing_real_preflight_dependencies(
+    result = real_preflight.install_missing_real_preflight_dependencies(
         ["mavros", "mavros_msgs", "navlab_slam_bringup"],
         ros_distro="humble",
         console=Console(file=StringIO(), force_terminal=False),
@@ -928,7 +899,7 @@ def test_real_preflight_dependency_install_uses_configured_ros_distro(monkeypatc
 
 
 def test_real_preflight_console_summary_prints_operator_keys(tmp_path: Path) -> None:
-    from src.tasks.real_preflight import _print_real_preflight_console_summary
+    from src.workflows.real.preflight import print_real_preflight_console_summary
 
     output = StringIO()
     console = Console(file=output, force_terminal=False, width=120)
@@ -941,13 +912,14 @@ def test_real_preflight_console_summary_prints_operator_keys(tmp_path: Path) -> 
             "dependencies": {
                 "required_command_groups": [{"found": True}, {"found": False}],
                 "required_ros_packages": {"mavros": {"present": False}},
-                "required_python_modules": {"navlab.companion.cli": True, "navlab.slam.cli": True},
+                "required_python_modules": {"navlab.sim.companion.runtime.cli": True, "navlab.common.slam.cli": True},
             },
             "serial_mavlink": {
                 "port": "/dev/ttyUSB1",
                 "baud": 115200,
                 "serial_open_ok": True,
                 "heartbeat_seen": False,
+                "busy_holders": [{"pid": 123, "command": "mavlink-routerd", "fds": ["4"]}],
                 "system_id": 1,
                 "component_id": 1,
                 "autopilot": "MAV_AUTOPILOT_ARDUPILOTMEGA",
@@ -957,7 +929,7 @@ def test_real_preflight_console_summary_prints_operator_keys(tmp_path: Path) -> 
         },
     }
 
-    _print_real_preflight_console_summary(console, summary=summary, summary_path=tmp_path / "summary.json")
+    print_real_preflight_console_summary(console, summary=summary, summary_path=tmp_path / "summary.json")
 
     text = output.getvalue()
     assert "Real Preflight Doctor" in text
@@ -968,6 +940,8 @@ def test_real_preflight_console_summary_prints_operator_keys(tmp_path: Path) -> 
     assert "Serial" in text
     assert "/dev/ttyUSB1 @ 115200" in text
     assert "heartbeat=False" in text
+    assert "Serial owners" in text
+    assert "mavlink-routerd:123" in text
     assert "system=1, component=1" in text
     assert "Deps" in text
     assert "cmd=1/2" in text
@@ -982,7 +956,7 @@ def test_real_preflight_summary_does_not_gate_on_source_claims(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from src.tasks.real_preflight import DependencyProbe, SerialMavlinkProbe, _build_real_preflight_summary
+    from src.workflows.real.preflight import DependencyProbe, SerialMavlinkProbe, build_real_preflight_summary
 
     config_file = tmp_path / "real.toml"
     config_file.write_text(
@@ -1003,7 +977,7 @@ forbidden_simulation_input_topics = ["/gazebo/*"]
     monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "real")
     config = RunConfig.from_config(config_path=config_file, run_id="20260609_000000")
 
-    summary = _build_real_preflight_summary(
+    summary = build_real_preflight_summary(
         config,
         serial_mavlink_probe=SerialMavlinkProbe(
             summary={"enabled": False, "heartbeat_seen": False},
@@ -1037,65 +1011,6 @@ def test_process_backend_merges_explicit_env(tmp_path: Path) -> None:
 
     assert result.stdout.strip() == "visible"
     assert os.environ.get("NAVLAB_TEST_ENV") is None
-
-
-def test_capture_compose_service_log_uses_runtime_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from types import SimpleNamespace
-
-    from src import host
-    from src.project_config import ComposeConfig, ValueWithSource
-
-    calls: list[tuple[str, int]] = []
-
-    class FakeBackend:
-        def logs(self, handle, *, tail=400):  # noqa: ANN001
-            calls.append((handle, tail))
-            return "backend log"
-
-    monkeypatch.setattr(host, "DockerBackend", FakeBackend)
-    monkeypatch.setattr(host, "load_runtime_config", lambda: SimpleNamespace(lab_root=tmp_path))
-    monkeypatch.setattr(
-        host,
-        "load_compose_config",
-        lambda _runtime: ComposeConfig(
-            compose_file=tmp_path / "compose.yaml",
-            project_name=ValueWithSource("navlab", "test"),
-            default_profile=ValueWithSource("base_env", "test"),
-        ),
-    )
-    output_path = tmp_path / "sitl.log"
-
-    host._capture_compose_service_log(config=SimpleNamespace(), service="sitl", output_path=output_path, tail=17)
-
-    assert calls == [("navlab-sitl-1", 17)]
-    assert output_path.read_text(encoding="utf-8") == "backend log"
-
-
-def test_p10_rosbag_start_uses_runtime_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    config = RunConfig.from_config(
-        config_path="orchestration/config.simulation.toml",
-        duration_sec=45.0,
-        run_id="20260608_000000",
-        artifact_dir=tmp_path,
-    )
-    started: list[ServiceSpec] = []
-
-    class FakeBackend:
-        def start_service(self, spec: ServiceSpec) -> None:
-            started.append(spec)
-
-    monkeypatch.setattr(scan_integrity_gate, "DockerBackend", FakeBackend)
-
-    scan_integrity_gate._start_p10_rosbag_recording(config, duration_sec=5.0)
-
-    assert len(started) == 1
-    spec = started[0]
-    assert spec.name == "p10_rosbag"
-    assert spec.container_name == scan_integrity_gate.P10_ROSBAG_CONTAINER
-    assert spec.image == "world-model/navlab-official-baseline:latest"
-    assert spec.networks == ("host",)
-    assert spec.cwd == "/workspace"
-    assert spec.env["PYTHONPATH"] == "/workspace"
 
 
 def test_docker_backend_run_probe_uses_probe_spec_image_network_and_volume(tmp_path: Path) -> None:
@@ -1141,7 +1056,7 @@ def test_host_ros_shell_capture_uses_probe_spec(monkeypatch: pytest.MonkeyPatch,
 
     monkeypatch.setattr(host, "DockerBackend", FakeBackend)
 
-    rc, output = host._docker_run_ros_shell_capture(
+    rc, output = host.docker_run_ros_shell_capture(
         config=config,
         image="world-model/navlab-official-baseline:latest",
         shell_command="ros2 topic list",
@@ -1178,8 +1093,9 @@ def test_p11_rosbag_start_uses_runtime_backend(tmp_path: Path, monkeypatch: pyte
             started.append(spec)
 
     monkeypatch.setattr(scan_stabilization_gate, "DockerBackend", FakeBackend)
+    monkeypatch.setattr(scan_stabilization_gate, "remove_container", lambda _name: None)
 
-    scan_stabilization_gate._start_p11_rosbag_recording(config, duration_sec=5.0)
+    scan_stabilization_gate.start_p11_rosbag_recording(config, duration_sec=5.0)
 
     assert len(started) == 1
     spec = started[0]
@@ -1191,10 +1107,8 @@ def test_p11_rosbag_start_uses_runtime_backend(tmp_path: Path, monkeypatch: pyte
     assert spec.env["PYTHONPATH"] == "/workspace"
 
 
-def test_p10_p11_p12_doctor_summaries_include_runtime_backend(tmp_path: Path) -> None:
-    from src.tasks.helpers.scan_integrity import _build_p10_doctor_summary
-    from src.tasks.helpers.scan_stabilization import _build_p11_doctor_summary
-    from src.tasks.workflows.scan_robustness import _build_p12_doctor_summary
+def test_p12_doctor_summary_includes_runtime_backend(tmp_path: Path) -> None:
+    from src.tasks.workflows.scan_robustness import build_p12_doctor_summary
 
     config = RunConfig.from_config(
         config_path="orchestration/config.simulation.toml",
@@ -1202,12 +1116,9 @@ def test_p10_p11_p12_doctor_summaries_include_runtime_backend(tmp_path: Path) ->
         run_id="20260608_000000",
         artifact_dir=tmp_path,
     )
+    p12 = build_p12_doctor_summary(config, runtime_config=tmp_path / "p12.toml")
 
-    p10 = _build_p10_doctor_summary(config, runtime_config=tmp_path / "p10.toml", include_dependencies=False)
-    p11 = _build_p11_doctor_summary(config, runtime_config=tmp_path / "p11.toml", include_dependencies=False)
-    p12 = _build_p12_doctor_summary(config, runtime_config=tmp_path / "p12.toml")
-
-    for summary in (p10, p11, p12):
+    for summary in (p12,):
         assert summary["runtime_backend"] == "docker"
         assert summary["runtime_mode"] == "simulation"
         assert summary["runtime_backend_summary"]["backend"] == "docker"

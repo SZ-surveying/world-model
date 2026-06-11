@@ -62,6 +62,7 @@
 
 ### 工程重构
 
+- `../contracts/README.md`: `navlab` runtime 与 `orchestration` 之间的语言无关协议入口
 - `docs/general/lab_env_service_refactor_todo.md`: Python 服务边界、目录重构和测试拆分记录
 - `docs/general/orchestration_runtime_backend_refactor_todo.md`: orchestration runtime backend 抽象和迁移 TODO
 - `docs/general/orchestration_runtime_backend_guide.md`: DockerBackend / ProcessBackend 使用说明和排障口径
@@ -69,6 +70,7 @@
 - `docs/general/orchestration_config_precedence_split_design.md`: orchestration 配置优先级和按 mode/task 拆分设计
 - `docs/general/orchestration_runtime_backend_inventory.md`: runtime backend 迁移清单和当前样板
 - `docs/general/orchestration_legacy_helper_deep_split_todo.md`: legacy helper 深拆和最终删除 TODO
+- `docs/general/navlab_real_sim_package_boundary_design.md`: `navlab.real` / `navlab.sim` / `navlab.common` 包边界设计
 
 ## 推荐阅读顺序
 
@@ -116,6 +118,8 @@
 42. `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`
 43. `docs/general/orchestration_config_precedence_split_design.md`
 44. `docs/general/orchestration_legacy_helper_deep_split_todo.md`
+45. `docs/general/navlab_real_sim_package_boundary_design.md`
+46. `contracts/README.md`
 
 ## 当前目录结构
 
@@ -131,6 +135,7 @@ docs/
     orchestration_runtime_mode_real_vs_sim_design.md
     orchestration_config_precedence_split_design.md
     orchestration_legacy_helper_deep_split_todo.md
+    navlab_real_sim_package_boundary_design.md
   scenarios/
     indoor/
       navlab_master_roadmap.md

@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from navlab.companion.acceptance import _scan_publisher_summary, _write_summary
-from navlab.companion.hover_acceptance import _write_hover_summary
+from navlab.sim.companion.runtime.acceptance import scan_publisher_summary, write_summary
+from navlab.sim.companion.runtime.hover_acceptance import write_hover_summary
 
 
 def _metadata_for_counts(counts: dict[str, int]) -> str:
@@ -278,7 +278,7 @@ Node name: scan_features_publisher
 Node namespace: /
 """
 
-    summary = _scan_publisher_summary(samples)
+    summary = scan_publisher_summary(samples)
 
     assert summary["publisher_nodes"] == ["ydlidar_ros2_driver_node"]
     assert summary["vendor_driver_publisher"] is True
@@ -289,7 +289,7 @@ def test_write_summary_requires_x2_lidar_and_observation_mode(tmp_path: Path) ->
     rosbag_profile = _write_acceptance_inputs(tmp_path)
     (tmp_path / "samples.txt").write_text(_samples(), encoding="utf-8")
 
-    rc = _write_summary(
+    rc = write_summary(
         artifact_dir=tmp_path,
         duration_sec=90.0,
         mission_rc=0,
@@ -323,7 +323,7 @@ def test_write_summary_fails_when_pose_mirror_can_set_gazebo_pose(tmp_path: Path
     rosbag_profile = _write_acceptance_inputs(tmp_path)
     (tmp_path / "samples.txt").write_text(_samples(pose_set_count=2, pose_reason="set_pose_sent"), encoding="utf-8")
 
-    rc = _write_summary(
+    rc = write_summary(
         artifact_dir=tmp_path,
         duration_sec=90.0,
         mission_rc=0,
@@ -360,7 +360,7 @@ def test_write_summary_does_not_require_obstacle_demo_phases_for_hover_gate(tmp_
     )
     (tmp_path / "samples.txt").write_text(_samples(), encoding="utf-8")
 
-    rc = _write_summary(
+    rc = write_summary(
         artifact_dir=tmp_path,
         duration_sec=90.0,
         mission_rc=0,
@@ -384,7 +384,7 @@ def test_write_summary_fails_when_external_nav_uses_gazebo_truth(tmp_path: Path)
         encoding="utf-8",
     )
 
-    rc = _write_summary(
+    rc = write_summary(
         artifact_dir=tmp_path,
         duration_sec=90.0,
         mission_rc=0,
@@ -405,7 +405,7 @@ def test_hover_summary_requires_slam_truth_error_within_gate(tmp_path: Path) -> 
     rosbag_profile = _write_hover_acceptance_inputs(tmp_path)
     (tmp_path / "samples.txt").write_text(_hover_samples(slam_y=0.05, truth_y=0.04), encoding="utf-8")
 
-    rc = _write_hover_summary(
+    rc = write_hover_summary(
         artifact_dir=tmp_path,
         duration_sec=90.0,
         mission_rc=0,
@@ -425,7 +425,7 @@ def test_hover_summary_fails_when_slam_truth_error_is_too_large(tmp_path: Path) 
     rosbag_profile = _write_hover_acceptance_inputs(tmp_path)
     (tmp_path / "samples.txt").write_text(_hover_samples(slam_y=1.0, truth_y=0.04), encoding="utf-8")
 
-    rc = _write_hover_summary(
+    rc = write_hover_summary(
         artifact_dir=tmp_path,
         duration_sec=90.0,
         mission_rc=0,

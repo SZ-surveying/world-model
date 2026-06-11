@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from navlab.gazebo_sensor.rangefinder import mavlink_constant, meters_to_centimeters, select_down_range_m
+from navlab.sim.gazebo_sensor.rangefinder import mavlink_constant, meters_to_centimeters, select_down_range_m
 
 
 def test_down_rangefinder_selects_nearest_valid_range() -> None:

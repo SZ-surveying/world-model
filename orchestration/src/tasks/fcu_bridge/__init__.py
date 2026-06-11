@@ -34,7 +34,12 @@ NAVLAB_MAVLINK = FcuBridgeModeSpec(
         "navlab_slam_imu_bridge",
         "ydlidar_ros2_driver",
     ),
-    preflight_required_python_modules=("navlab.companion.cli", "navlab.slam.cli"),
+    preflight_required_python_modules=(
+        "navlab.real.companion.nodes.mavlink_bridge",
+        "navlab.real.companion.nodes.pose_mirror",
+        "navlab.real.companion.nodes.external_nav",
+        "navlab.real.companion.nodes.imu_bridge",
+    ),
     preflight_required_command_groups=(("mavlink-routerd", "mavlink-router"), ("ros2",)),
 )
 
@@ -50,8 +55,4 @@ def get_fcu_bridge_mode(name: str) -> FcuBridgeModeSpec:
         raise ValueError(f"fcu_bridge_mode_unknown:{name}:supported={supported}") from exc
 
 
-def registered_fcu_bridge_modes() -> tuple[str, ...]:
-    return tuple(sorted(FCU_BRIDGE_MODES))
-
-
-__all__ = ["FCU_BRIDGE_MODES", "FcuBridgeModeSpec", "get_fcu_bridge_mode", "registered_fcu_bridge_modes"]
+__all__ = ["FCU_BRIDGE_MODES", "FcuBridgeModeSpec", "get_fcu_bridge_mode"]

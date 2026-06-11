@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from rich.console import Console
-from src.config import RunConfig
+from src.configs.run_config import RunConfig
 from src.runtime.process_backend import ProcessBackend
-from src.tasks import real_prepare
-from src.tasks.real_prepare import RealTopicSnapshot, TopicEvidence
+from src.workflows.real import common_doctor as real_common_doctor
+from src.workflows.real import prepare as real_prepare
+from src.workflows.real import task_doctor as real_task_doctor
+from src.workflows.real.prepare import RealTopicSnapshot, TopicEvidence
 
 
 def _complete_hover_snapshot() -> RealTopicSnapshot:
@@ -84,7 +86,7 @@ def test_real_prepare_config_parser_loads_router_serial_and_services() -> None:
     assert prepare.fcu_bridge_mode == "navlab_mavlink"
     assert prepare.mavlink_router.command[-1] == "/dev/ttyUSB1:115200"
     assert prepare.navlab_mavlink_bridge.enabled is True
-    assert "orchestration/src/tasks/fcu_bridge/navlab_mavlink_bridge.py" in prepare.navlab_mavlink_bridge.command
+    assert "navlab.real.companion.nodes.mavlink_bridge" in prepare.navlab_mavlink_bridge.command
     assert "--auto-ekf-source-set" in prepare.navlab_mavlink_bridge.command
     assert "/navlab/mavlink/status" in prepare.navlab_mavlink_bridge.health_topics
     assert "/imu/data" in prepare.navlab_mavlink_bridge.health_topics
@@ -93,6 +95,7 @@ def test_real_prepare_config_parser_loads_router_serial_and_services() -> None:
     assert prepare.mavros.command[3] == "apm.launch"
     assert prepare.mavros.command[-1] == "fcu_url:=udp://@127.0.0.1:14550"
     assert prepare.lidar.health_topics == ("/scan",)
+    assert "navlab.real.companion.nodes.ydlidar_x2_scan" in " ".join(prepare.lidar.command)
     assert "launch_cartographer_backend:=true" in prepare.slam.command
     assert "publish_placeholder_odom:=false" in prepare.slam.command
     assert "cartographer_odometry_topic:=/odometry" in prepare.slam.command
@@ -104,9 +107,7 @@ def test_real_prepare_config_parser_loads_router_serial_and_services() -> None:
     assert prepare.slam.health_topics == ("/imu", "/slam/odom", "/navlab/slam/status", "/external_nav/status")
     assert prepare.rangefinder_bridge.enabled is True
     assert prepare.rangefinder_bridge.required is True
-    assert "orchestration/src/tasks/rangefinder_bridge/fcu_distance_sensor_bridge.py" in " ".join(
-        prepare.rangefinder_bridge.command
-    )
+    assert "navlab.real.companion.nodes.rangefinder_bridge" in " ".join(prepare.rangefinder_bridge.command)
     assert prepare.rangefinder_bridge.health_topics == ("/rangefinder/down/range", "/rangefinder/down/status")
     assert prepare.height_rangefinder_required is True
     assert prepare.altitude_hold_mode == "fcu_rangefinder_guided"
@@ -121,13 +122,55 @@ def test_real_prepare_config_parser_loads_router_serial_and_services() -> None:
     assert "/mavros/state" not in prepare.required_upstream_topics
 
 
+def test_real_prepare_topic_graph_probe_uses_configured_timeout(monkeypatch) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
+    timeouts: list[float] = []
+
+    def fake_collect_ros_topic_snapshot(*, timeout_sec: float, probe_topics=()):  # noqa: ANN001
+        timeouts.append(timeout_sec)
+        return _complete_hover_snapshot()
+
+    monkeypatch.setattr(real_prepare, "collect_ros_topic_snapshot", fake_collect_ros_topic_snapshot)
+    monkeypatch.setattr(real_prepare, "_probe_mavlink_router_endpoint", lambda _config: {"ok": True})
+
+    result = real_prepare.build_real_prepare_summary(
+        config,
+        task_name="hover",
+        backend=ProcessBackend(default_log_dir=config.artifact_dir / "logs", dry_run=True),
+        started_handles=[],
+        artifact_dir=config.artifact_dir,
+        log_dir=config.artifact_dir / "logs",
+    )
+
+    assert result["ok"] is True
+    assert timeouts
+    assert min(timeouts) == config.orchestration.real_prepare.ros_topic_probe_timeout_sec
+
+
+def test_real_common_doctor_topic_graph_probe_uses_configured_timeout(monkeypatch) -> None:  # noqa: ANN001
+    config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
+    timeouts: list[float] = []
+
+    def fake_collect_ros_topic_snapshot(*, timeout_sec: float, probe_topics=()):  # noqa: ANN001
+        timeouts.append(timeout_sec)
+        return _complete_hover_snapshot()
+
+    monkeypatch.setattr(real_common_doctor, "collect_ros_topic_snapshot", fake_collect_ros_topic_snapshot)
+
+    snapshot = real_common_doctor.wait_for_common_doctor_topic_snapshot(config, task_name="hover")
+
+    assert snapshot.topics
+    assert timeouts
+    assert set(timeouts) == {config.orchestration.real_prepare.ros_topic_probe_timeout_sec}
+
+
 def test_real_prepare_fcu_bridge_registry_selects_navlab_mavlink_topics() -> None:
     from src.tasks.fcu_bridge import get_fcu_bridge_mode
 
     config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
     mode = get_fcu_bridge_mode(config.orchestration.real_prepare.fcu_bridge_mode)
-    services = real_prepare._prepare_services(config)
-    required_topics = real_prepare._required_upstream_topics("hover", config)
+    services = real_prepare.prepare_services(config)
+    required_topics = real_prepare.required_upstream_topics("hover", config)
 
     assert mode.name == "navlab_mavlink"
     assert set(services) == {"mavlink_router", "navlab_mavlink_bridge", "lidar", "slam", "rangefinder_bridge"}
@@ -145,8 +188,8 @@ def test_real_prepare_fcu_bridge_registry_selects_navlab_mavlink_topics() -> Non
 
 def test_real_prepare_motor_debug_skips_rangefinder_contract() -> None:
     config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
-    services = real_prepare._prepare_services(config, task_name="motor-debug")
-    required_topics = real_prepare._required_upstream_topics("motor-debug", config)
+    services = real_prepare.prepare_services(config, task_name="motor-debug")
+    required_topics = real_prepare.required_upstream_topics("motor-debug", config)
 
     assert set(services) == {"mavlink_router", "navlab_mavlink_bridge", "lidar", "slam"}
     assert "/rangefinder/down/range" not in required_topics
@@ -162,7 +205,7 @@ def test_real_prepare_ros_services_source_local_install(monkeypatch, tmp_path: P
 
     monkeypatch.setattr(real_prepare.Path, "exists", lambda self: self in existing)
 
-    spec = real_prepare._service_spec("slam", service, config=config, log_dir=tmp_path)
+    spec = real_prepare.service_spec("slam", service, config=config, log_dir=tmp_path)
 
     assert spec.command[:2] == ("bash", "-lc")
     assert "source /opt/ros/humble/setup.bash" in spec.command[2]
@@ -174,7 +217,7 @@ def test_real_prepare_keeps_non_ros_service_command(tmp_path: Path) -> None:
     config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
     service = config.orchestration.real_prepare.mavlink_router
 
-    spec = real_prepare._service_spec("mavlink_router", service, config=config, log_dir=tmp_path)
+    spec = real_prepare.service_spec("mavlink_router", service, config=config, log_dir=tmp_path)
 
     assert spec.command == service.command
 
@@ -182,7 +225,7 @@ def test_real_prepare_keeps_non_ros_service_command(tmp_path: Path) -> None:
 def test_real_prepare_serial_provenance_requires_router_command_serial() -> None:
     config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="real-prepare")
 
-    provenance = real_prepare._serial_provenance(config)
+    provenance = real_prepare.serial_provenance(config)
 
     assert provenance["ok"] is True
     assert provenance["serial"] == "/dev/ttyUSB1"
@@ -208,9 +251,9 @@ direct_serial_access_allowed = false
         task_config_path=task_config,
     )
 
-    services = real_prepare._prepare_services(config)
+    services = real_prepare.prepare_services(config)
     services["mavros"] = config.orchestration.real_prepare.mavros
-    blockers = real_prepare._validate_prepare_services(config, services)
+    blockers = real_prepare.validate_prepare_services(config, services)
 
     assert "prepare_service_direct_fcu_serial_forbidden:mavros:/dev/ttyUSB1" in blockers
 
@@ -230,7 +273,7 @@ command = ["ros2", "launch", "gazebo_sensor", "scan.launch.py"]
         task_config_path=task_config,
     )
 
-    blockers = real_prepare._validate_prepare_services(config, real_prepare._prepare_services(config))
+    blockers = real_prepare.validate_prepare_services(config, real_prepare.prepare_services(config))
 
     assert "prepare_service_uses_simulation_token:lidar:gazebo" in blockers
 
@@ -255,7 +298,7 @@ def test_real_prepare_summary_dry_run_starts_only_auxiliary_services(
     )
     handles = []
 
-    summary = real_prepare._build_real_prepare_summary(
+    summary = real_prepare.build_real_prepare_summary(
         config,
         task_name="hover",
         backend=ProcessBackend(default_log_dir=tmp_path / "logs", dry_run=True),
@@ -440,7 +483,7 @@ def test_task_doctor_blocks_altitude_hold_when_rangefinder_not_ready() -> None:
         },
     )
 
-    summary = real_prepare.build_real_task_doctor_summary(
+    summary = real_task_doctor.build_real_task_doctor_summary(
         "hover",
         config,
         topic_snapshot=RealTopicSnapshot(topics=topics),
@@ -457,7 +500,7 @@ def test_task_doctor_blocks_altitude_hold_on_disallowed_initial_fcu_mode() -> No
     topics = dict(_complete_hover_snapshot().topics)
     topics["/navlab/mavlink/status"] = TopicEvidence(type_name="std_msgs/msg/String", metadata={"mode": "AUTO"})
 
-    summary = real_prepare.build_real_task_doctor_summary(
+    summary = real_task_doctor.build_real_task_doctor_summary(
         "hover",
         config,
         topic_snapshot=RealTopicSnapshot(topics=topics),
@@ -496,14 +539,15 @@ def test_common_real_doctor_uses_shared_fcu_external_nav_state() -> None:
     topics["/mavlink_external_nav/status"] = TopicEvidence(type_name="std_msgs/msg/String", metadata={"ready": True})
     topics["/external_nav/status"] = TopicEvidence(type_name="std_msgs/msg/String", metadata={"ready": True})
 
-    summary = real_prepare.build_real_common_doctor_summary(
+    summary = real_common_doctor.build_real_common_doctor_summary(
         config,
         topic_snapshot=RealTopicSnapshot(topics=topics),
     )
 
     assert summary["ok"] is True
     assert summary["task_name"] == "doctor"
-    assert summary["common_state"]["active_source_set"] == "SRC2"
+    assert summary["common_state"]["configured_external_nav_source_set"] == "SRC2"
+    assert summary["common_state"]["observed_ekf_source_set"] == "not_observed"
     assert summary["common_state"]["external_nav_ros_ready"] is True
     assert "external_nav_seen_by_fcu" not in summary["common_state"]
     assert "rc_input" not in summary["common_state"]
@@ -541,7 +585,7 @@ def test_common_real_doctor_reads_navlab_mavlink_status_parameters() -> None:
     topics["/mavlink_external_nav/status"] = TopicEvidence(type_name="std_msgs/msg/String", metadata={"ready": True})
     topics["/external_nav/status"] = TopicEvidence(type_name="std_msgs/msg/String", metadata={"ready": True})
 
-    summary = real_prepare.build_real_common_doctor_summary(
+    summary = real_common_doctor.build_real_common_doctor_summary(
         config,
         topic_snapshot=RealTopicSnapshot(topics=topics),
     )
@@ -554,7 +598,7 @@ def test_common_real_doctor_reads_navlab_mavlink_status_parameters() -> None:
     assert summary["common_state"]["ek3_src1"]["posxy"] == "6"
     assert summary["common_state"]["ek3_src1"]["velxy"] == "6"
     assert summary["common_state"]["ek3_src1"]["yaw"] == "6"
-    assert summary["common_state"]["active_source_set"] == "SRC1"
+    assert summary["common_state"]["configured_external_nav_source_set"] == "SRC1"
 
 
 def test_common_real_doctor_does_not_block_on_external_nav_fcu_inference() -> None:
@@ -565,7 +609,8 @@ def test_common_real_doctor_does_not_block_on_external_nav_fcu_inference() -> No
         metadata={
             "mode": "STABILIZE",
             "armed": False,
-            "active_source_set": "SRC2",
+            "configured_external_nav_source_set": "SRC2",
+            "observed_ekf_source_set": "not_observed",
             "GPS_TYPE": 0,
             "GPS1_TYPE": 0,
             "VISO_TYPE": 1,
@@ -582,7 +627,7 @@ def test_common_real_doctor_does_not_block_on_external_nav_fcu_inference() -> No
     topics["/mavlink_external_nav/status"] = TopicEvidence(type_name="std_msgs/msg/String", metadata={"ready": True})
     topics["/external_nav/status"] = TopicEvidence(type_name="std_msgs/msg/String", metadata={"ready": True})
 
-    summary = real_prepare.build_real_common_doctor_summary(
+    summary = real_common_doctor.build_real_common_doctor_summary(
         config,
         topic_snapshot=RealTopicSnapshot(topics=topics),
     )
@@ -614,7 +659,9 @@ def test_real_prepare_and_common_doctor_panels_do_not_use_nested_tables(tmp_path
             "viso_type": "1",
             "ek3_src1": {"posxy": "6", "velxy": "6", "yaw": "6", "posz": "1"},
             "ek3_src2": {"posxy": "6", "velxy": "6", "yaw": "6", "posz": "1"},
-            "active_source_set": "SRC2",
+            "active_source_set": "not_observed",
+            "configured_external_nav_source_set": "SRC2",
+            "observed_ekf_source_set": "not_observed",
             "external_nav_ros_ready": True,
             "local_position_valid": "unknown",
         },
@@ -628,9 +675,9 @@ def test_real_prepare_and_common_doctor_panels_do_not_use_nested_tables(tmp_path
         "blockers": [],
     }
 
-    real_prepare._print_real_prepare_summary(console, summary=prepare_summary, summary_path=tmp_path / "summary.json")
-    real_prepare._print_real_common_doctor_summary(console, summary=common_summary, summary_path=tmp_path / "summary.json")
-    real_prepare._print_real_task_doctor_summary(console, summary=task_summary, summary_path=tmp_path / "summary.json")
+    real_prepare.print_real_prepare_summary(console, summary=prepare_summary, summary_path=tmp_path / "summary.json")
+    real_common_doctor.print_real_common_doctor_summary(console, summary=common_summary, summary_path=tmp_path / "summary.json")
+    real_task_doctor.print_real_task_doctor_summary(console, summary=task_summary, summary_path=tmp_path / "summary.json")
     output = console.export_text()
 
     assert "┏" not in output
@@ -659,7 +706,7 @@ def test_motor_debug_task_doctor_panel_shows_guided_gate_without_nested_tables(t
         "blockers": [],
     }
 
-    real_prepare._print_real_task_doctor_summary(console, summary=summary, summary_path=tmp_path / "summary.json")
+    real_task_doctor.print_real_task_doctor_summary(console, summary=summary, summary_path=tmp_path / "summary.json")
     output = console.export_text()
 
     assert "NavLab Real Motor Debug Doctor" in output
@@ -700,9 +747,9 @@ def test_motor_debug_task_doctor_does_not_require_current_guided_mode(monkeypatc
         }
     }
 
-    monkeypatch.setattr(real_prepare, "check_real_task_upstream_topics", lambda *_args, **_kwargs: upstream)
+    monkeypatch.setattr(real_task_doctor, "check_real_task_upstream_topics", lambda *_args, **_kwargs: upstream)
 
-    summary = real_prepare.build_real_task_doctor_summary("motor-debug", config)
+    summary = real_task_doctor.build_real_task_doctor_summary("motor-debug", config)
 
     assert summary["ok"] is True
     assert "motor_debug_guided_mode_not_confirmed" not in summary["blockers"]
@@ -713,8 +760,8 @@ def test_motor_debug_task_doctor_does_not_require_current_guided_mode(monkeypatc
 def test_external_nav_yaw_metadata_parses_std_msgs_json_payload() -> None:
     payload = """data: '{"state":"healthy","ready":true,"odom":{"rate_ok":true}}'\n---\n"""
 
-    assert real_prepare._std_msgs_string_payload(payload) == '{"state":"healthy","ready":true,"odom":{"rate_ok":true}}'
-    assert real_prepare._metadata_bool({"ready": True}.get("ready")) is True
+    assert real_prepare.std_msgs_string_payload(payload) == '{"state":"healthy","ready":true,"odom":{"rate_ok":true}}'
+    assert real_prepare.metadata_bool({"ready": True}.get("ready")) is True
 
 
 def test_task_doctor_external_nav_yaw_ready_ignores_uncalibrated_compass() -> None:
@@ -763,7 +810,7 @@ def test_task_doctor_does_not_accept_compass_or_manual_override_as_yaw_source() 
 def test_hover_task_doctor_passes_without_arm_takeoff_claims() -> None:
     config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="hover")
 
-    summary = real_prepare.build_real_task_doctor_summary(
+    summary = real_task_doctor.build_real_task_doctor_summary(
         "hover",
         config,
         topic_snapshot=_complete_hover_snapshot(),
@@ -774,3 +821,18 @@ def test_hover_task_doctor_passes_without_arm_takeoff_claims() -> None:
     assert summary["takeoff_claim"] == "not_evaluated"
     assert summary["task_specific"]["landing_policy"] == "land_in_place"
     assert summary["upstream"]["yaw_source"]["accepted_source"] == "external_nav_yaw_ready"
+
+
+def test_real_task_doctor_skips_task_specific_when_task_has_no_hook() -> None:
+    config = RunConfig.from_config(config_path="orchestration/config.real.toml", task_name="doctor")
+
+    summary = real_task_doctor.build_real_task_doctor_summary(
+        "doctor",
+        config,
+        topic_snapshot=_complete_hover_snapshot(),
+    )
+
+    assert summary["ok"] is True
+    assert summary["task_specific"]["skipped"] is True
+    assert summary["task_specific"]["reason"].startswith("task_not_registered:")
+    assert not any("unsupported_real_task" in blocker for blocker in summary["blockers"])
