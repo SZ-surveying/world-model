@@ -55,7 +55,7 @@ func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
 		RosbagRecords: []helpers.RosbagRecordPlan{
 			{
 				HelperID:  "slam-hover",
-				Name:      "p6_hover_rosbag",
+				Name:      "hover_rosbag",
 				OutputDir: "rosbag",
 				Topics:    []string{"/tf", "/scan"},
 			},
@@ -86,7 +86,7 @@ func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
 	if len(bundle.Rosbags) != 1 {
 		t.Fatalf("rosbags = %#v", bundle.Rosbags)
 	}
-	if filepath.Base(bundle.Rosbags[0].TopicsProfile) != "p6_hover_rosbag.txt" {
+	if filepath.Base(bundle.Rosbags[0].TopicsProfile) != "hover_rosbag.txt" {
 		t.Fatalf("topics profile = %s", bundle.Rosbags[0].TopicsProfile)
 	}
 }

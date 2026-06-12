@@ -6,8 +6,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROFILE="${PYTHON_CHECK_PROFILE:-${PYTHON_SERVICE_CHECK_PROFILE:-local}}"
 CACHE_DIR="${UV_CACHE_DIR:-$ROOT_DIR/.cache/uv}"
 RUN_SYNC=0
-CHECK_TARGETS=("navlab" "orchestration" "scripts")
-TEST_PROJECTS=("navlab" "orchestration" "command")
+CHECK_TARGETS=("navlab" "scripts")
+TEST_PROJECTS=("navlab" "command")
 
 log_step() {
   printf '\n[python] %s\n' "$1"
@@ -78,9 +78,6 @@ load_staged_targets() {
   if has_target_prefix "navlab/"; then
     add_test_project "navlab"
   fi
-  if has_target_prefix "orchestration/"; then
-    add_test_project "orchestration"
-  fi
   if has_target_prefix "scripts/command/"; then
     add_test_project "command"
   fi
@@ -107,19 +104,16 @@ if [ "$RUN_SYNC" -eq 1 ]; then
   log_step "Syncing navlab dependencies with uv"
   sync_project "$ROOT_DIR/navlab" --locked --all-groups
 
-  log_step "Syncing orchestration dependencies with uv"
-  sync_project "$ROOT_DIR/orchestration" --locked --group dev
-
   log_step "Syncing command dependencies with uv"
   sync_project "$ROOT_DIR/scripts/command" --locked --group dev
 fi
 
 if [ "${#CHECK_TARGETS[@]}" -gt 0 ]; then
   log_step "Running Ruff check"
-  run_uv "$ROOT_DIR/orchestration" ruff check --config "$ROOT_DIR/pyproject.toml" --force-exclude "${CHECK_TARGETS[@]}"
+  run_navlab_uv ruff check --config "$ROOT_DIR/pyproject.toml" --force-exclude "${CHECK_TARGETS[@]}"
 
   log_step "Running Ruff format check"
-  run_uv "$ROOT_DIR/orchestration" ruff format --check --config "$ROOT_DIR/pyproject.toml" --force-exclude "${CHECK_TARGETS[@]}"
+  run_navlab_uv ruff format --check --config "$ROOT_DIR/pyproject.toml" --force-exclude "${CHECK_TARGETS[@]}"
 else
   log_step "No Python targets to lint"
 fi
@@ -129,10 +123,6 @@ for project in "${TEST_PROJECTS[@]}"; do
     navlab)
       log_step "Running navlab pytest"
       run_navlab_uv pytest navlab/tests -q
-      ;;
-    orchestration)
-      log_step "Running orchestration pytest"
-      run_uv "$ROOT_DIR/orchestration" pytest orchestration/tests -q
       ;;
     command)
       log_step "Running command pytest"

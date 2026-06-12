@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-const P7RosbagContainer = "navlab-p7-rosbag"
+const MotionRosbagContainer = "navlab-motion-rosbag"
 
 type MotionGateSpec struct {
 	RuntimeConfigPath      string
@@ -39,11 +39,11 @@ type DependencyDoctor struct {
 }
 
 type MotionDoctorSummary struct {
-	OK                 bool             `json:"ok"`
-	Blocked            bool             `json:"blocked"`
-	Blockers           []string         `json:"blockers"`
-	P7MotionGateDoctor MotionGateDoctor `json:"p7_motion_gate_doctor"`
-	P6SlamHoverDoctor  DependencyDoctor `json:"p6_slam_hover_doctor"`
+	OK                    bool             `json:"ok"`
+	Blocked               bool             `json:"blocked"`
+	Blockers              []string         `json:"blockers"`
+	MotionGateDoctor      MotionGateDoctor `json:"motion_gate_doctor"`
+	HoverDependencyDoctor DependencyDoctor `json:"hover_dependency_doctor"`
 }
 
 type MotionGateDoctor struct {
@@ -101,7 +101,7 @@ func DefaultMotionGateSpec() MotionGateSpec {
 	}
 }
 
-func BuildP7DoctorSummary(spec MotionGateSpec, dependency DependencyDoctor, includeDependencies bool) MotionDoctorSummary {
+func BuildMotionDoctorSummary(spec MotionGateSpec, dependency DependencyDoctor, includeDependencies bool) MotionDoctorSummary {
 	if spec.RuntimeConfigPath == "" {
 		spec = DefaultMotionGateSpec()
 	}
@@ -109,36 +109,36 @@ func BuildP7DoctorSummary(spec MotionGateSpec, dependency DependencyDoctor, incl
 		dependency = DependencyDoctor{
 			OK:       true,
 			Blockers: []string{},
-			Skipped:  "acceptance already launched P6 prerequisites",
+			Skipped:  "acceptance already launched hover prerequisites",
 		}
 	}
 	blockers := append([]string{}, dependency.Blockers...)
 	topics := Topics{}
 	if spec.RosbagProfile == "" {
-		blockers = append(blockers, "P7 rosbag profile is missing or empty")
+		blockers = append(blockers, "motion rosbag profile is missing or empty")
 	} else if loaded, err := ProfileTopics(spec.RosbagProfile); err != nil || len(loaded.All) == 0 {
-		blockers = append(blockers, "P7 rosbag profile is missing or empty")
+		blockers = append(blockers, "motion rosbag profile is missing or empty")
 	} else {
 		topics = loaded
 	}
 	if spec.UsesGazeboTruthAsInput {
-		blockers = append(blockers, "P7 must not use Gazebo truth as a control/planning/SLAM/ExternalNav input")
+		blockers = append(blockers, "motion gate must not use Gazebo truth as a control/planning/SLAM/ExternalNav input")
 	}
 	if spec.SlamOdomTopic != spec.CanonicalSlamOdomTopic {
-		blockers = append(blockers, "P7 SLAM odom topic must match P3 canonical SLAM odom topic")
+		blockers = append(blockers, "motion gate SLAM odom topic must match canonical SLAM odom topic")
 	}
 	if spec.SlamOdomTopic == spec.TruthDiagnosticTopic {
-		blockers = append(blockers, "P7 SLAM odom topic must not be the Gazebo truth diagnostic topic")
+		blockers = append(blockers, "motion gate SLAM odom topic must not be the Gazebo truth diagnostic topic")
 	}
 	if spec.CmdVelTopic != spec.CanonicalCmdVelTopic {
-		blockers = append(blockers, "P7 cmd_vel topic must match the P4 FCU controller output topic")
+		blockers = append(blockers, "motion gate cmd_vel topic must match the FCU controller output topic")
 	}
 	blockers = uniqueSorted(blockers)
 	return MotionDoctorSummary{
 		OK:       len(blockers) == 0,
 		Blocked:  len(blockers) > 0,
 		Blockers: blockers,
-		P7MotionGateDoctor: MotionGateDoctor{
+		MotionGateDoctor: MotionGateDoctor{
 			RuntimeConfig:            spec.RuntimeConfigPath,
 			RuntimeConfigSHA256:      fileHashIfExists(spec.RuntimeConfigPath),
 			DependencyChecksIncluded: includeDependencies,
@@ -162,13 +162,13 @@ func BuildP7DoctorSummary(spec MotionGateSpec, dependency DependencyDoctor, incl
 				OptionalTopics: append([]string{}, topics.Optional...),
 			},
 		},
-		P6SlamHoverDoctor: dependency,
+		HoverDependencyDoctor: dependency,
 	}
 }
 
 func MotionFoxgloveNotes(spec MotionGateSpec) string {
-	return "# NavLab P7 motion gate replay notes\n\n" +
-		"P7 validates forward/back/yaw/stop motion after real SLAM hover. It is not an exploration gate.\n\n" +
+	return "# NavLab motion gate replay notes\n\n" +
+		"The motion gate validates forward/back/yaw/stop motion after SLAM hover. It is not an exploration gate.\n\n" +
 		"- Fixed frame: `map`.\n" +
 		"- Motion status: `" + spec.MotionStatusTopic + "`.\n" +
 		"- Setpoint output: `" + spec.SetpointOutputTopic + "`.\n" +

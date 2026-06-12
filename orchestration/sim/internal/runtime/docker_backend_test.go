@@ -32,7 +32,7 @@ func TestDockerServiceArgs(t *testing.T) {
 	args, err := DockerServiceArgs(ServiceSpec{
 		Name:          "slam",
 		Image:         "world-model/navlab-slam:latest",
-		ContainerName: "navlab-p3-slam-backend",
+		ContainerName: "navlab-slam-backend",
 		Command:       []string{"bash", "-lc", "echo ok"},
 		Env:           map[string]string{"ROS_DOMAIN_ID": "85"},
 		CWD:           "/workspace",
@@ -46,7 +46,7 @@ func TestDockerServiceArgs(t *testing.T) {
 	expected := []string{
 		"run",
 		"--detach",
-		"--name", "navlab-p3-slam-backend",
+		"--name", "navlab-slam-backend",
 		"--network", "host",
 		"--volume", ".:/workspace",
 		"--workdir", "/workspace",
@@ -120,9 +120,9 @@ func TestRosbagServiceSpecReadsProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, err := RosbagServiceSpec(RosbagSpec{
-		Name:          "p6_rosbag",
+		Name:          "hover_rosbag",
 		Image:         "runtime:latest",
-		ContainerName: "navlab-p6-rosbag",
+		ContainerName: "navlab-hover-rosbag",
 		TopicsProfile: profile,
 		OutputPath:    "rosbag",
 		DurationSec:   90,
@@ -131,7 +131,7 @@ func TestRosbagServiceSpecReadsProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.Name != "p6_rosbag" || service.Image != "runtime:latest" {
+	if service.Name != "hover_rosbag" || service.Image != "runtime:latest" {
 		t.Fatalf("service = %#v", service)
 	}
 	command := strings.Join(service.Command, " ")

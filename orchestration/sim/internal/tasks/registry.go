@@ -48,7 +48,7 @@ func DefaultRegistry() *Registry {
 		Steps: []string{
 			"load task YAML config",
 			"validate simulation source claims",
-			"generate P8 model, sensor, SLAM, controller, frame, exploration, rosbag, and landing artifacts",
+			"generate model, sensor, SLAM, controller, frame, exploration, rosbag, and landing artifacts",
 			"start official maze Gazebo/SITL stack",
 			"start exploration controller runtime",
 			"record rosbag and collect task result artifacts",
@@ -74,7 +74,7 @@ func DefaultRegistry() *Registry {
 		Steps: []string{
 			"load task YAML config",
 			"validate simulation source claims",
-			"generate P11/P12 sensor, stabilization, disturbance, rosbag, and landing artifacts",
+			"generate sensor, stabilization, disturbance, rosbag, and landing artifacts",
 			"start Gazebo/SITL and gazebo-sensor runtime",
 			"apply configured disturbance profiles",
 			"record rosbag and collect task result artifacts",

@@ -1,5 +1,325 @@
 # Decisions
 
+## 2026-06-13: Root profiles only keep active cross-runtime inputs
+
+Decision: remove obsolete gate-specific rosbag topic profiles from the root
+`profiles/` directory after Go sim started generating runtime rosbag topic
+profiles under each run's artifact directory. Root `profiles/` now keeps only
+files with active non-historical consumers: X2 vendor params, SITL ExternalNav
+params, Foxglove-lite topic profiles, and the remaining generic rosbag
+fallbacks.
+
+Basis: active Go sim tasks build rosbag record topic profiles from execution
+plans at runtime instead of reading legacy `profiles/navlab-*-rosbag-topics.txt`
+files. Non-historical references now point only to the retained files.
+
+Reason: leaving old P-stage rosbag profiles in the root made retired Python
+orchestration paths look current and created a second apparent source of truth
+beside Go sim's generated runtime plan artifacts.
+
+## 2026-06-13: Python orchestration control plane is retired
+
+Decision: delete the tracked Python orchestration project under
+`orchestration/` after Go sim and Rust real became the active control-plane
+implementations. This removes `orchestration/main.py`, `orchestration/src`,
+`orchestration/tests`, the Python `pyproject.toml`/`uv.lock`, and the old
+top-level Python real config files. The active entries are now
+`orchestration/sim` for Go simulation orchestration and `orchestration/real`
+for Rust real-machine orchestration.
+
+Basis: Go sim owns build, doctor, task registry, task run planning/execution,
+runtime artifact generation, and Docker/ROS script surfaces. Rust real owns
+real config loading, registry, preflight, prepare, common-doctor, task-doctor,
+doctor-chain, process runtime, and motor-debug MAVLink execution. Keeping the
+old Python orchestration project would leave duplicate entrypoints and stale
+CI/test surfaces.
+
+Reason: this completes the repository split the project has been moving
+toward: sim and real are independent packages with separate configs and quality
+scripts. Python remains elsewhere in the repo only for runtime packages or
+standalone command tooling, not for the `orchestration` control plane.
+
+## 2026-06-13: Rust real motor-debug owns MAVLink transport loop
+
+Decision: replace the motor-debug "runtime not migrated" live path with a
+Rust MAVLink transport loop. The task now connects through the configured
+MAVLink endpoint, waits for an FCU heartbeat, sends
+`COMMAND_LONG MAV_CMD_DO_SET_MODE` for ArduCopter GUIDED mode, waits for both
+mode ACK and GUIDED heartbeat, sends arm, holds in armed-idle only, sends
+disarm, and writes heartbeat/ACK/runtime evidence back to `summary.json`.
+
+Basis: Rust already owned the motor-debug task registry, safety confirmations,
+plan contract, command policy model, and summary schema. The remaining Python
+parity gap was transport/send/receive behavior: connection, heartbeat/ACK
+waiting, and summary updates from real MAVLink responses.
+
+Reason: this makes Rust real the owner of motor-debug execution semantics while
+preserving fail-closed behavior. Without a heartbeat, Rust records
+`motor_debug_heartbeat_timeout` and never sends arm. If any ACK rejects or
+times out, Rust records the specific blocker; when arm succeeds it always
+attempts disarm and records the shutdown claim.
+
+## 2026-06-12: Rust real motor-debug owns MAVLink runtime policy model
+
+Decision: migrate the real motor-debug MAVLink policy model into Rust before
+opening the live MAVLink send path. Rust now owns the ArduCopter GUIDED mode
+ID policy (`GUIDED` => `4` even when FCU mode mapping is missing or wrong),
+the `MAV_CMD_COMPONENT_ARM_DISARM` arm/disarm command_long shape, MAV_RESULT
+name mapping, ACK rejection blockers, and the command plan embedded in the
+runtime `summary.json`.
+
+Basis: the old Python tests encoded these semantics around
+`ensure_guided_mode`, `send_arm_disarm`, `wait_command_ack`, and
+`command_rejection_blockers`, while the Python runtime module itself has
+already been retired from the repo. Recreating the behavior as a Rust model
+keeps the safety and artifact contract testable without depending on Python.
+
+Reason: this reduces the remaining live-runtime migration to transport and
+message I/O only. The Rust live task still fails closed after operator
+confirmations and summary writing, so no real motor command can be sent until
+the MAVLink connection/send/receive loop is explicitly implemented and tested.
+
+## 2026-06-12: Rust real motor-debug owns runtime summary contract
+
+Decision: migrate the real motor-debug runtime artifact contract into Rust.
+After operator confirmations pass, Rust now resolves the MAVLink router
+endpoint, writes a `navlab.runtime.task_result.v1` `summary.json` with serial,
+baud, endpoint, motor parameters, required GUIDED mode, no-takeoff/no-props
+claims, arm/hold/disarm steps, and shutdown fields, then fails closed with
+`motor_debug_rust_mavlink_runtime_not_migrated`.
+
+Basis: Python motor-debug writes a runtime summary even when the subprocess
+fails or cannot produce one. Rust previously stopped at a generic not-migrated
+error after safety confirmation, leaving no task-result artifact for operators
+or wrapper tests to inspect.
+
+Reason: this fixes the artifact surface before adding real MAVLink actuation.
+The endpoint conversion matches the Python policy (`host:port` becomes
+`udpin:host:port`, already-prefixed endpoints pass through), and the actual
+motor command path remains disabled until MAVLink send/ack behavior is ported
+and tested.
+
+## 2026-06-12: Rust real motor-debug owns operator safety gates
+
+Decision: migrate real motor-debug operator confirmations into Rust. The
+`navlab-real run motor-debug` command now accepts
+`--confirm-manual-takeover`, `--confirm-kill-switch`, `--confirm-safe-area`,
+and `--confirm-no-props`, plus compatible `NAVLAB_CONFIRM_*` environment
+values. Live motor-debug evaluates these gates before any motor action and
+fails closed with the same blocker names as Python when confirmations are
+missing.
+
+Basis: Rust real already owns motor-debug planning, doctor-chain gating, and
+the run wrapper opt-in path, but live motor-debug still jumped directly to a
+generic "not migrated" error. Python blocks missing operator confirmations
+before invoking the runtime motor command, and that safety boundary must move
+before MAVLink motor spin is ported.
+
+Reason: this preserves the no-props and operator-readiness contract while
+keeping the real MAVLink actuation path disabled. Once confirmations are all
+present, Rust still fails closed at `live motor-debug execution is not migrated
+to Rust yet`, so the next slice can focus only on the MAVLink/runtime command.
+
+## 2026-06-12: Rust real run can opt into doctor-chain gating
+
+Decision: wire `navlab-real run <task>` to optionally execute the Rust
+doctor-chain before task execution via `--with-doctor-chain`. The default
+`run --dry-run` path remains a fast task-plan command, while
+`--with-doctor-chain` runs preflight, prepare, common-doctor, and task-doctor
+first. Prepare stays dry-run unless `--allow-live-prepare` is explicitly set.
+
+Basis: Python real run wrappers gate task execution through the doctor chain,
+but Rust real initially exposed task execution and doctor-chain as separate
+commands. Connecting them behind an explicit flag lets operators validate the
+new Rust chain without changing the quick dry-run behavior or accidentally
+starting real prepare services.
+
+Reason: this closes the first wrapper parity gap while preserving safety.
+Current hosts without ROS or serial hardware fail closed during preflight and
+write chain artifacts; hosts with valid evidence can proceed to the existing
+task dry-run or the still fail-closed live task path.
+
+## 2026-06-12: Rust real owns the doctor-chain wrapper
+
+Decision: add a Rust `doctor-chain` workflow and CLI command that runs the
+real validation sequence as `preflight -> prepare -> common-doctor ->
+task-doctor -> stop prepare`. The chain writes a single artifact directory with
+`preflight.json`, `prepare.json`, `common-doctor.json`, `upstream.json`,
+`task-doctor.json`, and `summary.json`. Prepare defaults to dry-run in the
+chain unless `--allow-live-prepare` is explicitly passed.
+
+Basis: Python real run wrappers already depend on this ordering, but Rust real
+previously exposed only separate commands. With preflight, prepare,
+common-doctor, task-doctor, and process backend now migrated, the missing piece
+was the orchestration wrapper that preserves failure ordering and cleanup
+semantics.
+
+Reason: this moves the Python wrapper contract into Rust without requiring
+flight execution yet. The chain is testable with injected environment/topic
+probes, stops before prepare when preflight blocks, shares common-doctor
+upstream evidence with task-doctor, and keeps real process startup opt-in.
+
+## 2026-06-12: Rust real prepare live phase is explicit and stoppable
+
+Decision: wire Rust real prepare service plans into the Rust process backend
+through `start_prepare_phase` and `stop_prepare_phase`. The phase API starts
+configured process services, records `started_services` in the prepare summary,
+and stops handles in reverse order. The CLI keeps live execution behind
+`--allow-live`; without `--dry-run` or `--allow-live`, prepare fails closed with
+`prepare_live_execution_requires_explicit_allow_live_or_dry_run`.
+
+Basis: the previous slice migrated the reusable process backend but prepare
+still only produced plans. Python prepare returns handles so the higher-level
+run wrapper can keep services alive through common/task doctor and then stop
+them. Rust needs the same lifecycle boundary before replacing the Python
+real-run chain.
+
+Reason: this gives Rust real an end-to-end tested process lifecycle without
+making accidental real hardware startup the default. Unit tests start harmless
+local shell processes and verify summary output plus stop behavior; actual
+ROS/MAVLink services remain opt-in and will be chained with readiness checks in
+the next slice.
+
+## 2026-06-12: Rust real process backend migrates before live prepare
+
+Decision: add a Rust `runtime::process` backend with process `ServiceSpec`,
+`ProbeSpec`, runtime handles, dry-run log generation, probe capture, service
+start/wait/stop, log tailing, and Unix process-group termination. Prepare
+service plans now map directly to process service specs, but
+`navlab-real prepare` still keeps non-dry-run fail-closed until live readiness
+and cleanup orchestration are migrated.
+
+Basis: Python prepare depends on `ProcessBackend` to start MAVLink router,
+NavLab bridge, lidar, SLAM, and rangefinder services. Starting these real
+services is the hardware/process side-effect boundary, so the backend lifecycle
+must be tested independently before prepare uses it for live execution.
+
+Reason: this moves the reusable runtime substrate into Rust while preserving
+the current safety policy. Dry-run, probe execution, exit-code handling, and
+stop behavior are covered by Rust tests; the next slice can wire prepare live
+start/stop and ROS readiness against the same specs.
+
+## 2026-06-12: Rust real prepare owns service planning before live start
+
+Decision: add `navlab-real prepare <task-id>` as a Rust real migration slice.
+The command loads the project/task config, expands `navlab_mavlink` prepare
+services, writes a prepare `summary.json`, validates serial provenance,
+forbidden simulation tokens, required service commands, and motor-debug's
+rangefinder exclusion. `--dry-run` produces an operator-inspectable service
+plan; non-dry-run remains fail-closed with
+`prepare_live_execution_not_migrated_to_rust_yet:pass_--dry-run`.
+
+Basis: Python prepare mixes service selection, process startup, MAVLink router
+probing, ROS topic readiness, and artifact reporting. Rust real already owns
+preflight plus common/task doctor artifacts, but starting real processes is the
+hardware side-effect boundary and should not be enabled before the process
+backend lifecycle is migrated and tested.
+
+Reason: this preserves the Python behavior that motor-debug omits rangefinder
+prepare services while moving the project-level real process configuration into
+the Rust package. The next slice can implement process start/stop behind the
+same service plan without changing config shape or summary contracts.
+
+## 2026-06-12: Rust real common-doctor produces task-doctor evidence
+
+Decision: add `navlab-real common-doctor <task-id>` as the next Rust real
+migration slice. The command can consume an explicit upstream evidence JSON, or
+probe the live ROS graph with `ros2 topic list -t`, then writes both a
+common-doctor summary and an optional upstream evidence JSON that
+`navlab-real task-doctor` can consume unchanged. Missing ROS, missing required
+topics, forbidden simulation topics, and SRC2 without external-nav readiness
+all fail closed.
+
+Basis: Python common-doctor is the shared bridge between prepare topic evidence
+and task-specific doctor logic. Rust task-doctor already owns the downstream
+artifact contract, so the clean boundary is to make common-doctor the producer
+of the same upstream evidence structure rather than duplicating task checks.
+
+Reason: this preserves the real task registry expansion model and keeps live
+side effects bounded. The current Rust slice validates ROS topic presence/type
+and FCU/external-nav metadata, while deeper prepare/runtime service ownership
+and MAVLink execution can migrate later without changing the task-doctor input
+contract.
+
+## 2026-06-12: Rust real task-doctor consumes upstream evidence
+
+Decision: migrate the next Rust real slice as `navlab-real task-doctor
+<task-id>`. The command reads task config, consumes an optional upstream
+evidence JSON file, writes a task-doctor `summary.json`, and currently ports the
+motor-debug task-specific doctor contract. Without upstream evidence it fails
+closed with `upstream_evidence_missing`; with FCU status metadata it reports the
+observed mode while keeping GUIDED mode switching deferred to the run stage.
+
+Basis: Python task-doctor combines upstream ROS topic evidence with
+task-specific checks. Rust real does not yet own prepare/common ROS sampling, so
+the safest migration boundary is an explicit artifact input rather than live ROS
+side effects.
+
+Reason: this lets prepare/common doctor later feed the same Rust task-doctor
+contract without changing business logic. It also preserves the real task
+registry model and keeps motor-debug from requiring current GUIDED mode during
+doctor, matching the Python safety policy.
+
+## 2026-06-12: Rust real migrates preflight as fail-closed probes
+
+Decision: add `navlab-real preflight` as the next Rust real migration slice.
+The command loads real project config, evaluates `process+real` runtime mode,
+checks configured serial MAVLink endpoint shape, probes dependency command
+groups, Python modules, ROS package prefixes, and process-service requirements,
+then writes a `summary.json` artifact. It does not start prepare services,
+connect to MAVLink, arm motors, or perform flight side effects.
+
+Basis: Python real preflight is the safest real workflow to migrate after the
+Rust CLI/logging/registry base because its useful behavior is environment
+validation and artifact reporting. The current host may legitimately miss ROS,
+Python runtime modules, or `/dev/ttyUSB1`; Rust should report those as
+blockers rather than silently passing.
+
+Reason: this gives Rust real a practical fail-closed operator check before
+moving live prepare or motor-debug execution. Environment probing is behind a
+trait and tested with `mockall`, so future MAVLink heartbeat and ROS probes can
+be migrated without hardwiring hardware side effects into unit tests.
+
+## 2026-06-12: Rust real tests use layered test tooling
+
+Decision: use Rust's built-in test harness for simple unit tests, `rstest` for
+parameterized task/config validation, `insta` for JSON/YAML output contracts,
+`mockall` for future MAVLink/ROS boundary mocks, `criterion` for focused
+performance benchmarks, and `tokio::test` for async runtime tests.
+
+Basis: Rust real will migrate safety-critical preflight, prepare,
+task-doctor, and MAVLink execution logic. Those paths need cheap unit tests,
+stable artifact snapshots, and mockable hardware/process boundaries without
+starting real flight side effects in normal CI.
+
+Reason: this keeps ordinary `cargo test` fast and deterministic while still
+making output contracts and future MAVLink abstractions testable. Benchmarks
+compile in the full local check through `cargo bench --no-run`; CI/pre-commit
+avoid running performance measurements by default.
+
+## 2026-06-12: Rust real starts with CLI, registry, and tracing logging
+
+Decision: start the Rust real orchestration package as an independent crate
+under `orchestration/real`, with Clap CLI commands, a real task registry,
+project/task config loading, dry-run `motor-debug`, and a reusable tracing
+logging module. The logging module uses `tracing`, `tracing-subscriber`,
+`tracing-appender`, `anyhow`, and `thiserror`, with human or JSON console
+formatting and optional rolling file output. OpenTelemetry is intentionally not
+implemented in this slice.
+
+Basis: Python real remains the live side-effect implementation, but the
+long-term split requires real orchestration to move to Rust without sharing
+Python helpers with Go sim. The first Rust slice should establish the command,
+config, logging, and registry contracts before MAVLink/ROS runtime side
+effects move.
+
+Reason: this preserves the task registry expansion path while keeping real
+flight behavior fail-closed. `ratatui` was pinned to `0.29` after `0.30.1`
+failed to compile in the current Rust 1.88 toolchain due an upstream
+`ratatui-widgets` trait conflict. `crossterm`, `indicatif`, `mavlink`, and
+`mcap` are present for the real terminal/runtime roadmap, but the initial
+executable path only exposes dry-run behavior.
+
 ## 2026-06-12: Go sim owns simulation image builds
 
 Decision: move simulation Docker image build orchestration into Go sim and

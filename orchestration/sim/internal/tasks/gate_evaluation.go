@@ -319,8 +319,8 @@ func taskSpecificChecks(runtimeConfig config.TaskRuntimeConfig, taskID string) m
 		checks["exploration_landing_policy_return_home"] = runtimeConfig.Landing.ExplorationPolicy == helpers.PolicyReturnHomeThenLand
 		checks["exploration_claim_evaluated"] = runtimeConfig.ExplorationGate.ExplorationClaim == "evaluated"
 	case "scan-robustness":
-		p11Blockers := helpers.ValidateP11Config(scanStabilizationSpec(runtimeConfig))
-		checks["scan_stabilization_config_valid"] = len(p11Blockers) == 0
+		scanStabilizationBlockers := helpers.ValidateScanStabilizationConfig(scanStabilizationSpec(runtimeConfig))
+		checks["scan_stabilization_config_valid"] = len(scanStabilizationBlockers) == 0
 		checks["airframe_required_profiles_configured"] = len(runtimeConfig.AirframeDisturbanceGate.RequiredProfiles) > 0
 		checks["airframe_profile_configured"] = runtimeConfig.AirframeDisturbance.Profile != ""
 		checks["scan_robustness_landing_policy_land_in_place"] = runtimeConfig.Landing.ScanRobustnessPolicy == "" || runtimeConfig.Landing.ScanRobustnessPolicy == helpers.PolicyLandInPlace

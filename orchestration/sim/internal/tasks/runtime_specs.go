@@ -247,14 +247,14 @@ func officialBaselineServiceSpec(
 		"exec " + launch + " use_gz_sim_gui:=false rviz:=false use_dds_agent:=true use_gz_sim_server:=true spawn_robot:=true",
 	}, " && ")
 	volumes := []simruntime.VolumeMount{workspaceMount}
-	p12BridgeOverride := filepath.Join(artifactDir, "p12_bridge_override.yaml")
-	if _, err := os.Stat(p12BridgeOverride); err == nil {
-		absoluteP12BridgeOverride, err := filepath.Abs(p12BridgeOverride)
+	scanRobustnessBridgeOverride := filepath.Join(artifactDir, "scan_robustness_bridge_override.yaml")
+	if _, err := os.Stat(scanRobustnessBridgeOverride); err == nil {
+		absoluteScanRobustnessBridgeOverride, err := filepath.Abs(scanRobustnessBridgeOverride)
 		if err != nil {
 			return simruntime.ServiceSpec{}, err
 		}
 		volumes = append(volumes, simruntime.VolumeMount{
-			Source: absoluteP12BridgeOverride,
+			Source: absoluteScanRobustnessBridgeOverride,
 			Target: helpers.OfficialIris3DBridgeConfig,
 		})
 	} else {

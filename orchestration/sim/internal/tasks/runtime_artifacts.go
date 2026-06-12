@@ -26,12 +26,12 @@ func GenerateRuntimeArtifacts(
 	}
 	if hasHelper(plan, "navlab-models") {
 		bridge := filepath.Join(artifactDir, "bridge_override.yaml")
-		if err := helpers.WriteP1BridgeOverride(bridge); err != nil {
+		if err := helpers.WriteBridgeOverride(bridge); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "bridge_override", Path: bridge})
 		vendor := filepath.Join(artifactDir, "vendor_profile.yaml")
-		if err := helpers.WriteP1VendorProfile(vendor, runtimeConfig.RangefinderIMU.X2VirtualSerialLink); err != nil {
+		if err := helpers.WriteVendorProfile(vendor, runtimeConfig.RangefinderIMU.X2VirtualSerialLink); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "vendor_profile", Path: vendor})
@@ -42,18 +42,18 @@ func GenerateRuntimeArtifacts(
 		if err != nil {
 			return nil, err
 		}
-		if err := helpers.WriteP2SensorConfig(sensorConfig, vendorProfile, p2Spec(runtimeConfig)); err != nil {
+		if err := helpers.WriteSensorRuntimeConfig(sensorConfig, vendorProfile, sensorSpec(runtimeConfig)); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "sensor_runtime_config", Path: sensorConfig})
 		if err := writeGeneratedScript(filepath.Join(artifactDir, "rangefinder_probe.py"), func() (string, error) {
-			return helpers.P2RangefinderProbeScript(p2Spec(runtimeConfig))
+			return helpers.RangefinderProbeScript(sensorSpec(runtimeConfig))
 		}); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "rangefinder_probe_script", Path: filepath.Join(artifactDir, "rangefinder_probe.py")})
 		if err := writeGeneratedScript(filepath.Join(artifactDir, "imu_probe.py"), func() (string, error) {
-			return helpers.P2IMUProbeScript(p2Spec(runtimeConfig))
+			return helpers.IMUProbeScript(sensorSpec(runtimeConfig))
 		}); err != nil {
 			return nil, err
 		}
@@ -61,7 +61,7 @@ func GenerateRuntimeArtifacts(
 	}
 	if hasHelper(plan, "slam") {
 		path := filepath.Join(artifactDir, "slam_runtime.toml")
-		if err := helpers.WriteP3SlamRuntimeConfig(path, slamSpec(runtimeConfig)); err != nil {
+		if err := helpers.WriteSlamRuntimeConfig(path, slamSpec(runtimeConfig)); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_runtime_config", Path: path})
@@ -87,7 +87,7 @@ func GenerateRuntimeArtifacts(
 			spec.DisturbanceProfile = runtimeConfig.AirframeDisturbance.Profile
 			spec.RequiredProfiles = append([]string(nil), runtimeConfig.AirframeDisturbanceGate.RequiredProfiles...)
 		}
-		if err := helpers.WriteP4RuntimeConfig(path, spec); err != nil {
+		if err := helpers.WriteFCUControllerRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "fcu_runtime_config", Path: path})
@@ -101,7 +101,7 @@ func GenerateRuntimeArtifacts(
 	if hasHelper(plan, "frame-contract") {
 		path := filepath.Join(artifactDir, "frame_contract_runtime.toml")
 		spec := frameSpec(runtimeConfig)
-		if err := helpers.WriteP5RuntimeConfig(path, spec); err != nil {
+		if err := helpers.WriteFrameContractRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "frame_contract_runtime_config", Path: path})
@@ -115,7 +115,7 @@ func GenerateRuntimeArtifacts(
 	if hasHelper(plan, "slam-hover") {
 		path := filepath.Join(artifactDir, "slam_hover_runtime.toml")
 		spec := hoverSpec(runtimeConfig)
-		if err := helpers.WriteP6RuntimeConfig(path, spec); err != nil {
+		if err := helpers.WriteHoverRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_hover_runtime_config", Path: path})
@@ -132,12 +132,12 @@ func GenerateRuntimeArtifacts(
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "foxglove_notes", Path: notesPath})
 	}
 	if hasHelper(plan, "exploration-workflow") {
-		path := filepath.Join(artifactDir, "p8_exploration_runtime.toml")
+		path := filepath.Join(artifactDir, "exploration_runtime.toml")
 		spec := explorationSpec(runtimeConfig)
-		if err := helpers.WriteP8RuntimeConfig(path, spec); err != nil {
+		if err := helpers.WriteExplorationRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "p8_runtime_config", Path: path})
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "exploration_runtime_config", Path: path})
 		if err := writeGeneratedScript(filepath.Join(artifactDir, "exploration_probe.py"), func() (string, error) {
 			return helpers.ExplorationProbeScript(spec)
 		}); err != nil {
@@ -146,12 +146,12 @@ func GenerateRuntimeArtifacts(
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "exploration_probe_script", Path: filepath.Join(artifactDir, "exploration_probe.py")})
 	}
 	if hasHelper(plan, "scan-stabilization") {
-		path := filepath.Join(artifactDir, "p11_scan_stabilization_runtime.toml")
+		path := filepath.Join(artifactDir, "scan_stabilization_runtime.toml")
 		spec := scanStabilizationSpec(runtimeConfig)
-		if err := helpers.WriteP11RuntimeConfig(path, spec); err != nil {
+		if err := helpers.WriteScanStabilizationRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "p11_runtime_config", Path: path})
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_stabilization_runtime_config", Path: path})
 		if err := writeGeneratedScript(filepath.Join(artifactDir, "stabilization_status_probe.py"), func() (string, error) {
 			return helpers.StabilizationStatusProbeScript(spec)
 		}); err != nil {
@@ -160,17 +160,17 @@ func GenerateRuntimeArtifacts(
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "stabilization_status_probe_script", Path: filepath.Join(artifactDir, "stabilization_status_probe.py")})
 	}
 	if hasHelper(plan, "scan-robustness-workflow") {
-		path := filepath.Join(artifactDir, "p12_airframe_disturbance_runtime.toml")
+		path := filepath.Join(artifactDir, "scan_robustness_runtime.toml")
 		spec := scanRobustnessSpec(runtimeConfig)
-		if err := helpers.WriteP12RuntimeConfig(path, spec); err != nil {
+		if err := helpers.WriteScanRobustnessRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "p12_runtime_config", Path: path})
-		bridge := filepath.Join(artifactDir, "p12_bridge_override.yaml")
-		if err := helpers.WriteP12BridgeOverride(bridge, runtimeConfig.AirframeDisturbance.IMUInputTopic); err != nil {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_robustness_runtime_config", Path: path})
+		bridge := filepath.Join(artifactDir, "scan_robustness_bridge_override.yaml")
+		if err := helpers.WriteScanRobustnessBridgeOverride(bridge, runtimeConfig.AirframeDisturbance.IMUInputTopic); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "p12_bridge_override", Path: bridge})
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_robustness_bridge_override", Path: bridge})
 		if err := writeGeneratedScript(filepath.Join(artifactDir, "airframe_disturbance_probe.py"), func() (string, error) {
 			return helpers.AirframeDisturbanceProbeScript(spec)
 		}); err != nil {
@@ -214,31 +214,31 @@ func hasHelper(plan Plan, id string) bool {
 	return false
 }
 
-func p2Spec(runtimeConfig config.TaskRuntimeConfig) helpers.P2SensorSpec {
-	spec := helpers.DefaultP2SensorSpec()
-	p2 := runtimeConfig.RangefinderIMU
-	spec.X2VirtualSerialLink = p2.X2VirtualSerialLink
-	spec.X2ScanInputTopic = p2.X2ScanInputTopic
-	spec.X2ScanTopic = p2.X2ScanTopic
-	spec.X2StatusTopic = p2.X2StatusTopic
-	spec.RangefinderFrameID = p2.RangefinderFrameID
-	spec.RangefinderScanIdealTopic = p2.RangefinderScanIdealTopic
-	spec.RangefinderRangeTopic = p2.RangefinderRangeTopic
-	spec.RangefinderStatusTopic = p2.RangefinderStatusTopic
-	spec.RangefinderEndpoint = p2.RangefinderEndpoint
-	spec.RangefinderMAVOrientation = p2.RangefinderMAVLinkOrientation
-	spec.RangefinderRateHz = p2.RangefinderRateHz
-	spec.RangefinderMinDistanceM = p2.RangefinderMinDistanceM
-	spec.RangefinderMaxDistanceM = p2.RangefinderMaxDistanceM
-	spec.RangefinderModelPose = p2.RangefinderModelPose
-	spec.RangefinderModelUpdateHz = p2.RangefinderModelUpdateRateHz
-	if count, err := strconv.Atoi(p2.RangefinderModelRayCount); err == nil {
+func sensorSpec(runtimeConfig config.TaskRuntimeConfig) helpers.SensorRuntimeSpec {
+	spec := helpers.DefaultSensorRuntimeSpec()
+	sensor := runtimeConfig.RangefinderIMU
+	spec.X2VirtualSerialLink = sensor.X2VirtualSerialLink
+	spec.X2ScanInputTopic = sensor.X2ScanInputTopic
+	spec.X2ScanTopic = sensor.X2ScanTopic
+	spec.X2StatusTopic = sensor.X2StatusTopic
+	spec.RangefinderFrameID = sensor.RangefinderFrameID
+	spec.RangefinderScanIdealTopic = sensor.RangefinderScanIdealTopic
+	spec.RangefinderRangeTopic = sensor.RangefinderRangeTopic
+	spec.RangefinderStatusTopic = sensor.RangefinderStatusTopic
+	spec.RangefinderEndpoint = sensor.RangefinderEndpoint
+	spec.RangefinderMAVOrientation = sensor.RangefinderMAVLinkOrientation
+	spec.RangefinderRateHz = sensor.RangefinderRateHz
+	spec.RangefinderMinDistanceM = sensor.RangefinderMinDistanceM
+	spec.RangefinderMaxDistanceM = sensor.RangefinderMaxDistanceM
+	spec.RangefinderModelPose = sensor.RangefinderModelPose
+	spec.RangefinderModelUpdateHz = sensor.RangefinderModelUpdateRateHz
+	if count, err := strconv.Atoi(sensor.RangefinderModelRayCount); err == nil {
 		spec.RangefinderModelRayCount = count
 	}
-	spec.IMUOutputTopic = p2.IMUOutputTopic
-	spec.IMUSourceRoute = p2.IMUSourceRoute
-	spec.IMUSourceTopic = p2.IMUSourceTopic
-	spec.SyntheticFallbackEnabled = p2.SyntheticFallbackEnabled
+	spec.IMUOutputTopic = sensor.IMUOutputTopic
+	spec.IMUSourceRoute = sensor.IMUSourceRoute
+	spec.IMUSourceTopic = sensor.IMUSourceTopic
+	spec.SyntheticFallbackEnabled = sensor.SyntheticFallbackEnabled
 	return spec
 }
 
@@ -398,22 +398,22 @@ func explorationSpec(runtimeConfig config.TaskRuntimeConfig) helpers.Exploration
 
 func scanStabilizationSpec(runtimeConfig config.TaskRuntimeConfig) helpers.ScanStabilizationSpec {
 	spec := helpers.DefaultScanStabilizationSpec()
-	p11 := runtimeConfig.ScanStabilization
-	spec.Mode = p11.Mode
-	spec.InputScanTopic = p11.InputScanTopic
-	spec.OutputScanTopic = p11.OutputScanTopic
-	spec.StatusTopic = p11.StatusTopic
-	spec.AttitudeSourceTopic = p11.AttitudeSourceTopic
-	spec.MaxRejectedBeamRatio = p11.MaxRejectedBeamRatio
-	spec.MinRetainedBeamRatio = p11.MinRetainedBeamRatio
-	spec.MaxFloorHitRiskBeamRatio = p11.MaxFloorHitRiskBeamRatio
-	spec.MaxVerticalProjectionErrorM = p11.MaxVerticalProjectionErrorM
-	spec.MaxAttitudeSourceAgeMS = p11.MaxAttitudeSourceAgeMS
-	spec.PassthroughTiltDeg = p11.PassthroughTiltDeg
-	spec.CompensationTiltDeg = p11.CompensationTiltDeg
-	spec.HardDropTiltDeg = p11.HardDropTiltDeg
-	spec.UsesGazeboTruthAsInput = p11.UsesGazeboTruthAsInput
-	spec.ScanStabilizationClaim = p11.ScanStabilizationClaim
+	stabilization := runtimeConfig.ScanStabilization
+	spec.Mode = stabilization.Mode
+	spec.InputScanTopic = stabilization.InputScanTopic
+	spec.OutputScanTopic = stabilization.OutputScanTopic
+	spec.StatusTopic = stabilization.StatusTopic
+	spec.AttitudeSourceTopic = stabilization.AttitudeSourceTopic
+	spec.MaxRejectedBeamRatio = stabilization.MaxRejectedBeamRatio
+	spec.MinRetainedBeamRatio = stabilization.MinRetainedBeamRatio
+	spec.MaxFloorHitRiskBeamRatio = stabilization.MaxFloorHitRiskBeamRatio
+	spec.MaxVerticalProjectionErrorM = stabilization.MaxVerticalProjectionErrorM
+	spec.MaxAttitudeSourceAgeMS = stabilization.MaxAttitudeSourceAgeMS
+	spec.PassthroughTiltDeg = stabilization.PassthroughTiltDeg
+	spec.CompensationTiltDeg = stabilization.CompensationTiltDeg
+	spec.HardDropTiltDeg = stabilization.HardDropTiltDeg
+	spec.UsesGazeboTruthAsInput = stabilization.UsesGazeboTruthAsInput
+	spec.ScanStabilizationClaim = stabilization.ScanStabilizationClaim
 	spec.ReplayReadinessTimeoutSec = runtimeConfig.ScanStabilizationGate.ReplayReadinessTimeoutSec
 	spec.ControllerSummaryTimeoutSec = runtimeConfig.ScanStabilizationGate.ControllerSummaryTimeoutSec
 	return spec

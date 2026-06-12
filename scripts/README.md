@@ -2,7 +2,7 @@
 
 `scripts` is split by responsibility:
 
-- `quality/`: repository checks and formatters.
+- `quality/`: repository checks and formatters for Python, Go, and Rust.
 - `ops/`: local machine and hardware operation helpers.
 - `command/`: standalone Python command CLI project.
 

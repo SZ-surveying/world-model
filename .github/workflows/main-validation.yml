@@ -47,6 +47,7 @@ jobs:
     outputs:
       python: ${{ steps.filter.outputs.python }}
       go: ${{ steps.filter.outputs.go }}
+      rust: ${{ steps.filter.outputs.rust }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -67,8 +68,6 @@ jobs:
               - 'lefthook.yml'
               - 'justfile'
               - 'navlab/**'
-              - 'orchestration/src/**'
-              - 'orchestration/tests/**'
               - 'scripts/command/**'
               - 'scripts/ops/**/*.py'
             go:
@@ -81,6 +80,13 @@ jobs:
               - 'scripts/quality/check-go.sh'
               - 'scripts/quality/format-go.sh'
               - 'orchestration/sim/**'
+            rust:
+              - '.github/workflows/main-validation.yml'
+              - 'lefthook.yml'
+              - 'justfile'
+              - 'scripts/quality/check-rust.sh'
+              - 'scripts/quality/format-rust.sh'
+              - 'orchestration/real/**'
 
   python:
     name: Python CI
@@ -124,6 +130,26 @@ jobs:
           GO_CHECK_PROFILE: ci
         run: ./scripts/quality/check-go.sh
 
+  rust:
+    name: Rust CI
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88.0"
+          components: rustfmt, clippy
+
+      - name: Run Rust checks
+        env:
+          RUST_CHECK_PROFILE: ci
+        run: ./scripts/quality/check-rust.sh
+
   summary:
     name: Validation Summary
     if: always()
@@ -131,6 +157,7 @@ jobs:
       - changes
       - python
       - go
+      - rust
     runs-on: ubuntu-latest
     steps:
       - name: Publish summary
@@ -139,6 +166,8 @@ jobs:
           PYTHON_RESULT: ${{ needs.python.result }}
           GO_CHANGED: ${{ needs.changes.outputs.go }}
           GO_RESULT: ${{ needs.go.result }}
+          RUST_CHANGED: ${{ needs.changes.outputs.rust }}
+          RUST_RESULT: ${{ needs.rust.result }}
         run: |
           label_for() {
             local changed="$1"
@@ -160,6 +189,7 @@ jobs:
 
           PYTHON_STATUS="$(label_for "$PYTHON_CHANGED" "$PYTHON_RESULT")"
           GO_STATUS="$(label_for "$GO_CHANGED" "$GO_RESULT")"
+          RUST_STATUS="$(label_for "$RUST_CHANGED" "$RUST_RESULT")"
 
           {
             echo "## Main Validation Summary"
@@ -175,6 +205,11 @@ jobs:
               echo "| go | yes | $GO_STATUS |"
             else
               echo "| go | no | $GO_STATUS |"
+            fi
+            if [ "$RUST_CHANGED" = "true" ]; then
+              echo "| rust | yes | $RUST_STATUS |"
+            else
+              echo "| rust | no | $RUST_STATUS |"
             fi
             echo
             echo "Notes:"

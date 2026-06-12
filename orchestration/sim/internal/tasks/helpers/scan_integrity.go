@@ -48,6 +48,6 @@ func MotorOutputSummaryFromTopics(topics []string) MotorOutputSummary {
 		MotorOutputClaim: "candidate_topics_present",
 		Available:        false,
 		CandidateTopics:  candidates,
-		Reason:           "candidate topics exist, but P10.1 does not parse motor output message schemas yet",
+		Reason:           "candidate topics exist, but scan integrity does not parse motor output message schemas yet",
 	}
 }

@@ -40,7 +40,7 @@ type GazeboSensorRunSpec struct {
 	WorkspaceContainerPath string
 }
 
-func WriteP1BridgeOverride(path string) error {
+func WriteBridgeOverride(path string) error {
 	return writeText(path, `---
 - ros_topic_name: "clock"
   gz_topic_name: "/clock"
@@ -85,7 +85,7 @@ func WriteP1BridgeOverride(path string) error {
 `)
 }
 
-func WriteP1VendorProfile(path string, virtualSerialLink string) error {
+func WriteVendorProfile(path string, virtualSerialLink string) error {
 	return writeText(path, fmt.Sprintf(`ydlidar_ros2_driver_node:
   ros__parameters:
     use_sim_time: true

@@ -3,8 +3,8 @@ set dotenv-filename := ".env"
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-orchestration_cmd := "uv run --project orchestration python orchestration/main.py"
 sim_cmd := "cd orchestration/sim && go run ./cmd/navlab-sim"
+real_cmd := "cd orchestration/real && cargo run --quiet --"
 command_cmd := "uv run --project scripts/command python scripts/command/main.py"
 
 default:
@@ -24,6 +24,14 @@ check-go *args='':
 format-go *args='':
     ./scripts/quality/format-go.sh {{args}}
 
+# Check Rust real orchestration.
+check-rust *args='':
+    ./scripts/quality/check-rust.sh {{args}}
+
+# Format Rust real orchestration.
+format-rust *args='':
+    ./scripts/quality/format-rust.sh {{args}}
+
 # Check Python projects.
 check-python *args='':
     ./scripts/quality/check-python.sh {{args}}
@@ -32,17 +40,21 @@ check-python *args='':
 format-python *args='':
     ./scripts/quality/format-python.sh {{args}}
 
-# Check the active runtime. Set NAVLAB_RUNTIME_BACKEND/MODE for real preflight.
+# Check sim orchestration.
 navlab-doctor *args='':
-    {{orchestration_cmd}} doctor {{args}}
+    {{sim_cmd}} doctor {{args}}
 
-# Run a built-in task through the unified wrapper: hover, exploration, or scan-robustness.
-navlab-run task duration_sec='' *args='':
-    if [ -n "{{duration_sec}}" ] && [[ "{{duration_sec}}" != -* ]]; then \
-        {{orchestration_cmd}} run {{task}} --duration-sec {{duration_sec}} {{args}}; \
-    else \
-        {{orchestration_cmd}} run {{task}} {{duration_sec}} {{args}}; \
-    fi
+# Check real orchestration.
+navlab-real-doctor *args='':
+    {{real_cmd}} doctor {{args}}
+
+# Run a simulation task through Go orchestration.
+navlab-run task *args='':
+    {{sim_cmd}} run {{task}} {{args}}
+
+# Run a real task through Rust orchestration.
+navlab-real-run task *args='':
+    {{real_cmd}} run {{task}} {{args}}
 
 # Command tools
 

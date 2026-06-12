@@ -1,7 +1,7 @@
 # 仿真主线说明
 
-这个目录现在只记录 NavLab 主线需要的仿真契约。旧 Stage 0 的单独启动入口已经退场：
-不再有独立的 sim CLI、旧扫描桥服务或通用仿真 runtime。
+这个目录现在只记录 NavLab 主线需要的仿真契约。旧 Stage 0 的 Python orchestration
+入口已经退场；仿真控制面由 `orchestration/sim` 的 Go CLI 负责。
 
 当前仿真链路收敛为：
 
@@ -20,10 +20,9 @@ Gazebo world
 
 ```text
 orchestration/
-  cli.py
-  host.py
-  config.py
-  project_config.py
+  sim/
+    cmd/navlab-sim
+  real/
 
 navlab/
   gazebo_sensor/
@@ -52,13 +51,13 @@ navlab/
 
 ## 当前命令
 
-主线入口放在 `navlab`：
+主线入口放在 Go sim CLI：
 
 ```bash
-uv run --project orchestration python orchestration/main.py build all
-uv run --project orchestration python orchestration/main.py doctor
+cd orchestration/sim && go run ./cmd/navlab-sim build all
+cd orchestration/sim && go run ./cmd/navlab-sim doctor
 X2_MODE=driver-smoke X2_SMOKE_DURATION_SEC=8 X2_ARTIFACT_DIR=/artifacts/ros/x2_driver_smoke/manual docker compose --file compose/docker-compose.yaml --project-directory . --profile x2_sensor up --abort-on-container-exit --exit-code-from gazebo-sensor gazebo-sensor
-uv run --project orchestration python orchestration/main.py acceptance 90
+cd orchestration/sim && go run ./cmd/navlab-sim run hover --duration-sec 90
 ```
 
 NavLab acceptance 会启动 Gazebo、SITL、MAVLink router、gazebo sensor、companion、SLAM 和 Foxglove，

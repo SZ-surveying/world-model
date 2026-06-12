@@ -37,7 +37,7 @@ func TestGenerateRuntimeArtifactsFromConfiguredTasks(t *testing.T) {
 			name:   "exploration",
 			taskID: "exploration",
 			wantFiles: []string{
-				"p8_exploration_runtime.toml",
+				"exploration_runtime.toml",
 				"exploration_probe.py",
 				"motion_foxglove_notes.md",
 			},
@@ -46,10 +46,10 @@ func TestGenerateRuntimeArtifactsFromConfiguredTasks(t *testing.T) {
 			name:   "scan-robustness",
 			taskID: "scan-robustness",
 			wantFiles: []string{
-				"p11_scan_stabilization_runtime.toml",
+				"scan_stabilization_runtime.toml",
 				"stabilization_status_probe.py",
-				"p12_airframe_disturbance_runtime.toml",
-				"p12_bridge_override.yaml",
+				"scan_robustness_runtime.toml",
+				"scan_robustness_bridge_override.yaml",
 				"airframe_disturbance_probe.py",
 			},
 		},

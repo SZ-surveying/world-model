@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-func TestWriteP3SlamRuntimeConfig(t *testing.T) {
+func TestWriteSlamRuntimeConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "slam_runtime.toml")
-	if err := WriteP3SlamRuntimeConfig(path, DefaultSlamRuntimeSpec()); err != nil {
-		t.Fatalf("WriteP3SlamRuntimeConfig() error = %v", err)
+	if err := WriteSlamRuntimeConfig(path, DefaultSlamRuntimeSpec()); err != nil {
+		t.Fatalf("WriteSlamRuntimeConfig() error = %v", err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

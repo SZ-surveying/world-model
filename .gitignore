@@ -19,4 +19,6 @@ core
 /artifacts/
 install/
 log/
+target/
+orchestration/real/logs/
 scripts/command/logs

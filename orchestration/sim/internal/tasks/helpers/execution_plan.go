@@ -133,7 +133,7 @@ func BuildExecutionPlan(
 }
 
 func addSensorsExecution(plan *ExecutionPlan, task config.TaskConfig) {
-	spec := DefaultP2SensorSpec()
+	spec := DefaultSensorRuntimeSpec()
 	plan.GeneratedArtifacts = append(plan.GeneratedArtifacts,
 		ArtifactPlan{HelperID: "sensors", Kind: "sdf_model_overlay", Path: "model_overlay.sdf", Inputs: []string{OfficialIrisWithLidarModel}},
 		ArtifactPlan{HelperID: "sensors", Kind: "ardupilot_param_overlay", Path: "gazebo-iris-rangefinder.parm", Inputs: []string{OfficialGazeboIrisParams}},
@@ -194,8 +194,8 @@ func addFCUExecution(plan *ExecutionPlan, task config.TaskConfig) {
 	)
 	plan.RuntimeServices = append(plan.RuntimeServices, RuntimeServicePlan{
 		HelperID:      "fcu-controller",
-		ServiceName:   "p4_controller",
-		ContainerName: P4ControllerContainer,
+		ServiceName:   "fcu_controller",
+		ContainerName: FCUControllerContainer,
 		ImageRef:      "images.runtime",
 		Network:       "host",
 		Command:       []string{"bash", "-lc", "python3 artifacts/fcu_controller_runtime.py"},
@@ -259,7 +259,7 @@ func addSlamHoverExecution(plan *ExecutionPlan, task config.TaskConfig, duration
 		RuntimeImage: "images.runtime",
 		Status:       "ported_script_generation",
 	})
-	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlan("slam-hover", "p6_hover_rosbag", "configs/rosbag/slam_hover.yaml", durationSec, []string{spec.FCUPoseTopic, spec.SlamOdomTopic, spec.ControllerStatusTopic, spec.HoverStatusTopic}))
+	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlan("slam-hover", "hover_rosbag", "configs/rosbag/hover.yaml", durationSec, []string{spec.FCUPoseTopic, spec.SlamOdomTopic, spec.ControllerStatusTopic, spec.HoverStatusTopic}))
 	plan.ResultGates = append(plan.ResultGates, ResultGatePlan{
 		HelperID: "slam-hover",
 		Name:     "slam_hover_acceptance",
@@ -272,8 +272,8 @@ func addSlamHoverExecution(plan *ExecutionPlan, task config.TaskConfig, duration
 func addScanStabilizationExecution(plan *ExecutionPlan, task config.TaskConfig, durationSec float64) {
 	spec := DefaultScanStabilizationSpec()
 	plan.GeneratedArtifacts = append(plan.GeneratedArtifacts,
-		ArtifactPlan{HelperID: "scan-stabilization", Kind: "p11_sensor_runtime_toml", Path: "p11_gazebo_sensor_runtime.toml"},
-		ArtifactPlan{HelperID: "scan-stabilization", Kind: "p11_gate_runtime_toml", Path: "p11_scan_stabilization_runtime.toml"},
+		ArtifactPlan{HelperID: "scan-stabilization", Kind: "scan_stabilization_sensor_runtime_toml", Path: "scan_stabilization_gazebo_sensor_runtime.toml"},
+		ArtifactPlan{HelperID: "scan-stabilization", Kind: "scan_stabilization_runtime_toml", Path: "scan_stabilization_runtime.toml"},
 	)
 	plan.ROSProbes = append(plan.ROSProbes, ROSProbePlan{
 		HelperID:     "scan-stabilization",
@@ -284,7 +284,7 @@ func addScanStabilizationExecution(plan *ExecutionPlan, task config.TaskConfig, 
 		RuntimeImage: "images.runtime",
 		Status:       "ported_script_generation",
 	})
-	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlan("scan-stabilization", "p11_scan_stabilization_rosbag", "configs/rosbag/scan_stabilization.yaml", durationSec, []string{spec.InputScanTopic, spec.OutputScanTopic, spec.StatusTopic}))
+	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlan("scan-stabilization", "scan_stabilization_rosbag", "configs/rosbag/scan_stabilization.yaml", durationSec, []string{spec.InputScanTopic, spec.OutputScanTopic, spec.StatusTopic}))
 	plan.ResultGates = append(plan.ResultGates, ResultGatePlan{
 		HelperID: "scan-stabilization",
 		Name:     "scan_stabilization_gate",
@@ -304,7 +304,7 @@ func addExplorationWorkflowExecution(plan *ExecutionPlan, task config.TaskConfig
 		spec.MotionSpeedMPS = value
 	}
 	plan.GeneratedArtifacts = append(plan.GeneratedArtifacts,
-		ArtifactPlan{HelperID: "exploration-workflow", Kind: "p8_runtime_toml", Path: "p8_exploration_runtime.toml"},
+		ArtifactPlan{HelperID: "exploration-workflow", Kind: "exploration_runtime_toml", Path: "exploration_runtime.toml"},
 		ArtifactPlan{HelperID: "exploration-workflow", Kind: "exploration_probe_script", Path: "exploration_probe.py"},
 	)
 	plan.ROSProbes = append(plan.ROSProbes, ROSProbePlan{
@@ -316,9 +316,9 @@ func addExplorationWorkflowExecution(plan *ExecutionPlan, task config.TaskConfig
 		RuntimeImage: "images.runtime",
 		Status:       "ported_script_generation",
 	})
-	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlan("exploration-workflow", "p8_exploration_rosbag", "configs/rosbag/exploration.yaml", durationSec, []string{spec.ControllerStatusTopic, spec.SetpointOutputTopic, spec.SlamOdomTopic}))
+	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlan("exploration-workflow", "exploration_rosbag", "configs/rosbag/exploration.yaml", durationSec, []string{spec.ControllerStatusTopic, spec.SetpointOutputTopic, spec.SlamOdomTopic}))
 	if simulationProfile == "mild_disturbance" {
-		plan.GeneratedArtifacts = append(plan.GeneratedArtifacts, ArtifactPlan{HelperID: "exploration-workflow", Kind: "airframe_disturbance_runtime", Path: "p8_airframe_disturbance.toml"})
+		plan.GeneratedArtifacts = append(plan.GeneratedArtifacts, ArtifactPlan{HelperID: "exploration-workflow", Kind: "airframe_disturbance_runtime", Path: "exploration_airframe_disturbance.toml"})
 	}
 	plan.ResultGates = append(plan.ResultGates, ResultGatePlan{
 		HelperID: "exploration-workflow",
@@ -332,9 +332,9 @@ func addExplorationWorkflowExecution(plan *ExecutionPlan, task config.TaskConfig
 func addScanRobustnessWorkflowExecution(plan *ExecutionPlan, task config.TaskConfig, durationSec float64) {
 	spec := DefaultScanRobustnessWorkflowSpec()
 	plan.GeneratedArtifacts = append(plan.GeneratedArtifacts,
-		ArtifactPlan{HelperID: "scan-robustness-workflow", Kind: "p12_runtime_toml", Path: "p12_airframe_disturbance_runtime.toml"},
-		ArtifactPlan{HelperID: "scan-robustness-workflow", Kind: "p12_sensor_runtime_toml", Path: "p12_gazebo_sensor_runtime.toml"},
-		ArtifactPlan{HelperID: "scan-robustness-workflow", Kind: "p12_bridge_override", Path: "p12_bridge_override.yaml"},
+		ArtifactPlan{HelperID: "scan-robustness-workflow", Kind: "scan_robustness_runtime_toml", Path: "scan_robustness_runtime.toml"},
+		ArtifactPlan{HelperID: "scan-robustness-workflow", Kind: "scan_robustness_sensor_runtime_toml", Path: "scan_robustness_gazebo_sensor_runtime.toml"},
+		ArtifactPlan{HelperID: "scan-robustness-workflow", Kind: "scan_robustness_bridge_override", Path: "scan_robustness_bridge_override.yaml"},
 		ArtifactPlan{HelperID: "scan-robustness-workflow", Kind: "airframe_disturbance_probe_script", Path: "airframe_disturbance_probe.py"},
 	)
 	plan.ROSProbes = append(plan.ROSProbes, ROSProbePlan{
@@ -346,7 +346,7 @@ func addScanRobustnessWorkflowExecution(plan *ExecutionPlan, task config.TaskCon
 		RuntimeImage: "images.runtime",
 		Status:       "ported_script_generation",
 	})
-	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlan("scan-robustness-workflow", "p12_airframe_disturbance_rosbag", "configs/rosbag/scan_robustness.yaml", durationSec, []string{spec.FCUStatusTopic, spec.StabilizedScanTopic, spec.DisturbanceStatusTopic}))
+	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlan("scan-robustness-workflow", "scan_robustness_rosbag", "configs/rosbag/scan_robustness.yaml", durationSec, []string{spec.FCUStatusTopic, spec.StabilizedScanTopic, spec.DisturbanceStatusTopic}))
 	plan.ResultGates = append(plan.ResultGates, ResultGatePlan{
 		HelperID: "scan-robustness-workflow",
 		Name:     "airframe_disturbance_gate",

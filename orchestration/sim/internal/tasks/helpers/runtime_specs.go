@@ -10,18 +10,18 @@ import (
 )
 
 const (
-	OfficialIrisWithLidarModel = "/opt/navlab_official_ws/install/ardupilot_gz_description/share/ardupilot_gz_description/models/iris_with_lidar/model.sdf"
-	OfficialGazeboIrisParams   = "/opt/navlab_official_ws/install/ardupilot_sitl/share/ardupilot_sitl/config/default_params/gazebo-iris.parm"
-	P4ControllerContainer      = "navlab-p4-fcu-controller"
-	P4RosbagContainer          = "navlab-p4-rosbag"
-	P5RosbagContainer          = "navlab-p5-rosbag"
-	P6RosbagContainer          = "navlab-p6-rosbag"
-	P6VehicleMarkerContainer   = "navlab-p6-vehicle-markers"
-	P11RosbagContainer         = "navlab-p11-rosbag"
-	P8RosbagContainer          = "navlab-p8-rosbag"
+	OfficialIrisWithLidarModel       = "/opt/navlab_official_ws/install/ardupilot_gz_description/share/ardupilot_gz_description/models/iris_with_lidar/model.sdf"
+	OfficialGazeboIrisParams         = "/opt/navlab_official_ws/install/ardupilot_sitl/share/ardupilot_sitl/config/default_params/gazebo-iris.parm"
+	FCUControllerContainer           = "navlab-fcu-controller"
+	FCURosbagContainer               = "navlab-fcu-rosbag"
+	FrameContractRosbagContainer     = "navlab-frame-contract-rosbag"
+	HoverRosbagContainer             = "navlab-hover-rosbag"
+	HoverVehicleMarkerContainer      = "navlab-hover-vehicle-markers"
+	ScanStabilizationRosbagContainer = "navlab-scan-stabilization-rosbag"
+	ExplorationRosbagContainer       = "navlab-exploration-rosbag"
 )
 
-type P2SensorSpec struct {
+type SensorRuntimeSpec struct {
 	RuntimeConfigPath          string
 	X2VirtualSerialLink        string
 	X2ScanInputTopic           string
@@ -50,8 +50,8 @@ type P2SensorSpec struct {
 	SyntheticFallbackEnabled   bool
 }
 
-func DefaultP2SensorSpec() P2SensorSpec {
-	return P2SensorSpec{
+func DefaultSensorRuntimeSpec() SensorRuntimeSpec {
+	return SensorRuntimeSpec{
 		RuntimeConfigPath:          "artifacts/gazebo_sensor_runtime.toml",
 		X2VirtualSerialLink:        "/tmp/navlab-x2",
 		X2ScanInputTopic:           "/scan",
@@ -81,9 +81,9 @@ func DefaultP2SensorSpec() P2SensorSpec {
 	}
 }
 
-func WriteP2SensorConfig(path string, vendorProfile string, spec P2SensorSpec) error {
+func WriteSensorRuntimeConfig(path string, vendorProfile string, spec SensorRuntimeSpec) error {
 	if spec.RuntimeConfigPath == "" {
-		spec = DefaultP2SensorSpec()
+		spec = DefaultSensorRuntimeSpec()
 	}
 	data := map[string]any{
 		"gazebo_sensor": map[string]any{
@@ -130,21 +130,21 @@ func WriteP2SensorConfig(path string, vendorProfile string, spec P2SensorSpec) e
 	return writeTOML(path, data)
 }
 
-func P2RangefinderProbeScript(spec P2SensorSpec) (string, error) {
+func RangefinderProbeScript(spec SensorRuntimeSpec) (string, error) {
 	if spec.RuntimeConfigPath == "" {
-		spec = DefaultP2SensorSpec()
+		spec = DefaultSensorRuntimeSpec()
 	}
-	return rosProbeScript("navlab_p2_rangefinder_probe", []string{spec.RangefinderRangeTopic, spec.RangefinderStatusTopic}, map[string]any{
+	return rosProbeScript("navlab_rangefinder_probe", []string{spec.RangefinderRangeTopic, spec.RangefinderStatusTopic}, map[string]any{
 		"range_topic":  spec.RangefinderRangeTopic,
 		"status_topic": spec.RangefinderStatusTopic,
 	})
 }
 
-func P2IMUProbeScript(spec P2SensorSpec) (string, error) {
+func IMUProbeScript(spec SensorRuntimeSpec) (string, error) {
 	if spec.RuntimeConfigPath == "" {
-		spec = DefaultP2SensorSpec()
+		spec = DefaultSensorRuntimeSpec()
 	}
-	return rosProbeScript("navlab_p2_imu_probe", []string{spec.IMUOutputTopic}, map[string]any{
+	return rosProbeScript("navlab_imu_probe", []string{spec.IMUOutputTopic}, map[string]any{
 		"topic":                      spec.IMUOutputTopic,
 		"source_route":               spec.IMUSourceRoute,
 		"source_topic":               spec.IMUSourceTopic,
@@ -200,7 +200,7 @@ func DefaultFCUControllerSpec() FCUControllerSpec {
 		ControlRoute:           "official_dds",
 		MAVLinkBootstrap:       "udp:127.0.0.1:14551",
 		OwnerName:              "navlab_fcu_controller",
-		OwnerID:                "p4",
+		OwnerID:                "fcu-controller",
 		FCUStateTopic:          "/navlab/fcu/state",
 		ControllerStatusTopic:  "/navlab/fcu/controller/status",
 		SetpointIntentTopic:    "/navlab/fcu/setpoint/intent",
@@ -240,7 +240,7 @@ func DefaultFCUControllerSpec() FCUControllerSpec {
 	}
 }
 
-func WriteP4RuntimeConfig(path string, spec FCUControllerSpec) error {
+func WriteFCUControllerRuntimeConfig(path string, spec FCUControllerSpec) error {
 	if spec.ControlRoute == "" {
 		spec = DefaultFCUControllerSpec()
 	}
@@ -351,7 +351,7 @@ func DefaultFrameContractSpec() FrameContractSpec {
 	}
 }
 
-func WriteP5RuntimeConfig(path string, spec FrameContractSpec) error {
+func WriteFrameContractRuntimeConfig(path string, spec FrameContractSpec) error {
 	if spec.MapFrameID == "" {
 		spec = DefaultFrameContractSpec()
 	}
@@ -427,7 +427,7 @@ func DefaultSlamHoverSpec() SlamHoverSpec {
 	}
 }
 
-func WriteP6RuntimeConfig(path string, spec SlamHoverSpec) error {
+func WriteHoverRuntimeConfig(path string, spec SlamHoverSpec) error {
 	if spec.SlamOdomTopic == "" {
 		spec = DefaultSlamHoverSpec()
 	}
@@ -487,7 +487,7 @@ func DefaultScanStabilizationSpec() ScanStabilizationSpec {
 	}
 }
 
-func ValidateP11Config(spec ScanStabilizationSpec) []string {
+func ValidateScanStabilizationConfig(spec ScanStabilizationSpec) []string {
 	var blockers []string
 	if spec.Mode != "bounded_2d_projection" {
 		blockers = append(blockers, "scan_stabilization_config_invalid: mode must be bounded_2d_projection")
@@ -499,15 +499,15 @@ func ValidateP11Config(spec ScanStabilizationSpec) []string {
 		blockers = append(blockers, "scan_stabilization_config_invalid: tilt thresholds must be ordered")
 	}
 	if spec.UsesGazeboTruthAsInput {
-		blockers = append(blockers, "P11 must not use Gazebo truth as input")
+		blockers = append(blockers, "scan_stabilization must not use Gazebo truth as input")
 	}
 	if spec.ScanStabilizationClaim != "evaluated" {
-		blockers = append(blockers, "P11 scan_stabilization_claim must be evaluated")
+		blockers = append(blockers, "scan_stabilization_claim must be evaluated")
 	}
 	return blockers
 }
 
-func WriteP11RuntimeConfig(path string, spec ScanStabilizationSpec) error {
+func WriteScanStabilizationRuntimeConfig(path string, spec ScanStabilizationSpec) error {
 	if spec.Mode == "" {
 		spec = DefaultScanStabilizationSpec()
 	}
@@ -521,14 +521,14 @@ func StabilizationStatusProbeScript(spec ScanStabilizationSpec) (string, error) 
 	if spec.Mode == "" {
 		spec = DefaultScanStabilizationSpec()
 	}
-	return rosProbeScript("navlab_p11_status_probe", []string{spec.StatusTopic}, map[string]any{"status_topic": spec.StatusTopic})
+	return rosProbeScript("navlab_scan_stabilization_status_probe", []string{spec.StatusTopic}, map[string]any{"status_topic": spec.StatusTopic})
 }
 
 func AirframeDisturbanceProbeScript(spec ScanRobustnessWorkflowSpec) (string, error) {
 	if spec.Profile == "" {
 		spec = DefaultScanRobustnessWorkflowSpec()
 	}
-	return rosProbeScript("navlab_p12_airframe_disturbance_probe", []string{spec.DisturbanceStatusTopic}, map[string]any{
+	return rosProbeScript("navlab_airframe_disturbance_probe", []string{spec.DisturbanceStatusTopic}, map[string]any{
 		"status_topic":      spec.DisturbanceStatusTopic,
 		"required_profiles": spec.RequiredProfiles,
 		"profile":           spec.Profile,
@@ -563,7 +563,7 @@ func DefaultExplorationWorkflowSpec() ExplorationWorkflowSpec {
 	}
 }
 
-func WriteP8RuntimeConfig(path string, spec ExplorationWorkflowSpec) error {
+func WriteExplorationRuntimeConfig(path string, spec ExplorationWorkflowSpec) error {
 	if spec.Strategy == "" {
 		spec = DefaultExplorationWorkflowSpec()
 	}
@@ -601,7 +601,7 @@ func DefaultScanRobustnessWorkflowSpec() ScanRobustnessWorkflowSpec {
 	}
 }
 
-func WriteP12RuntimeConfig(path string, spec ScanRobustnessWorkflowSpec) error {
+func WriteScanRobustnessRuntimeConfig(path string, spec ScanRobustnessWorkflowSpec) error {
 	if spec.Profile == "" {
 		spec = DefaultScanRobustnessWorkflowSpec()
 	}
@@ -612,8 +612,8 @@ func WriteP12RuntimeConfig(path string, spec ScanRobustnessWorkflowSpec) error {
 	})
 }
 
-func WriteP12BridgeOverride(path string, imuRawTopic string) error {
-	if err := WriteP1BridgeOverride(path); err != nil {
+func WriteScanRobustnessBridgeOverride(path string, imuRawTopic string) error {
+	if err := WriteBridgeOverride(path); err != nil {
 		return err
 	}
 	content, err := os.ReadFile(path)

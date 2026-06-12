@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	SlamBackendContainer = "navlab-p3-slam-backend"
+	SlamBackendContainer = "navlab-slam-backend"
 	OfficialIrisLidarZM  = "0.075077"
 )
 
@@ -64,7 +64,7 @@ func DefaultSlamRuntimeSpec() SlamRuntimeSpec {
 	}
 }
 
-func WriteP3SlamRuntimeConfig(path string, spec SlamRuntimeSpec) error {
+func WriteSlamRuntimeConfig(path string, spec SlamRuntimeSpec) error {
 	if spec.Backend == "" {
 		spec = DefaultSlamRuntimeSpec()
 	}

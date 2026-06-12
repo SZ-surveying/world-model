@@ -1,7 +1,0 @@
-/scan
-/scan_features
-/scan_nearest_point
-/sim/markers
-/sim/log
-/sim/uav_pose
-/planner/cmd_vel

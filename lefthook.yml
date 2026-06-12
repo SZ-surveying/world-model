@@ -33,15 +33,15 @@ commit-msg:
 pre-commit:
   parallel: true
   commands:
-    # Python formatting check
+    # Python formatting check for navlab runtime and command scripts.
     python-format:
-      glob: "**/*.py"
+      glob: "{navlab,scripts}/**/*.py"
       run: ./scripts/quality/format-python.sh --scope staged
       stage_fixed: true
 
     # Fast Python checks. Integration-heavy checks run in CI.
     python-check:
-      glob: "**/*.py"
+      glob: "{navlab,scripts}/**/*.py"
       run: PYTHON_CHECK_PROFILE=pre-commit ./scripts/quality/check-python.sh
 
     # Go formatting check
@@ -54,3 +54,14 @@ pre-commit:
     go-check:
       glob: "orchestration/sim/**/*.go"
       run: GO_CHECK_PROFILE=pre-commit ./scripts/quality/check-go.sh
+
+    # Rust formatting check
+    rust-format:
+      glob: "orchestration/real/**/*.rs"
+      run: ./scripts/quality/format-rust.sh --scope staged
+      stage_fixed: true
+
+    # Fast Rust checks. Integration-heavy checks run manually or in CI.
+    rust-check:
+      glob: "orchestration/real/**/*.rs"
+      run: RUST_CHECK_PROFILE=pre-commit ./scripts/quality/check-rust.sh

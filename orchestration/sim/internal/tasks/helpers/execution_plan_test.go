@@ -40,25 +40,25 @@ func TestBuildExecutionPlanIncludesDeepRuntimeHelpers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertHasService(t, plan, "p4_controller")
+	assertHasService(t, plan, "fcu_controller")
 	assertHasProbe(t, plan, "rangefinder_probe")
 	assertHasProbe(t, plan, "frame_contract_probe")
 	assertHasProbe(t, plan, "slam_hover_probe")
 	assertHasProbe(t, plan, "stabilization_status_probe")
-	assertHasRosbag(t, plan, "p11_scan_stabilization_rosbag")
-	assertHasRosbag(t, plan, "p12_airframe_disturbance_rosbag")
+	assertHasRosbag(t, plan, "scan_stabilization_rosbag")
+	assertHasRosbag(t, plan, "scan_robustness_rosbag")
 	assertHasGate(t, plan, "airframe_disturbance_gate")
 }
 
 func TestRuntimeSpecsGenerateScriptsAndConfigs(t *testing.T) {
 	dir := t.TempDir()
-	if err := WriteP2SensorConfig(filepath.Join(dir, "sensor.toml"), "vendor.yaml", DefaultP2SensorSpec()); err != nil {
+	if err := WriteSensorRuntimeConfig(filepath.Join(dir, "sensor.toml"), "vendor.yaml", DefaultSensorRuntimeSpec()); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteP4RuntimeConfig(filepath.Join(dir, "fcu.toml"), DefaultFCUControllerSpec()); err != nil {
+	if err := WriteFCUControllerRuntimeConfig(filepath.Join(dir, "fcu.toml"), DefaultFCUControllerSpec()); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteP11RuntimeConfig(filepath.Join(dir, "p11.toml"), DefaultScanStabilizationSpec()); err != nil {
+	if err := WriteScanStabilizationRuntimeConfig(filepath.Join(dir, "scan_stabilization.toml"), DefaultScanStabilizationSpec()); err != nil {
 		t.Fatal(err)
 	}
 	script, err := FCUControllerRuntimeScript(DefaultFCUControllerSpec(), 90)
@@ -75,25 +75,25 @@ func TestRuntimeSpecsGenerateScriptsAndConfigs(t *testing.T) {
 	if !strings.Contains(probe, "/tf_static") {
 		t.Fatalf("frame probe script missing tf_static topic:\n%s", probe)
 	}
-	for _, name := range []string{"sensor.toml", "fcu.toml", "p11.toml"} {
+	for _, name := range []string{"sensor.toml", "fcu.toml", "scan_stabilization.toml"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Fatalf("expected generated %s: %v", name, err)
 		}
 	}
 }
 
-func TestValidateP11ConfigFindsOrderedThresholdAndTruthBlockers(t *testing.T) {
+func TestValidateScanStabilizationConfigFindsOrderedThresholdAndTruthBlockers(t *testing.T) {
 	spec := DefaultScanStabilizationSpec()
 	spec.InputScanTopic = "/scan"
 	spec.OutputScanTopic = "/scan"
 	spec.CompensationTiltDeg = 1
 	spec.UsesGazeboTruthAsInput = true
 
-	blockers := ValidateP11Config(spec)
+	blockers := ValidateScanStabilizationConfig(spec)
 	for _, expected := range []string{
 		"scan_stabilization_config_invalid: input and output topics must differ",
 		"scan_stabilization_config_invalid: tilt thresholds must be ordered",
-		"P11 must not use Gazebo truth as input",
+		"scan_stabilization must not use Gazebo truth as input",
 	} {
 		if !contains(blockers, expected) {
 			t.Fatalf("expected blocker %q in %#v", expected, blockers)
@@ -101,9 +101,9 @@ func TestValidateP11ConfigFindsOrderedThresholdAndTruthBlockers(t *testing.T) {
 	}
 }
 
-func TestWriteP12BridgeOverrideRewritesIMUTopic(t *testing.T) {
+func TestWriteScanRobustnessBridgeOverrideRewritesIMUTopic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bridge.yaml")
-	if err := WriteP12BridgeOverride(path, "/imu/raw"); err != nil {
+	if err := WriteScanRobustnessBridgeOverride(path, "/imu/raw"); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(path)

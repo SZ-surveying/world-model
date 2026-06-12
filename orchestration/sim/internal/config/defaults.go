@@ -15,7 +15,6 @@ func applySimulationDefaults(cfg *ProjectConfig) {
 	cfg.Slam.Backend = defaultString(cfg.Slam.Backend, "cartographer")
 	cfg.Slam.RuntimeConfig = defaultString(cfg.Slam.RuntimeConfig, "/workspace/navlab/config.toml")
 
-	cfg.Official.RosbagProfile = defaultString(cfg.Official.RosbagProfile, "profiles/navlab-official-baseline-rosbag-topics.txt")
 	cfg.Official.DDSEnable = defaultString(cfg.Official.DDSEnable, "1")
 	cfg.Official.DDSDomainID = defaultString(cfg.Official.DDSDomainID, cfg.RosDomainID)
 	cfg.Official.RMWImplementation = defaultString(cfg.Official.RMWImplementation, "rmw_cyclonedds_cpp")
@@ -34,14 +33,13 @@ func applySimulationDefaults(cfg *ProjectConfig) {
 	cfg.Official.GazeboBringupMode = defaultString(cfg.Official.GazeboBringupMode, "navlab_custom_bringup")
 	cfg.Official.ExternalNavRoute = defaultString(cfg.Official.ExternalNavRoute, "mavlink_fallback")
 
-	cfg.OfficialMazeX2.RosbagProfile = defaultString(cfg.OfficialMazeX2.RosbagProfile, "profiles/navlab-official-maze-x2-rosbag-topics.txt")
 	cfg.OfficialMazeX2.WorldSource = defaultString(cfg.OfficialMazeX2.WorldSource, "official_iris_maze")
 	cfg.OfficialMazeX2.VehicleModelSource = defaultString(cfg.OfficialMazeX2.VehicleModelSource, "official_iris_with_lidar")
 	cfg.OfficialMazeX2.GazeboLidarTopic = defaultString(cfg.OfficialMazeX2.GazeboLidarTopic, "/lidar")
 	cfg.OfficialMazeX2.X2ScanInputTopic = defaultString(cfg.OfficialMazeX2.X2ScanInputTopic, "/lidar")
 	cfg.OfficialMazeX2.X2ScanTopic = defaultString(cfg.OfficialMazeX2.X2ScanTopic, "/scan")
 	cfg.OfficialMazeX2.X2StatusTopic = defaultString(cfg.OfficialMazeX2.X2StatusTopic, "/sim/x2/status")
-	cfg.OfficialMazeX2.X2VirtualSerialLink = defaultString(cfg.OfficialMazeX2.X2VirtualSerialLink, "/tmp/navlab_p1_x2")
+	cfg.OfficialMazeX2.X2VirtualSerialLink = defaultString(cfg.OfficialMazeX2.X2VirtualSerialLink, "/tmp/navlab_official_maze_x2")
 	cfg.OfficialMazeX2.AltitudeControlClaim = defaultString(cfg.OfficialMazeX2.AltitudeControlClaim, "not_evaluated")
 	cfg.OfficialMazeX2.HoverClaim = defaultString(cfg.OfficialMazeX2.HoverClaim, "not_evaluated")
 	cfg.OfficialMazeX2.CartographerLaunch = defaultString(cfg.OfficialMazeX2.CartographerLaunch, cfg.Official.CartographerLaunch)
@@ -61,7 +59,6 @@ func applySimulationDefaults(cfg *ProjectConfig) {
 }
 
 func defaultRangefinderIMU(cfg *RangefinderIMUConfig) {
-	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "profiles/navlab-rangefinder-imu-rosbag-topics.txt")
 	cfg.WorldSource = defaultString(cfg.WorldSource, "official_iris_maze")
 	cfg.VehicleModelSource = defaultString(cfg.VehicleModelSource, "official_iris_with_lidar")
 	cfg.ModelOverlaySource = defaultString(cfg.ModelOverlaySource, "official_iris_with_lidar_plus_down_rangefinder")
@@ -69,7 +66,7 @@ func defaultRangefinderIMU(cfg *RangefinderIMUConfig) {
 	cfg.X2ScanInputTopic = defaultString(cfg.X2ScanInputTopic, "/lidar")
 	cfg.X2ScanTopic = defaultString(cfg.X2ScanTopic, "/scan")
 	cfg.X2StatusTopic = defaultString(cfg.X2StatusTopic, "/sim/x2/status")
-	cfg.X2VirtualSerialLink = defaultString(cfg.X2VirtualSerialLink, "/tmp/navlab_p2_x2")
+	cfg.X2VirtualSerialLink = defaultString(cfg.X2VirtualSerialLink, "/tmp/navlab_sim_x2")
 	cfg.RangefinderScanIdealTopic = defaultString(cfg.RangefinderScanIdealTopic, "/rangefinder/down/scan_ideal")
 	cfg.RangefinderRangeTopic = defaultString(cfg.RangefinderRangeTopic, "/rangefinder/down/range")
 	cfg.RangefinderStatusTopic = defaultString(cfg.RangefinderStatusTopic, "/rangefinder/down/status")
@@ -99,7 +96,6 @@ func defaultRangefinderIMU(cfg *RangefinderIMUConfig) {
 }
 
 func defaultSlamBackend(cfg *SlamBackendConfig) {
-	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "profiles/navlab-slam-backend-rosbag-topics.txt")
 	cfg.Backend = defaultString(cfg.Backend, "cartographer")
 	cfg.LaunchPackage = defaultString(cfg.LaunchPackage, "navlab_slam_bringup")
 	cfg.LaunchFile = defaultString(cfg.LaunchFile, "navlab_slam_bringup.launch.py")
@@ -129,13 +125,12 @@ func defaultSlamBackend(cfg *SlamBackendConfig) {
 }
 
 func defaultFCUController(cfg *FCUControllerConfig) {
-	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "profiles/navlab-fcu-controller-rosbag-topics.txt")
 	cfg.ControlRoute = defaultString(cfg.ControlRoute, "mavlink_bootstrap_plus_dds_cmd_vel")
 	cfg.MAVLinkBootstrapEndpoint = defaultString(cfg.MAVLinkBootstrapEndpoint, "udp:127.0.0.1:14550")
 	cfg.MAVLinkBootstrapSourceSystem = defaultInt(cfg.MAVLinkBootstrapSourceSystem, 246)
 	cfg.MAVLinkBootstrapSourceComponent = defaultInt(cfg.MAVLinkBootstrapSourceComponent, 190)
 	cfg.OwnerName = defaultString(cfg.OwnerName, "navlab_fcu_controller")
-	cfg.OwnerID = defaultString(cfg.OwnerID, "navlab-p4-fcu-controller")
+	cfg.OwnerID = defaultString(cfg.OwnerID, "navlab-fcu-controller")
 	cfg.FCUStateTopic = defaultString(cfg.FCUStateTopic, "/navlab/fcu/state")
 	cfg.ControllerStatusTopic = defaultString(cfg.ControllerStatusTopic, "/navlab/fcu/controller/status")
 	cfg.SetpointIntentTopic = defaultString(cfg.SetpointIntentTopic, "/navlab/fcu/setpoint/intent")
@@ -167,7 +162,6 @@ func defaultFCUController(cfg *FCUControllerConfig) {
 }
 
 func defaultFrameContract(cfg *FrameContractConfig) {
-	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "profiles/navlab-frame-contract-rosbag-topics.txt")
 	cfg.RequiredFrames = defaultStrings(cfg.RequiredFrames, []string{"map", "odom", "base_link", "imu_link", "base_scan", "rangefinder_down_frame"})
 	cfg.MapFrameID = defaultString(cfg.MapFrameID, "map")
 	cfg.OdomFrameID = defaultString(cfg.OdomFrameID, "odom")
@@ -200,7 +194,6 @@ func defaultFrameContract(cfg *FrameContractConfig) {
 }
 
 func defaultSlamHover(cfg *SlamHoverConfig) {
-	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "profiles/navlab-slam-hover-rosbag-topics.txt")
 	cfg.SlamOdomTopic = defaultString(cfg.SlamOdomTopic, "/slam/odom")
 	cfg.SlamStatusTopic = defaultString(cfg.SlamStatusTopic, "/navlab/slam/status")
 	cfg.ExternalNavStatusTopic = defaultString(cfg.ExternalNavStatusTopic, "/external_nav/status")
@@ -236,7 +229,6 @@ func defaultSlamHover(cfg *SlamHoverConfig) {
 }
 
 func defaultMotionGate(cfg *MotionGateConfig) {
-	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "profiles/navlab-motion-gate-rosbag-topics.txt")
 	cfg.SlamOdomTopic = defaultString(cfg.SlamOdomTopic, "/slam/odom")
 	cfg.SlamStatusTopic = defaultString(cfg.SlamStatusTopic, "/navlab/slam/status")
 	cfg.ExternalNavStatusTopic = defaultString(cfg.ExternalNavStatusTopic, "/external_nav/status")
@@ -285,7 +277,6 @@ func defaultMotionGate(cfg *MotionGateConfig) {
 }
 
 func defaultExplorationGate(cfg *ExplorationGateConfig) {
-	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "profiles/navlab-exploration-gate-rosbag-topics.txt")
 	cfg.Strategy = defaultString(cfg.Strategy, "frontier_lite")
 	cfg.SlamOdomTopic = defaultString(cfg.SlamOdomTopic, "/slam/odom")
 	cfg.SlamStatusTopic = defaultString(cfg.SlamStatusTopic, "/navlab/slam/status")
@@ -337,7 +328,6 @@ func defaultExplorationGate(cfg *ExplorationGateConfig) {
 }
 
 func defaultScanIntegrityGate(cfg *ScanIntegrityGateConfig) {
-	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "profiles/navlab-scan-integrity-gate-rosbag-topics.txt")
 	cfg.RawScanTopic = defaultString(cfg.RawScanTopic, "/navlab/x2/scan_raw")
 	cfg.NormalizedScanTopic = defaultString(cfg.NormalizedScanTopic, "/navlab/x2/scan_normalized")
 	cfg.ValidatedScanTopic = defaultString(cfg.ValidatedScanTopic, "/scan")
@@ -405,9 +395,8 @@ func defaultScanStabilization(cfg *ScanStabilizationConfig) {
 }
 
 func defaultScanStabilizationGate(cfg *ScanStabilizationGateConfig) {
-	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "profiles/navlab-scan-stabilization-gate-rosbag-topics.txt")
-	cfg.MotionProfile = defaultString(cfg.MotionProfile, "p9_representative_replay")
-	cfg.BaselineMode = defaultString(cfg.BaselineMode, "p10_drop_only")
+	cfg.MotionProfile = defaultString(cfg.MotionProfile, "representative_replay")
+	cfg.BaselineMode = defaultString(cfg.BaselineMode, "drop_only")
 	cfg.CandidateMode = defaultString(cfg.CandidateMode, "bounded_2d_projection")
 	cfg.RawScanTopic = defaultString(cfg.RawScanTopic, "/navlab/x2/scan_raw")
 	cfg.NormalizedScanTopic = defaultString(cfg.NormalizedScanTopic, "/navlab/x2/scan_normalized")
@@ -442,9 +431,8 @@ func defaultAirframeDisturbance(cfg *AirframeDisturbanceConfig) {
 }
 
 func defaultAirframeDisturbanceGate(cfg *AirframeDisturbanceGateConfig) {
-	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "profiles/navlab-airframe-disturbance-gate-rosbag-topics.txt")
-	cfg.MotionProfile = defaultString(cfg.MotionProfile, "p9_representative_replay")
-	cfg.ScanContract = defaultString(cfg.ScanContract, "p11_stabilized_scan")
+	cfg.MotionProfile = defaultString(cfg.MotionProfile, "representative_replay")
+	cfg.ScanContract = defaultString(cfg.ScanContract, "stabilized_scan")
 	cfg.ProfileSet = defaultStrings(cfg.ProfileSet, []string{"clean", "mild_bias", "nominal_realistic", "esc_lag", "vibration"})
 	cfg.RequiredProfiles = defaultStrings(cfg.RequiredProfiles, []string{"clean", "mild_bias", "nominal_realistic", "esc_lag", "vibration"})
 	cfg.FaultProfiles = defaultStrings(cfg.FaultProfiles, []string{"invalid_config"})

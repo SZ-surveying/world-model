@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CACHE_DIR="${UV_CACHE_DIR:-$ROOT_DIR/.cache/uv}"
 SCOPE="staged"
-PYTHON_PATH_PATTERN='^(navlab|orchestration|scripts/command|scripts/ops)(/.*)?\.py$'
+PYTHON_PATH_PATTERN='^(navlab|scripts/command|scripts/ops)(/.*)?\.py$'
 
 usage() {
   cat <<'EOF'
@@ -54,7 +54,7 @@ list_files() {
     all)
       (
         cd "$ROOT_DIR"
-        rg --files navlab orchestration scripts -g '*.py'
+        rg --files navlab scripts -g '*.py'
       )
       ;;
     *)
@@ -69,7 +69,7 @@ run_ruff() {
     cd "$ROOT_DIR"
     mkdir -p "$CACHE_DIR"
     export UV_CACHE_DIR="$CACHE_DIR"
-    uv run --project "$ROOT_DIR/orchestration" --no-sync ruff "$@"
+    uv run --project "$ROOT_DIR/navlab" --no-sync --all-groups ruff "$@"
   )
 }
 

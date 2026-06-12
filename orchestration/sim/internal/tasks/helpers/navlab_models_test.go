@@ -18,15 +18,15 @@ func (runner *fakeRunner) Run(ctx context.Context, command string, args ...strin
 	return "ok", runner.err
 }
 
-func TestWriteP1BridgeOverrideAndVendorProfile(t *testing.T) {
+func TestWriteBridgeOverrideAndVendorProfile(t *testing.T) {
 	dir := t.TempDir()
 	bridge := filepath.Join(dir, "bridge.yaml")
 	vendor := filepath.Join(dir, "vendor.yaml")
-	if err := WriteP1BridgeOverride(bridge); err != nil {
-		t.Fatalf("WriteP1BridgeOverride() error = %v", err)
+	if err := WriteBridgeOverride(bridge); err != nil {
+		t.Fatalf("WriteBridgeOverride() error = %v", err)
 	}
-	if err := WriteP1VendorProfile(vendor, "/tmp/x2"); err != nil {
-		t.Fatalf("WriteP1VendorProfile() error = %v", err)
+	if err := WriteVendorProfile(vendor, "/tmp/x2"); err != nil {
+		t.Fatalf("WriteVendorProfile() error = %v", err)
 	}
 	bridgeData, _ := os.ReadFile(bridge)
 	vendorData, _ := os.ReadFile(vendor)
