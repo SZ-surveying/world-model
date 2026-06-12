@@ -1,0 +1,23 @@
+[orchestration]
+family = "real"
+implementation = "rust"
+contract_version = "navlab.orchestration.v1"
+
+[runtime]
+mode = "real"
+backend = "process"
+
+[paths]
+workspace_root = "../.."
+artifact_root = "../../artifacts/real"
+task_config_dir = "configs/tasks"
+
+[sources]
+scan_source_claim = "real_lidar_driver"
+scan_source_topic = "/scan"
+fcu_source_claim = "real_serial_mavlink_or_ardupilot_dds_bridge"
+imu_source_claim = "real_fcu_or_sensor"
+rangefinder_source_claim = "real_or_not_required"
+slam_source_claim = "real_slam"
+required_real_topics = ["/scan", "/tf", "/tf_static", "/slam/odom", "/ap/v1/status", "/ap/v1/pose/filtered"]
+forbidden_simulation_input_topics = ["/gazebo/*", "/scan_ideal", "/sim/x2/status", "/rangefinder/down/scan_ideal"]

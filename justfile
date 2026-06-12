@@ -4,6 +4,7 @@ set dotenv-filename := ".env"
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 orchestration_cmd := "uv run --project orchestration python orchestration/main.py"
+sim_cmd := "cd orchestration/sim && go run ./cmd/navlab-sim"
 command_cmd := "uv run --project scripts/command python scripts/command/main.py"
 
 default:
@@ -13,7 +14,23 @@ default:
 
 # Build orchestration runtime images.
 navlab-build kind='all' *args='':
-    {{orchestration_cmd}} build {{kind}} {{args}}
+    {{sim_cmd}} build {{kind}} {{args}}
+
+# Check Go sim orchestration.
+check-go *args='':
+    ./scripts/quality/check-go.sh {{args}}
+
+# Format Go sim orchestration.
+format-go *args='':
+    ./scripts/quality/format-go.sh {{args}}
+
+# Check Python projects.
+check-python *args='':
+    ./scripts/quality/check-python.sh {{args}}
+
+# Format Python projects.
+format-python *args='':
+    ./scripts/quality/format-python.sh {{args}}
 
 # Check the active runtime. Set NAVLAB_RUNTIME_BACKEND/MODE for real preflight.
 navlab-doctor *args='':

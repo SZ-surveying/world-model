@@ -16,7 +16,7 @@ core
 .sim_ros2_overlay/
 .vscode/
 
-artifacts/
+/artifacts/
 install/
 log/
 scripts/command/logs

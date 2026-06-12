@@ -1,0 +1,99 @@
+session_id = "navlab_companion_sitl_gazebo"
+ros_domain_id = "85"
+gazebo_world = "/workspace/worlds/navlab_iq_quad_figure8.sdf"
+rosbag_profile = "profiles/navlab-rosbag-topics.txt"
+
+[router]
+image = "remote-sitl-lab/mavlink-router:stage1-4ee567d97525"
+downstream_endpoints = "127.0.0.1:14552"
+listen = "0.0.0.0:14550"
+tcp_port = "5760"
+
+[orchestration]
+family = "sim"
+implementation = "go"
+contract_version = "navlab.orchestration.v1"
+
+[orchestration.runtime]
+mode = "simulation"
+backend = "docker"
+fail_on_missing_backend_config = true
+fail_on_mode_violation = true
+
+[orchestration.runtime.docker]
+workspace_container_path = "/workspace"
+
+[paths]
+workspace_root = "../.."
+artifact_root = "../../artifacts/sim"
+task_config_dir = "configs/tasks"
+
+[navlab.images]
+tag_strategy = "latest"
+
+[navlab.images.companion]
+dockerfile = "docker/Dockerfile.companion"
+context = "."
+target = "navlab-companion"
+repository = "world-model/navlab-companion"
+
+[navlab.images.slam]
+dockerfile = "docker/Dockerfile.slam"
+context = "."
+target = "navlab-slam-cartographer"
+repository = "world-model/navlab-slam-cartographer"
+
+[navlab.images.gazebo_sensor]
+dockerfile = "docker/Dockerfile.gazebo-sensor"
+context = "."
+target = "navlab-gazebo-sensor"
+repository = "world-model/navlab-gazebo-sensor"
+
+[navlab.images.official_baseline]
+dockerfile = "docker/Dockerfile.official-baseline"
+context = "."
+target = "navlab-official-baseline"
+repository = "world-model/navlab-official-baseline"
+
+[landing]
+enabled = true
+default_policy = "land_in_place"
+hover_policy = "land_in_place"
+exploration_policy = "return_home_then_land"
+scan_robustness_policy = "land_in_place"
+landing_status_topic = "/navlab/landing/status"
+landing_intent_topic = "/navlab/landing/intent"
+home_source = "post_takeoff_hover_pose"
+home_radius_m = 0.35
+pre_land_hold_sec = 2.0
+max_return_home_duration_sec = 45.0
+max_landing_duration_sec = 35.0
+max_descent_rate_mps = 0.6
+touchdown_altitude_m = 0.12
+touchdown_vertical_speed_mps = 0.08
+require_disarm = true
+require_motors_safe = true
+uses_gazebo_truth_as_input = false
+
+[sitl]
+image = "remote-sitl-lab/ardupilot-sitl:stage1-f10500ae45aa"
+model = "JSON"
+speedup = "1"
+instance = "0"
+home = ""
+upstream_endpoint = "mavlink-router:14550"
+router_only = "false"
+extra_args = ["--defaults", "/workspace/profiles/navlab-sitl-external-nav.parm"]
+
+[sensor]
+scan_source = "x2_virtual_serial"
+
+[slam]
+autostart = true
+backend = "cartographer"
+runtime_config = "/workspace/navlab/config.toml"
+
+[official_baseline]
+dds_domain_id = "0"
+gazebo_bringup_mode = "official_gz_bringup"
+external_nav_route = "official_dds"

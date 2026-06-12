@@ -4,7 +4,7 @@ import functools
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, cast
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -12,7 +12,6 @@ from rich.console import Console
 from navlab.common.logging import init_logger
 from navlab.real.companion.nodes.motor_debug import build_motor_debug_plan
 from src.configs.project_config import init_project_config
-from src.images import ImageKind, run_image_build
 from src.tasks.built_in.motor_debug import MotorDebugTaskConfig
 from src.tasks.registry import TaskRegistry
 from src.workflows.real.common_doctor import run_real_common_doctor
@@ -60,21 +59,6 @@ def with_runtime_init(func: Callable[..., object] | None = None) -> Callable[...
     if func is None:
         return decorator
     return decorator(func)
-
-
-@app.command("build")
-@with_runtime_init
-def image_build_command(
-    kind: Annotated[
-        str,
-        typer.Argument(help="Image to build: companion, slam, gazebo-sensor, official-baseline, or all"),
-    ] = "all",
-    tag: Annotated[
-        str | None,
-        typer.Option("--tag", help="Override the configured NavLab image tag strategy"),
-    ] = None,
-) -> None:
-    raise typer.Exit(run_image_build(kind=cast(ImageKind, kind), tag=tag, console=console))
 
 
 @app.command("doctor")
@@ -346,7 +330,9 @@ def run_task_command(
                     live=live,
                     live_profiles=live_profiles,
                 )
-                console.print("[yellow]Real dry run stopped after preflight, prepare, common doctor, and task doctor.[/yellow]")
+                console.print(
+                    "[yellow]Real dry run stopped after preflight, prepare, common doctor, and task doctor.[/yellow]"
+                )
                 raise typer.Exit(0)
             safety = _operator_safety_confirmation(
                 manual_takeover=manual_takeover_confirmed,
@@ -377,55 +363,13 @@ def run_task_command(
         console.print("[red]motor-debug is only supported with process+real runtime.[/red]")
         raise typer.Exit(20)
 
-    if dry_run:
-        _print_run_dry_run(
-            task_name=normalized,
-            backend_mode=backend_mode,
-            duration_sec=duration_sec,
-            orchestration_config=orchestration_config,
-            task_config=task_config,
-            simulation_profile=simulation_profile,
-            live=live,
-            live_profiles=live_profiles,
-        )
-        raise typer.Exit(0)
-    if backend_mode != ("docker", "simulation"):
-        console.print("[red]Unsupported runtime run combination:[/red] " f"{backend_mode[0]}+{backend_mode[1]}")
+    if backend_mode == ("docker", "simulation"):
+        console.print("[red]Python simulation tasks have been retired.[/red]")
+        console.print("Use orchestration/sim/cmd/navlab-sim for hover, exploration, and scan-robustness.")
         raise typer.Exit(20)
-
-    if normalized == "scan-robustness":
-        profiles = (
-            None if live_profiles is None else tuple(item.strip() for item in live_profiles.split(",") if item.strip())
-        )
-        if simulation_profile is not None:
-            console.print("[red]--simulation-profile is only valid for hover and exploration[/red]")
-            raise typer.Exit(2)
-        task = TaskRegistry.create(normalized)
-        raise typer.Exit(
-            task.run(
-                config_path=orchestration_config,
-                task_config_path=task_config,
-                duration_sec=duration_sec,
-                live_replay=live,
-                live_profiles=profiles,
-                console=console,
-            )
-        )
-
-    if live is not None or live_profiles is not None:
-        console.print("[red]--live and --live-profiles are only valid for scan-robustness[/red]")
-        raise typer.Exit(2)
-
-    task = TaskRegistry.create(normalized)
-    raise typer.Exit(
-        task.run(
-            config_path=orchestration_config,
-            task_config_path=task_config,
-            duration_sec=duration_sec,
-            simulation_profile=simulation_profile,
-            console=console,
-        )
-    )
+    if backend_mode != ("docker", "simulation"):
+        console.print(f"[red]Unsupported runtime run combination:[/red] {backend_mode[0]}+{backend_mode[1]}")
+        raise typer.Exit(20)
 
 
 def _print_run_dry_run(
@@ -534,9 +478,7 @@ def _run_real_prepare_common_doctor_chain(
 
 
 def _warn_real_run_interrupted(task_name: str) -> None:
-    console.print(
-        "[yellow]WARN: real run interrupted by operator; stopping prepare services before exit.[/yellow]"
-    )
+    console.print("[yellow]WARN: real run interrupted by operator; stopping prepare services before exit.[/yellow]")
     console.print(f"[yellow]Interrupted task:[/yellow] {task_name}")
 
 

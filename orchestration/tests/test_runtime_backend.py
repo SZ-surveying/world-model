@@ -303,7 +303,7 @@ def test_workspace_path_mapper_rejects_process_container_only_path(tmp_path: Pat
         mapper.backend_path(Path("/workspace/profiles/topics.txt"))
 
 
-def test_load_runtime_backend_config_defaults_to_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_runtime_backend_config_defaults_to_process_real(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config_file = tmp_path / "config.toml"
     config_file.write_text("", encoding="utf-8")
     monkeypatch.delenv("NAVLAB_RUNTIME_BACKEND", raising=False)
@@ -312,11 +312,11 @@ def test_load_runtime_backend_config_defaults_to_docker(tmp_path: Path, monkeypa
     init_project_config(config_file)
     config = load_project_config().runtime_backend
 
-    assert config.backend.value == "docker"
+    assert config.backend.value == "process"
     assert config.backend.source == "default"
-    assert config.mode.value == "simulation"
+    assert config.mode.value == "real"
     assert config.mode.source == "default"
-    assert config.docker.workspace_container_path.value == "/workspace"
+    assert config.process.workspace_host_path == load_project_config().paths.lab_root
     assert config.real_sources.scan_source_claim.value == "real_lidar_driver"
     assert "/scan" in config.real_sources.required_real_topics
 
@@ -412,7 +412,6 @@ def test_real_mode_blocks_simulation_overlay_and_official_baseline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from src import host
-    from src.tasks.helpers.sensors import write_p2_model_overlay
 
     config_file = tmp_path / "real.toml"
     config_file.write_text(
@@ -434,8 +433,6 @@ require_explicit_services = false
         artifact_dir=tmp_path / "artifact",
     )
 
-    with pytest.raises(RuntimeModeViolationError, match="runtime_mode_violation:sdf_overlay_requested"):
-        write_p2_model_overlay(config, tmp_path / "overlay.sdf")
     with pytest.raises(RuntimeModeViolationError, match="runtime_mode_violation:official_baseline_requested"):
         host.start_official_baseline_container(config)
 
@@ -606,8 +603,7 @@ def test_real_preflight_dependency_probe_checks_host_real_hover_chain(monkeypatc
     assert probe.summary["required_python_modules"]["navlab.sim.companion.runtime.cli"] is True
     assert probe.summary["ros_distro"] == "navlab_missing_ros_distro"
     assert (
-        probe.summary["required_ros_packages"]["mavros"]["error"]
-        == "ros2_distro_not_found:navlab_missing_ros_distro"
+        probe.summary["required_ros_packages"]["mavros"]["error"] == "ros2_distro_not_found:navlab_missing_ros_distro"
     )
     assert "required_command_missing:ros2" in probe.blockers
     assert "required_process_service_missing:slam" in probe.blockers
@@ -1041,8 +1037,21 @@ def test_docker_backend_run_probe_uses_probe_spec_image_network_and_volume(tmp_p
 def test_host_ros_shell_capture_uses_probe_spec(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from src import host
 
+    config_file = tmp_path / "simulation.toml"
+    config_file.write_text(
+        """
+[orchestration.runtime]
+fail_on_mode_violation = true
+
+[orchestration.runtime.docker]
+workspace_container_path = "/workspace"
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAVLAB_RUNTIME_BACKEND", "docker")
+    monkeypatch.setenv("NAVLAB_RUNTIME_MODE", "simulation")
     config = RunConfig.from_config(
-        config_path="orchestration/config.simulation.toml",
+        config_path=config_file,
         duration_sec=45.0,
         run_id="20260608_000000",
         artifact_dir=tmp_path,
@@ -1075,54 +1084,3 @@ def test_host_ros_shell_capture_uses_probe_spec(monkeypatch: pytest.MonkeyPatch,
     assert spec.volumes == (VolumeMount(Path.cwd(), "/workspace"),)
     assert spec.env["EXTRA"] == "1"
     assert "ros2 topic list" in spec.command[2]
-
-
-def test_p11_rosbag_start_uses_runtime_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.tasks.helpers import scan_stabilization as scan_stabilization_gate
-
-    config = RunConfig.from_config(
-        config_path="orchestration/config.simulation.toml",
-        duration_sec=45.0,
-        run_id="20260608_000000",
-        artifact_dir=tmp_path,
-    )
-    started: list[ServiceSpec] = []
-
-    class FakeBackend:
-        def start_service(self, spec: ServiceSpec) -> None:
-            started.append(spec)
-
-    monkeypatch.setattr(scan_stabilization_gate, "DockerBackend", FakeBackend)
-    monkeypatch.setattr(scan_stabilization_gate, "remove_container", lambda _name: None)
-
-    scan_stabilization_gate.start_p11_rosbag_recording(config, duration_sec=5.0)
-
-    assert len(started) == 1
-    spec = started[0]
-    assert spec.name == "p11_rosbag"
-    assert spec.container_name == scan_stabilization_gate.P11_ROSBAG_CONTAINER
-    assert spec.image == "world-model/navlab-official-baseline:latest"
-    assert spec.networks == ("host",)
-    assert spec.cwd == "/workspace"
-    assert spec.env["PYTHONPATH"] == "/workspace"
-
-
-def test_p12_doctor_summary_includes_runtime_backend(tmp_path: Path) -> None:
-    from src.tasks.workflows.scan_robustness import build_p12_doctor_summary
-
-    config = RunConfig.from_config(
-        config_path="orchestration/config.simulation.toml",
-        duration_sec=45.0,
-        run_id="20260608_000000",
-        artifact_dir=tmp_path,
-    )
-    p12 = build_p12_doctor_summary(config, runtime_config=tmp_path / "p12.toml")
-
-    for summary in (p12,):
-        assert summary["runtime_backend"] == "docker"
-        assert summary["runtime_mode"] == "simulation"
-        assert summary["runtime_backend_summary"]["backend"] == "docker"
-        assert summary["runtime_backend_summary"]["mode"] == "simulation"
-        assert summary["runtime_backend_summary"]["backend_config_path"] == "orchestration/config.simulation.toml"
-        assert summary["source_claims"]["scan"] == "gazebo_lidar_via_x2"
-        assert summary["source_claims"]["scan_topic"] == "/scan"

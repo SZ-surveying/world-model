@@ -5,28 +5,34 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/main-validation.yml"
-      - "scripts/check-python.sh"
-      - "scripts/format-python.sh"
+      - ".golangci.yml"
+      - "devbox.json"
+      - "devbox.lock"
       - "pyproject.toml"
       - "uv.lock"
+      - "lefthook.yml"
       - "justfile"
       - "navlab/**"
       - "orchestration/**"
       - "scripts/command/**"
-      - "scripts/*.py"
+      - "scripts/ops/**"
+      - "scripts/quality/**"
   push:
     branches: [main, master]
     paths:
       - ".github/workflows/main-validation.yml"
-      - "scripts/check-python.sh"
-      - "scripts/format-python.sh"
+      - ".golangci.yml"
+      - "devbox.json"
+      - "devbox.lock"
       - "pyproject.toml"
       - "uv.lock"
+      - "lefthook.yml"
       - "justfile"
       - "navlab/**"
       - "orchestration/**"
       - "scripts/command/**"
-      - "scripts/*.py"
+      - "scripts/ops/**"
+      - "scripts/quality/**"
 
 permissions:
   contents: read
@@ -40,28 +46,41 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       python: ${{ steps.filter.outputs.python }}
+      go: ${{ steps.filter.outputs.go }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Detect changed Python areas
+      - name: Detect changed areas
         id: filter
         uses: dorny/paths-filter@v3
         with:
           filters: |
             python:
               - '.github/workflows/main-validation.yml'
-              - 'scripts/check-python.sh'
-              - 'scripts/format-python.sh'
+              - 'scripts/quality/check-python.sh'
+              - 'scripts/quality/format-python.sh'
               - 'pyproject.toml'
               - 'uv.lock'
+              - 'lefthook.yml'
               - 'justfile'
               - 'navlab/**'
-              - 'orchestration/**'
+              - 'orchestration/src/**'
+              - 'orchestration/tests/**'
               - 'scripts/command/**'
-              - 'scripts/*.py'
+              - 'scripts/ops/**/*.py'
+            go:
+              - '.github/workflows/main-validation.yml'
+              - '.golangci.yml'
+              - 'devbox.json'
+              - 'devbox.lock'
+              - 'lefthook.yml'
+              - 'justfile'
+              - 'scripts/quality/check-go.sh'
+              - 'scripts/quality/format-go.sh'
+              - 'orchestration/sim/**'
 
   python:
     name: Python CI
@@ -83,7 +102,27 @@ jobs:
       - name: Run Python checks
         env:
           PYTHON_CHECK_PROFILE: ci
-        run: ./scripts/check-python.sh
+        run: ./scripts/quality/check-python.sh
+
+  go:
+    name: Go CI
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: orchestration/sim/go.mod
+
+      - name: Run Go checks
+        env:
+          GO_ALLOW_BOOTSTRAP: "1"
+          GO_CHECK_PROFILE: ci
+        run: ./scripts/quality/check-go.sh
 
   summary:
     name: Validation Summary
@@ -91,12 +130,15 @@ jobs:
     needs:
       - changes
       - python
+      - go
     runs-on: ubuntu-latest
     steps:
       - name: Publish summary
         env:
           PYTHON_CHANGED: ${{ needs.changes.outputs.python }}
           PYTHON_RESULT: ${{ needs.python.result }}
+          GO_CHANGED: ${{ needs.changes.outputs.go }}
+          GO_RESULT: ${{ needs.go.result }}
         run: |
           label_for() {
             local changed="$1"
@@ -117,6 +159,7 @@ jobs:
           }
 
           PYTHON_STATUS="$(label_for "$PYTHON_CHANGED" "$PYTHON_RESULT")"
+          GO_STATUS="$(label_for "$GO_CHANGED" "$GO_RESULT")"
 
           {
             echo "## Main Validation Summary"
@@ -127,6 +170,11 @@ jobs:
               echo "| python | yes | $PYTHON_STATUS |"
             else
               echo "| python | no | $PYTHON_STATUS |"
+            fi
+            if [ "$GO_CHANGED" = "true" ]; then
+              echo "| go | yes | $GO_STATUS |"
+            else
+              echo "| go | no | $GO_STATUS |"
             fi
             echo
             echo "Notes:"

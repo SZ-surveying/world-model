@@ -1,5 +1,316 @@
 # Decisions
 
+## 2026-06-12: Go sim owns simulation image builds
+
+Decision: move simulation Docker image build orchestration into Go sim and
+delete the legacy Python build surface. `navlab-sim build` now owns
+`companion`, `slam`, `gazebo-sensor`, `official-baseline`, and `all` image
+builds from the Go `config.toml` image catalog, with `--tag` override and
+`--dry-run` command inspection. The Python CLI `build` command and
+`orchestration/src/images.py` were removed.
+
+Basis: Go sim now owns the simulation control plane, including task registry,
+runtime execution, ROS evidence probes, acceptance summaries, and artifact
+generation. Leaving image build orchestration in Python would keep an obsolete
+simulation entry point after the rest of sim moved to Go.
+
+Reason: this closes the remaining Go sim command parity gap without deleting
+Python real orchestration prematurely. Python image config dataclasses remain
+only as part of the real/shared config reader until Rust real replaces that
+surface; active sim image build behavior is Go-owned.
+
+## 2026-06-12: Go sim metric-depth parity uses ROS status evidence
+
+Decision: implement hover/exploration/scan-robustness metric-depth parity as
+structured ROS status evidence. Runtime scripts publish drift, owner
+uniqueness, FCU mode-window, exploration progress, SLAM odometry quality, scan
+stabilization, and airframe disturbance profile-sweep fields on status topics.
+Probe scripts parse `std_msgs/String.data` JSON into structured payloads, and
+`summary.json.gate_evaluation.metrics` aggregates the key fields for final
+inspection.
+
+Basis: live task parity already passed at the service/probe/rosbag/landing
+level, but the remaining gap was metric visibility. The old Python helper logic
+mixed orchestration with metric extraction; Go sim should keep orchestration
+ownership while treating Python runtime code and ROS topics as process
+boundaries.
+
+Reason: this keeps the sim/real split clean and preserves the task registry
+extension path. Metrics are now artifact evidence, not imported helper state:
+runtime status topics are the source, probe JSON is the sampled record, and the
+final summary is the operator-facing aggregation.
+
+## 2026-06-12: Go sim runtime/probe placeholders replaced by ROS evidence
+
+Decision: replace generated Go sim placeholder runtime/probe scripts with ROS
+topic behavior and validate the three built-in sim tasks live. The FCU runtime
+script now subscribes to FCU pose and optional raw IMU/scan topics, then
+publishes `/slam/odom`, controller/owner/hover/landing status, setpoint output,
+rangefinder evidence, scan stabilization status, airframe disturbance status,
+and IMU/scan relay topics. Probe scripts now sample ROS topics with `ros2 topic
+echo` and use `rclpy` subscriptions for full `std_msgs/String` status payloads.
+Rosbag outputs are isolated per record under `rosbag/<record-name>`.
+
+Basis: live hover initially proved Docker/Gazebo/SITL orchestration worked but
+blocked on missing ROS evidence. Exploration then exposed missing setpoint
+output and shared rosbag output directories. Scan robustness exposed missing
+IMU/stabilization/disturbance status topics and an outdated p12 FCU status
+topic contract.
+
+Reason: Go sim should fail or pass from ROS/artifact evidence, not planned JSON
+markers. The current live checks passed for `hover`, `exploration`, and
+`scan-robustness`; the follow-up metric-depth slice now extends this same
+evidence path instead of reintroducing Python orchestration helpers.
+
+## 2026-06-12: Go sim acceptance summaries block on missing runtime evidence
+
+Decision: migrate Go sim live summaries from planned result gates to
+artifact-based gate evaluation. `summary.json` now evaluates runtime errors,
+required probe outputs, rosbag metadata required-topic counts, task-specific
+config checks, and landing acceptance for hover, exploration, and
+scan-robustness. Live finalization also writes `run_config.toml` and
+`summary.md`, and records both files in the manifest.
+
+Basis: the Go live runner can now start runtime specs, but acceptance parity
+requires the final result to be driven by evidence artifacts rather than by the
+existence of a plan. Python acceptance code blocked when probe summaries,
+rosbag metadata, controller/landing evidence, or required task claims were
+missing.
+
+Reason: the Go implementation should fail closed. A runtime can finish without
+proving task acceptance; in that case the summary must be `blocked` with
+specific missing/evidence blockers. The later metric-depth slice reuses the same
+summary contract by adding drift, owner, FCU mode-window, profile-sweep, and
+SLAM quality fields under artifact-backed metrics.
+
+## 2026-06-12: Go sim live run executes runtime specs before gate parity
+
+Decision: enable `navlab-sim run <task>` without `--dry-run` for the Go sim
+package by executing the generated `RuntimeSpecBundle` through the Docker
+backend, writing `summary.json`, and recording it in the manifest. Add static
+task doctor commands for `hover`, `exploration`, and `scan-robustness` that
+reuse the same config, artifact generation, and runtime spec validation path
+without starting Docker/ROS.
+
+Basis: Go sim already owns task planning, config normalization, generated
+runtime artifacts, runtime specs, Docker backend command construction, and a
+generic runtime runner. The next parity step is to remove the CLI guard that
+blocked live execution while preserving a truthful artifact contract.
+
+Reason: live runtime orchestration can be tested and used before full
+task-specific blocker parity is ported. The live summary therefore reports
+runtime execution facts and keeps result gates marked as planned from the
+execution plan, instead of claiming Python-equivalent acceptance results. This
+lets Docker/ROS lifecycle bugs surface in Go now while keeping final gate parity
+as an explicit remaining migration slice.
+
+## 2026-06-12: Python orchestration deletion waits for whole-slice parity
+
+Decision: delete generated Python caches immediately, but retire Python source
+by ownership slice rather than file-by-file. Legacy sim source under
+`orchestration/src/tasks/built_in`, `orchestration/src/tasks/workflows`, and
+sim-only `orchestration/src/tasks/helpers` will be deleted after Go sim owns
+live execution and gate summaries. Real orchestration Python will stay until
+Rust real owns preflight, prepare, motor-debug, and process/runtime control.
+
+Basis: Go sim now owns dry-run planning, config normalization, runtime artifact
+generation, manifest entries, runtime specs, and a generic runner, but Python
+sim live workflows still import helpers as a connected graph. Python real is
+also still the active implementation for real prepare/task-doctor/motor-debug.
+
+Reason: deleting individual helpers as soon as their pure logic is ported would
+break the old Python entry point without removing that entry point. Whole-slice
+retirement keeps the repository coherent while still preventing migrated Python
+orchestration from lingering after Go or Rust parity exists. Python under
+`navlab.*` remains runtime code, not orchestration control-plane code.
+
+## 2026-06-12: Go sim adds a generic runtime runner behind dry-run
+
+Decision: add a task-level runtime runner that executes a `RuntimeSpecBundle`
+through the `runtime.Backend` interface by starting services, starting rosbags,
+running probes, optionally waiting for rosbags, and cleaning up handles in
+reverse order on success or failure. The public CLI still rejects non-dry-run
+task execution.
+
+Basis: hover, exploration, and scan-robustness live execution all need the same
+service/probe/rosbag ordering and cleanup behavior. Implementing that lifecycle
+behind the disabled live path lets Go tests validate orchestration semantics
+without starting Docker, Gazebo, SITL, or ROS.
+
+Reason: this keeps the next migration slice reusable and bounded. The backend
+contract can now be tested with a fake runtime backend, while task-specific gate
+evaluation and operator-facing live commands remain separate follow-up work.
+
+## 2026-06-12: Go sim dry-run generates runtime artifacts
+
+Decision: extend `navlab-sim run <task> --dry-run` so it generates the
+task-specific runtime artifacts for hover, exploration, and scan-robustness
+from the normalized `TaskRuntimeConfig`. The generated files include bridge and
+vendor profiles, sensor/SLAM/FCU/frame/hover/exploration/stabilization runtime
+TOML, runtime probe scripts, workflow probe scripts, and P12 bridge overrides.
+
+Basis: the remaining sim migration needs the Go control plane to own the
+parameterized artifact surface before live Docker/ROS execution is enabled.
+Runtime spec validation alone proved commands could be shaped, but did not yet
+prove the referenced probe/config files were produced by Go.
+
+Reason: generating these files in dry-run keeps the migration side-effect
+boundary clear: Go now owns deterministic task expansion and file artifacts,
+while Docker containers, ROS graph sampling, and task execution remain disabled
+until the live runner is introduced. This also preserves the task registry and
+helper ownership model without reintroducing Python orchestration imports.
+
+## 2026-06-12: Go sim normalizes full simulation runtime config before live runner
+
+Decision: port the remaining Python simulation `RunConfig` surface into Go
+typed config structs and normalize project defaults plus task YAML overrides
+into `TaskRuntimeConfig`. Dry-run task plans now include this normalized runtime
+config under `execution_plan.task_parameters.runtime_config`.
+
+Basis: the remaining sim migration design requires full config schema before
+hover/exploration/scan-robustness live runners can move. The legacy Python
+runner relied on a large `RunConfig` object for topic contracts, runtime
+thresholds, rosbag profiles, and safety/source claims.
+
+Reason: live execution should consume a typed request instead of re-inferring
+defaults inside every helper. Keeping this in dry-run first makes the normalized
+runtime contract inspectable and testable while Docker/ROS side effects remain
+disabled until a dedicated runner is introduced.
+
+## 2026-06-12: Go sim remaining migration starts with runtime backend base
+
+Decision: document the remaining simulation migration in
+`docs/general/orchestration_sim_remaining_migration_design.md`, then migrate the
+first missing base layer into Go: `internal/runtime` service/probe/rosbag specs,
+a Docker CLI backend, and an adapter from task `ExecutionPlan` to executable
+runtime specs. Dry-run now validates service/probe/rosbag specs and reports
+their counts without starting Docker or ROS. The remaining pure `motion` helper
+is also ported as P7 doctor summary and Foxglove notes logic, so no sim helper
+remains in `planned` status.
+
+Basis: user asked to first write a design document, then migrate the unfinished
+simulation contents that were still outside `orchestration/sim`.
+
+Reason: live hover/exploration/scan-robustness runners all need the same
+backend contract before task-specific acceptance logic can move. Starting with
+runtime specs avoids duplicating Docker/probe/rosbag mechanics inside each
+helper and keeps dry-run behavior side-effect free while making future execution
+plans mechanically valid. Porting `motion` closes the last non-runtime helper
+gap before moving to full config schema and live task runners.
+
+## 2026-06-12: Go sim owns deep runtime/probe/task execution planning
+
+Decision: migrate the deeper simulation helper layer into Go as explicit
+runtime execution planning. `sensors`, `fcu-controller`, `frame-contract`,
+`slam-hover`, `scan-stabilization`, `exploration-workflow`, and
+`scan-robustness-workflow` now have Go-owned runtime specs, generated artifact
+plans, ROS probe/script plans, Docker service command plans, rosbag record
+plans, and result gate plans. Their helper inventory status is
+`ported_partial,runtime` instead of `planned,runtime`.
+
+Basis: user asked to migrate the deeper ROS probe/runtime script/task execution
+parts, including sensors, FCU controller, frame contract, SLAM hover, scan
+stabilization, and workflow bodies.
+
+Reason: the Go orchestration package should own task expansion, artifact
+contracts, runtime service intent, and probe/gate topology before live execution
+is enabled. The current CLI remains dry-run only, so Docker/ROS side effects are
+still not started accidentally. Runtime probe scripts may still be Python inside
+ROS containers because the navlab runtime remains Python, but the orchestration
+helper logic that selects, parameterizes, and records those scripts is now in Go.
+
+## 2026-06-12: Go sim runtime helpers migrate by side-effect boundary
+
+Decision: runtime helpers with Docker/ROS side effects are migrated in partial,
+testable slices. `navlab-models` now owns Go generation for P1 bridge/vendor
+profiles plus Docker remove/log/gazebo-sensor command wrappers. `official-stack`
+now owns Go Cartographer Lua parsing and Docker ROS shell command planning.
+`slam` now owns Go P3 SLAM runtime TOML generation and SLAM backend Docker
+command planning. Helpers that still require live ROS graph sampling or task
+runtime execution remain marked `planned,runtime`.
+
+Basis: user asked to continue migrating helpers that were still
+`planned,runtime`, while preserving the task helper ownership under
+`internal/tasks/helpers`.
+
+Reason: splitting side-effect helpers into file generation, command planning,
+and live execution lets Go tests cover deterministic behavior now, without
+requiring Docker/Gazebo/ROS availability in every test run. The later runner can
+reuse the same command/spec functions when real task execution is enabled.
+
+## 2026-06-12: Go sim helper migration starts with inventory plus pure helpers
+
+Decision: migrate Python non-real task helpers into Go sim in two layers. First,
+`internal/tasks/helpers` records every non-real Python task helper/workflow used
+by hover, exploration, and scan-robustness. Second, pure helpers that do not
+need Docker, ROS, MCAP, or generated runtime scripts are ported directly to Go:
+artifacts, rosbag profile parsing, landing gate logic, and scan-integrity motor
+output candidate detection. These helpers live in one Go package with separate
+files, not many one-function subpackages.
+
+Basis: user asked to migrate all non-real Python task helpers, while preserving
+task registry expansion. The helper set includes both small pure helpers and
+large runtime helpers that start containers, generate Python ROS probes, inspect
+ROS graphs, or write SDF/runtime overlays.
+
+Reason: the inventory makes the full migration surface explicit in every
+dry-run task plan. Porting pure helpers first gives testable Go behavior without
+creating a half-migrated Gazebo/SITL execution path. Keeping them under
+`internal/tasks/helpers` matches the old Python task-helper ownership while
+avoiding a proliferation of tiny Go packages. Runtime helpers remain marked
+`planned,runtime` until their Docker/ROS side effects are replaced in Go.
+
+## 2026-06-12: Go sim dry-run writes task plan artifacts
+
+Decision: `navlab-sim run <task> --dry-run` now writes a run-scoped
+`task_plan.json` and `manifest.json` under the configured sim artifact root.
+The manifest records contract version, implementation, runtime mode, backend,
+task id, run id, and artifact hashes.
+
+Basis: the Go task registry needs a stable artifact boundary before real
+Gazebo/SITL/Docker execution is migrated. The user also wants proto/contract-like
+constraints for task parameters and results across future Go/Rust/Python
+boundaries.
+
+Reason: dry-run artifacts make the task request/plan observable and testable
+without pretending that runtime execution has already been ported. The same
+artifact writer can later be extended to write proto-backed task request/result
+files when real task runners are added.
+
+## 2026-06-12: Go sim task registry starts with dry-run planning
+
+Decision: implement the first Go simulation task layer as a registry-backed
+planner. `navlab-sim doctor`, `list-tasks`, `show-task`, and `run <task>
+--dry-run` use the Go registry plus YAML task configs, while real execution of
+Gazebo/SITL/Docker services remains deferred.
+
+Basis: user wants the task registry pattern preserved for fast task expansion,
+but the current migration should not silently pretend that the old Python task
+execution flow has already been ported.
+
+Reason: a dry-run task plan establishes the extension point, task metadata,
+capability declarations, config overrides, and CLI shape without creating a
+half-migrated runtime path. Each task can later replace its plan steps with real
+Go execution while keeping the same registry contract.
+
+## 2026-06-12: Orchestration splits into sim and real packages
+
+Decision: new orchestration work lives under only two package roots:
+`orchestration/sim` for the Go simulation control plane and `orchestration/real`
+for the Rust real-machine control plane. Each package owns its own project-level
+`config.toml` at the package root, while task configs live under that package's
+`configs/tasks/*.yaml`.
+
+Basis: user clarified that the long-term shape is two independently adaptable
+orchestration packages/repositories, not a shared Python orchestration tree or a
+top-level shared `orchestration/configs` directory.
+
+Reason: package-root `config.toml` makes each orchestration implementation
+self-contained when it is split into its own repository. Keeping task configs in
+`configs/tasks` preserves a clear distinction between project-level runtime
+configuration and task-level parameters. Preflight and prepare are intentionally
+not migrated in this slice.
+
 ## 2026-06-11: Real prepare and doctor phases have separate modules
 
 Decision: keep real prepare startup/cleanup in `src.workflows.real.prepare`,
@@ -760,3 +1071,36 @@ Decision: keep the real prepare ROS graph probe on the configured timeout and fi
 Basis: `just navlab-doctor` initially failed with a 2 s `ros2 topic list` timeout, then with missing rangefinder/SLAM topics. The real logs showed `rangefinder_bridge` could import `rclpy` but not `pymavlink`, and `navlab_slam_bringup` / `navlab_cartographer_adapter` install symlinks still pointed at the deleted `navlab/slam/...` tree. After using the configured 5 s topic probe, adding the venv site-packages to the rangefinder command, and rebuilding the moved ROS packages, `just navlab-doctor` passed with prepare rc=0 and common doctor rc=0.
 
 Reason: these are not new FCU blockers or task-doctor policy questions. They are local runtime packaging issues caused by the real/sim package move and mixed ROS/system Python execution. Fixing them preserves the existing ExternalNav readiness contract instead of weakening the doctor checks.
+
+## 2026-06-12: Python sim orchestration is retired
+
+Decision: delete the Python simulation task champions, workflows, helper package, `config.simulation.toml`, and old TOML task configs after Go sim gained live execution, gate blocker evaluation, and final artifact summaries.
+
+Basis: `orchestration/sim` now owns `hover`, `exploration`, and `scan-robustness` through the Go registry, Cobra CLI, Viper config loading, YAML task configs, Docker runtime specs, dry-run artifacts, live runtime runner, blocker evaluation, and summary/manifest writers.
+
+Reason: keeping Python sim entrypoints after Go sim parity creates two orchestration surfaces for the same tasks. Python remains only for runtime nodes and transitional real orchestration. Real task-doctor checks that were embedded in Python sim built-ins now live under `orchestration/src/workflows/real/task_specs.py`, and `TaskRegistry` only exposes the Python real `motor-debug` task until Rust real replaces it.
+
+## 2026-06-12: Go sim live smoke shows control-plane completion before task parity
+
+Superseded by: `2026-06-12: Go sim runtime/probe placeholders replaced by ROS
+evidence`.
+
+Decision: treat Go sim control-plane migration as complete, but keep hover,
+exploration, and scan-robustness live parity open until generated runtime/probe
+scripts perform real ROS task behavior instead of placeholder reporting.
+
+Basis: `./navlab-sim run hover` was executed on 2026-06-12. The first run
+exposed two Go runtime bugs: the official baseline service was missing from the
+runtime bundle, and rosbag `timeout --signal=INT` return code `124` was treated
+as a failure. After fixing those, hover live started `official_baseline`,
+`gazebo_sensor`, `slam_backend`, `p4_controller`, probes, and `p6_hover_rosbag`;
+the bag recorded `/ap/v1/pose/filtered`. The final summary still blocked on
+missing `/slam/odom`, `/navlab/fcu/controller/status`, `/navlab/hover/status`,
+and landing evidence because several generated scripts still emit
+`planned_runtime_script` / `planned_probe_script`.
+
+Reason: deleting Python sim entrypoints was still valid because the Go package
+now owns the orchestration surface and fails closed with truthful blockers. But
+live task acceptance is not complete until the Go-generated runtime layer starts
+real SLAM/controller/hover/exploration/scan behavior and produces the evidence
+that the final summary gates require.

@@ -6,12 +6,12 @@ from src.cli import app
 from typer.testing import CliRunner
 
 
-def test_cli_exposes_only_build_doctor_and_run_wrapper() -> None:
+def test_cli_exposes_only_doctor_and_run_wrapper() -> None:
     runner = CliRunner()
 
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "build" in result.output
+    assert "build" not in result.output
     assert "doctor" in result.output
     assert "run" in result.output
     assert "hover" not in result.output
@@ -184,44 +184,31 @@ def test_runtime_doctor_can_keep_prepare_running(monkeypatch) -> None:  # noqa: 
     assert "prepare services are still running" in result.output
 
 
-def test_run_wrapper_dispatches_hover(monkeypatch) -> None:  # noqa: ANN001
-    from src.tasks.built_in.hover import HoverAcceptanceTask
-
-    calls: list[dict[str, object]] = []
-
-    def fake_run(self, **kwargs):  # noqa: ANN001
-        calls.append(kwargs)
-        return 8
-
-    monkeypatch.setattr(HoverAcceptanceTask, "run", fake_run)
+def test_run_wrapper_retires_python_simulation_tasks() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["run", "hover", "--duration-sec", "2.5", "--simulation-profile", "ideal"])
+    result = runner.invoke(
+        app,
+        ["run", "hover", "--duration-sec", "2.5", "--simulation-profile", "ideal"],
+        env={"NAVLAB_RUNTIME_BACKEND": "docker", "NAVLAB_RUNTIME_MODE": "simulation"},
+    )
 
-    assert result.exit_code == 8
-    assert calls
-    assert calls[0]["duration_sec"] == 2.5
-    assert calls[0]["simulation_profile"] == "ideal"
+    assert result.exit_code == 20
+    assert "Python simulation tasks have been retired" in result.output
+    assert "orchestration/sim/cmd/navlab-sim" in result.output
 
 
-def test_run_wrapper_dry_run_skips_simulation_champion(monkeypatch) -> None:  # noqa: ANN001
-    from src.tasks.built_in.hover import HoverAcceptanceTask
-
-    def fake_run(self, **kwargs):  # noqa: ANN001
-        raise AssertionError("dry-run must not execute the hover champion")
-
-    monkeypatch.setattr(HoverAcceptanceTask, "run", fake_run)
+def test_run_wrapper_dry_run_does_not_restore_python_simulation_tasks() -> None:
     runner = CliRunner()
 
     result = runner.invoke(
         app,
         ["run", "hover", "--duration-sec", "2.5", "--simulation-profile", "ideal", "--dry-run"],
+        env={"NAVLAB_RUNTIME_BACKEND": "docker", "NAVLAB_RUNTIME_MODE": "simulation"},
     )
 
-    assert result.exit_code == 0
-    assert "Dry run" in result.output
-    assert "task=hover" in result.output
-    assert "champion" in result.output
+    assert result.exit_code == 20
+    assert "Python simulation tasks have been retired" in result.output
 
 
 def test_run_wrapper_real_dry_run_stops_after_preflight_prepare_and_task_doctor(monkeypatch) -> None:  # noqa: ANN001
@@ -269,7 +256,6 @@ def test_run_wrapper_real_dry_run_stops_after_preflight_prepare_and_task_doctor(
 
 def test_run_wrapper_blocks_when_real_preflight_fails(monkeypatch) -> None:  # noqa: ANN001
     from src import cli
-    from src.tasks.built_in.hover import HoverAcceptanceTask
 
     doctor_calls: list[dict[str, object]] = []
 
@@ -277,11 +263,7 @@ def test_run_wrapper_blocks_when_real_preflight_fails(monkeypatch) -> None:  # n
         doctor_calls.append(kwargs)
         return 7
 
-    def fake_hover_run(self, **kwargs):  # noqa: ANN001
-        raise AssertionError("real mode must not run hover acceptance directly")
-
     monkeypatch.setattr(cli, "run_real_preflight_doctor", fake_doctor_run)
-    monkeypatch.setattr(HoverAcceptanceTask, "run", fake_hover_run)
     runner = CliRunner()
 
     result = runner.invoke(
@@ -430,7 +412,14 @@ def test_run_wrapper_real_motor_debug_dispatches_with_confirmations(monkeypatch)
     )
 
     assert result.exit_code == 0
-    assert events == ["preflight", "prepare:motor-debug", "common-doctor", "task-doctor:motor-debug", "motor-debug", "stop-prepare"]
+    assert events == [
+        "preflight",
+        "prepare:motor-debug",
+        "common-doctor",
+        "task-doctor:motor-debug",
+        "motor-debug",
+        "stop-prepare",
+    ]
     assert calls
     assert calls[0]["motor_percent"] == 6.0
     assert calls[0]["motor_sec"] == 2.0
@@ -488,7 +477,14 @@ def test_run_wrapper_real_motor_debug_interrupt_stops_prepare(monkeypatch) -> No
     )
 
     assert result.exit_code == 130
-    assert events == ["preflight", "prepare:motor-debug", "common-doctor", "task-doctor:motor-debug", "motor-debug", "stop-prepare"]
+    assert events == [
+        "preflight",
+        "prepare:motor-debug",
+        "common-doctor",
+        "task-doctor:motor-debug",
+        "motor-debug",
+        "stop-prepare",
+    ]
     assert "WARN: real run interrupted by operator" in result.output
     assert "Real prepare services stopped after operator interrupt" in result.output
 

@@ -13,8 +13,12 @@ from rich.panel import Panel
 from rich.table import Table
 
 from src.configs.run_config import RunConfig
-from src.tasks.registry import TaskRegistry
 from src.workflows.real.prepare import RealTopicSnapshot, check_real_task_upstream_topics
+from src.workflows.real.task_specs import (
+    build_real_task_doctor,
+    real_altitude_hold_doctor,
+    task_fcu_status_metadata,
+)
 
 
 def run_real_task_doctor(
@@ -76,37 +80,7 @@ def build_real_task_doctor_summary(
 
 
 def _task_specific_doctor(task_name: str, config: RunConfig, upstream: Mapping[str, Any]) -> dict[str, Any]:
-    try:
-        task = TaskRegistry.create(task_name)
-    except ValueError as exc:
-        return {
-            "ok": True,
-            "blocked": False,
-            "blockers": [],
-            "skipped": True,
-            "reason": f"task_not_registered:{exc}",
-        }
-    result = task.build_real_task_doctor(config=config, upstream=upstream)
-    if result is None:
-        return {"ok": True, "blocked": False, "blockers": [], "skipped": True, "reason": "not_implemented"}
-    return dict(result)
-
-
-def task_fcu_status_metadata(config: RunConfig, upstream: Mapping[str, Any]) -> dict[str, Any]:
-    status_topic = config.orchestration.fcu_controller.status_topic
-    status = upstream.get("required_topics", {}).get(status_topic, {})
-    metadata = dict(status.get("metadata", {})) if isinstance(status, dict) else {}
-    if metadata:
-        return metadata
-    bridge_status_topic = config.orchestration.real_prepare.fcu_bridge_state_topic
-    bridge_status = upstream.get("required_topics", {}).get(bridge_status_topic, {})
-    return dict(bridge_status.get("metadata", {})) if isinstance(bridge_status, dict) else {}
-
-
-def real_altitude_hold_doctor(config: RunConfig, upstream: Mapping[str, Any]) -> dict[str, Any]:
-    from src.workflows.real.prepare import check_altitude_hold_mode
-
-    return check_altitude_hold_mode(config, upstream, fcu_status_metadata=task_fcu_status_metadata(config, upstream))
+    return build_real_task_doctor(task_name, config=config, upstream=upstream)
 
 
 def print_real_task_doctor_summary(console: Console, *, summary: Mapping[str, Any], summary_path: Path) -> None:

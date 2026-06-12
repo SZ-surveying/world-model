@@ -138,8 +138,8 @@ DEFAULT_ROUTER_TCP_PORT = "0"
 DEFAULT_COMPOSE_FILE = REPO_PATH / "compose" / "docker-compose.yaml"
 DEFAULT_COMPOSE_PROJECT_NAME = "navlab"
 DEFAULT_COMPOSE_PROFILE = "base_env"
-DEFAULT_RUNTIME_BACKEND = "docker"
-DEFAULT_RUNTIME_MODE = "simulation"
+DEFAULT_RUNTIME_BACKEND = "process"
+DEFAULT_RUNTIME_MODE = "real"
 DEFAULT_WORKSPACE_CONTAINER_PATH = "/workspace"
 DEFAULT_PROCESS_RUNTIME_LOG_DIR = REPO_PATH / "artifacts" / "runtime_logs"
 DEFAULT_REAL_REQUIRED_TOPICS = (
@@ -325,7 +325,7 @@ def _load_orchestration_runtime_backend_config(
             str(raw_process.get("workspace_host_path") or paths.lab_root),
         ),
         log_dir=_resolve_path(paths.lab_root, str(raw_process.get("log_dir") or DEFAULT_PROCESS_RUNTIME_LOG_DIR)),
-        require_explicit_services=bool(raw_process.get("require_explicit_services", True)),
+        require_explicit_services=bool(raw_process.get("require_explicit_services", False)),
         services=_parse_process_services(raw_process, paths.lab_root, paths.config_file),
     )
     real_sources = RealRuntimeSourceConfig(

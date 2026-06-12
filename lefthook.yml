@@ -36,10 +36,21 @@ pre-commit:
     # Python formatting check
     python-format:
       glob: "**/*.py"
-      run: ./scripts/format-python.sh --scope staged
+      run: ./scripts/quality/format-python.sh --scope staged
       stage_fixed: true
 
     # Fast Python checks. Integration-heavy checks run in CI.
     python-check:
       glob: "**/*.py"
-      run: PYTHON_CHECK_PROFILE=pre-commit ./scripts/check-python.sh
+      run: PYTHON_CHECK_PROFILE=pre-commit ./scripts/quality/check-python.sh
+
+    # Go formatting check
+    go-format:
+      glob: "orchestration/sim/**/*.go"
+      run: ./scripts/quality/format-go.sh --scope staged
+      stage_fixed: true
+
+    # Fast Go checks. Integration-heavy checks run manually or in CI.
+    go-check:
+      glob: "orchestration/sim/**/*.go"
+      run: GO_CHECK_PROFILE=pre-commit ./scripts/quality/check-go.sh
