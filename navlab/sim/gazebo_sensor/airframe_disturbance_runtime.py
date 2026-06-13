@@ -97,8 +97,12 @@ def run(argv: list[str] | None = None) -> int:
                 t = time.monotonic() - self._started
                 amp_rad = math.radians(float(runtime["imu_vibration_roll_pitch_amp_deg"]))
                 phase = 2.0 * math.pi * float(runtime["imu_vibration_freq_hz"]) * t
-                roll_noise = amp_rad * math.sin(phase) + rng.gauss(0.0, math.radians(float(runtime["imu_gyro_noise_std_dps"])) * 0.01)
-                pitch_noise = amp_rad * math.cos(phase) + rng.gauss(0.0, math.radians(float(runtime["imu_gyro_noise_std_dps"])) * 0.01)
+                roll_noise = amp_rad * math.sin(phase) + rng.gauss(
+                    0.0, math.radians(float(runtime["imu_gyro_noise_std_dps"])) * 0.01
+                )
+                pitch_noise = amp_rad * math.cos(phase) + rng.gauss(
+                    0.0, math.radians(float(runtime["imu_gyro_noise_std_dps"])) * 0.01
+                )
                 qn = _quat_from_rpy(roll_noise, pitch_noise, 0.0)
                 out.orientation.x, out.orientation.y, out.orientation.z, out.orientation.w = _quat_multiply(
                     (msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w),
@@ -166,9 +170,12 @@ def run(argv: list[str] | None = None) -> int:
 
 
 def _quat_from_rpy(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
-    cr = math.cos(roll * 0.5); sr = math.sin(roll * 0.5)
-    cp = math.cos(pitch * 0.5); sp = math.sin(pitch * 0.5)
-    cy = math.cos(yaw * 0.5); sy = math.sin(yaw * 0.5)
+    cr = math.cos(roll * 0.5)
+    sr = math.sin(roll * 0.5)
+    cp = math.cos(pitch * 0.5)
+    sp = math.sin(pitch * 0.5)
+    cy = math.cos(yaw * 0.5)
+    sy = math.sin(yaw * 0.5)
     return (
         sr * cp * cy - cr * sp * sy,
         cr * sp * cy + sr * cp * sy,
@@ -177,7 +184,9 @@ def _quat_from_rpy(roll: float, pitch: float, yaw: float) -> tuple[float, float,
     )
 
 
-def _quat_multiply(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+def _quat_multiply(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> tuple[float, float, float, float]:
     ax, ay, az, aw = a
     bx, by, bz, bw = b
     return (

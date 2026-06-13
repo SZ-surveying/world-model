@@ -1,2 +1,1 @@
 """Real companion runtime package."""
-

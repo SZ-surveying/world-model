@@ -8,9 +8,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     pkg_share = FindPackageShare("navlab_cartographer_adapter")
-    params_file = PathJoinSubstitution(
-        [pkg_share, "config", "navlab_cartographer_adapter.params.yaml"]
-    )
+    params_file = PathJoinSubstitution([pkg_share, "config", "navlab_cartographer_adapter.params.yaml"])
     config_dir = PathJoinSubstitution([pkg_share, "config"])
 
     return LaunchDescription(
@@ -137,9 +135,7 @@ def generate_launch_description():
                 parameters=[
                     params_file,
                     {
-                        "publish_placeholder_odom": LaunchConfiguration(
-                            "publish_placeholder_odom"
-                        ),
+                        "publish_placeholder_odom": LaunchConfiguration("publish_placeholder_odom"),
                         "scan_topic": LaunchConfiguration("scan_topic"),
                         "imu_topic": LaunchConfiguration("imu_topic"),
                         "odom_topic": LaunchConfiguration("odom_topic"),

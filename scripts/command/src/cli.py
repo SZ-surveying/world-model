@@ -105,13 +105,25 @@ def build_replay_command(
         str | None,
         typer.Argument(help="Run id like 20260607_185314, or a run artifact directory. Defaults to latest run."),
     ] = None,
-    maze_path: Annotated[Path, typer.Option("--maze", help="Path to official ardupilot_gz maze.sdf")] = replay.DEFAULT_MAZE,
-    profile: Annotated[Path, typer.Option("--profile", help="Foxglove-lite topic profile")] = replay.FOXGLOVE_LITE_PROFILE,
-    resolution: Annotated[float, typer.Option("--resolution", help="Official maze overlay resolution in meters")] = replay.DEFAULT_RESOLUTION_M,
+    maze_path: Annotated[
+        Path, typer.Option("--maze", help="Path to official ardupilot_gz maze.sdf")
+    ] = replay.DEFAULT_MAZE,
+    profile: Annotated[
+        Path, typer.Option("--profile", help="Foxglove-lite topic profile")
+    ] = replay.FOXGLOVE_LITE_PROFILE,
+    resolution: Annotated[
+        float, typer.Option("--resolution", help="Official maze overlay resolution in meters")
+    ] = replay.DEFAULT_RESOLUTION_M,
     margin: Annotated[float, typer.Option("--margin", help="Auto crop margin in meters")] = replay.DEFAULT_MARGIN_M,
-    bbox: Annotated[str | None, typer.Option("--bbox", help="Explicit crop bbox as xmin,ymin,xmax,ymax in map frame")] = None,
-    full: Annotated[bool, typer.Option("--full", help="Use the full official maze extent instead of auto crop")] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Write only the replay summary, not the output MCAP")] = False,
+    bbox: Annotated[
+        str | None, typer.Option("--bbox", help="Explicit crop bbox as xmin,ymin,xmax,ymax in map frame")
+    ] = None,
+    full: Annotated[
+        bool, typer.Option("--full", help="Use the full official maze extent instead of auto crop")
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Write only the replay summary, not the output MCAP")
+    ] = False,
 ) -> None:
     try:
         run_dir = replay.resolve_run_dir(run)
@@ -142,7 +154,9 @@ def upload_command(
     ] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Print resolved upload files without uploading.")] = False,
     force: Annotated[bool, typer.Option("--force", help="Upload even when foxglove_upload.enabled=false.")] = False,
-    lite: Annotated[bool, typer.Option("--lite", help="Upload Foxglove-lite MCAP; generate it first when missing.")] = False,
+    lite: Annotated[
+        bool, typer.Option("--lite", help="Upload Foxglove-lite MCAP; generate it first when missing.")
+    ] = False,
 ) -> None:
     try:
         result = upload.upload_run(run=run, dry_run=dry_run, force=force, lite=lite)
@@ -162,7 +176,9 @@ def serial_bridge_command(
     read_size: Annotated[int, typer.Option("--read-size", help="Bytes to read from the serial port at a time")] = 1024,
     log_file: Annotated[
         Path | None,
-        typer.Option("--log-file", help="Optional log file path; defaults to scripts/command/logs/serial/<timestamp>.log"),
+        typer.Option(
+            "--log-file", help="Optional log file path; defaults to scripts/command/logs/serial/<timestamp>.log"
+        ),
     ] = None,
     log_level: Annotated[
         str,
@@ -170,7 +186,9 @@ def serial_bridge_command(
     ] = "INFO",
     stats_interval: Annotated[float, typer.Option("--stats-interval", help="Seconds between traffic stats logs")] = 5.0,
     reconnect_delay: Annotated[float, typer.Option("--reconnect-delay", help="Seconds to wait before reconnect")] = 2.0,
-    detach: Annotated[bool, typer.Option("--detach", help="Run in a fixed tmux session named command-serial-bridge")] = False,
+    detach: Annotated[
+        bool, typer.Option("--detach", help="Run in a fixed tmux session named command-serial-bridge")
+    ] = False,
 ) -> None:
     config = mavlink_serial.BridgeConfig(
         port_a=port_a,
@@ -197,7 +215,9 @@ def serial_bridge_command(
 
 @maze_app.command("plot-topdown")
 def plot_topdown_command(
-    maze_path: Annotated[Path, typer.Option("--maze", help="Path to ardupilot_gz_gazebo/worlds/maze.sdf")] = maze.DEFAULT_MAZE,
+    maze_path: Annotated[
+        Path, typer.Option("--maze", help="Path to ardupilot_gz_gazebo/worlds/maze.sdf")
+    ] = maze.DEFAULT_MAZE,
     output: Annotated[Path, typer.Option("--output", help="Output SVG path")] = maze.DEFAULT_OUTPUT,
 ) -> None:
     try:

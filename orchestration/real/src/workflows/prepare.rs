@@ -9,6 +9,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::{info, instrument};
 
 use crate::config::{PrepareServiceConfig, ProjectConfig, TaskConfig};
+use crate::contracts;
 use crate::runtime::{ProcessBackend, RuntimeHandle, ServiceSpec};
 
 const SIMULATION_TOKENS: &[&str] = &[
@@ -158,6 +159,7 @@ pub fn run_prepare(
         .summary_path
         .unwrap_or_else(|| default_summary_path(project, &task_config.id));
     write_summary(&path, &summary)?;
+    write_doctor_result(&path, &summary)?;
     info!(
         ok = summary.ok,
         blocked = summary.blocked,
@@ -209,6 +211,7 @@ pub fn start_prepare_phase(
         .summary_path
         .unwrap_or_else(|| default_summary_path(project, &task_config.id));
     write_summary(&path, &summary)?;
+    write_doctor_result(&path, &summary)?;
     info!(
         ok = summary.ok,
         blocked = summary.blocked,
@@ -666,6 +669,27 @@ fn write_summary(path: &Path, summary: &PrepareSummary) -> Result<()> {
     }
     fs::write(path, serde_json::to_string_pretty(summary)?)
         .with_context(|| format!("write real prepare summary {}", path.display()))
+}
+
+fn write_doctor_result(summary_path: &Path, summary: &PrepareSummary) -> Result<()> {
+    let result = contracts::doctor_result(
+        &summary.task_name,
+        summary.ok,
+        &summary.blockers,
+        vec![
+            ("service_plan_valid", summary.service_count > 0),
+            (
+                "fcu_bridge_mode_valid",
+                summary.fcu_bridge_mode.name == "navlab_mavlink",
+            ),
+            ("readiness_plan_valid", summary.readiness.ok),
+        ],
+    );
+    contracts::write_json(
+        &summary_path.with_file_name("doctor_result.json"),
+        &result,
+        "real prepare doctor result",
+    )
 }
 
 fn default_summary_path(project: &ProjectConfig, task_name: &str) -> PathBuf {

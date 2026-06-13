@@ -1,21 +1,40 @@
 # NavLab Contracts
 
 This package owns language-neutral contracts shared by `navlab` runtimes and
-`orchestration`.
+Go/Rust orchestration implementations.
 
 `orchestration` chooses artifact paths and starts processes. Runtime tasks write
 their result artifacts to those paths. The contract here defines the stable
 shape those artifacts must follow so future readers can be implemented in
 Python, Rust, or another language without importing runtime code.
 
-Current scope:
+Design scope:
 
-- `proto/navlab/runtime/v1/task_result.proto`: common runtime task result schema.
+- `proto/navlab/orchestration/v1`: task request/result, doctor result, and
+  artifact manifest contracts.
+- `proto/navlab/runtime/v1`: runtime plan, service spec, probe spec, and process
+  event contracts.
+- `proto/navlab/safety/v1`: command policy, MAVLink ACK, and readiness gate
+  contracts.
+- `proto/navlab/sensors/v1`: topic, frame, and source evidence contracts.
+
+See `docs/general/contracts_proto_semantic_boundary_design.md` for the detailed
+boundary design and migration plan.
+
+Current implementation scope:
+
+- Minimal proto skeletons now exist under:
+  - `proto/navlab/orchestration/v1`
+  - `proto/navlab/runtime/v1`
+  - `proto/navlab/safety/v1`
+  - `proto/navlab/sensors/v1`
+- Golden JSON examples live under `examples/`.
 
 Current implementation note:
 
-- Existing tasks still write `summary.json`.
-- New or migrated task summaries should include
-  `schema_version = "navlab.runtime.task_result.v1"` and stay mappable to the
-  proto schema.
-- Protobuf code generation is intentionally not wired in yet.
+- Existing tasks may still write implementation-specific `summary.json`.
+- New or migrated cross-language artifacts should write proto-compatible JSON
+  such as `task_request.json`, `runtime_plan.json`, `doctor_result.json`,
+  `task_result.json`, and `manifest.json`.
+- Protobuf code generation is intentionally not wired in yet; schemas and JSON
+  examples should stabilize first.

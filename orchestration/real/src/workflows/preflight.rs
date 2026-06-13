@@ -10,6 +10,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::{info, instrument};
 
 use crate::config::{PreflightDependencyConfig, ProjectConfig, SerialMavlinkConfig};
+use crate::contracts;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PreflightSummary {
@@ -152,6 +153,7 @@ pub fn run_preflight(
         None => default_summary_path(project),
     };
     write_summary(&path, &summary)?;
+    write_doctor_result(&path, "preflight", summary.ok, &summary.blockers)?;
     info!(
         ok = summary.ok,
         blocked = summary.blocked,
@@ -159,6 +161,29 @@ pub fn run_preflight(
         "wrote real preflight summary"
     );
     Ok(summary)
+}
+
+fn write_doctor_result(
+    summary_path: &Path,
+    task_id: &str,
+    ok: bool,
+    blockers: &[String],
+) -> Result<()> {
+    let result = contracts::doctor_result(
+        task_id,
+        ok,
+        blockers,
+        vec![
+            ("runtime_backend_process", ok),
+            ("runtime_mode_real", ok),
+            ("dependencies_available", ok),
+        ],
+    );
+    contracts::write_json(
+        &summary_path.with_file_name("doctor_result.json"),
+        &result,
+        "real preflight doctor result",
+    )
 }
 
 pub fn build_preflight_summary(

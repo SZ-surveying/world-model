@@ -36,11 +36,47 @@ def vehicle_marker_parts() -> tuple[VehicleMarkerPart, ...]:
         (-0.24, -0.24),
     )
     parts = [
-        VehicleMarkerPart(0, "navlab_vehicle_body", "sphere", 0.0, 0.0, 0.0, 0.0, 0.34, 0.22, 0.12, 0.08, 0.15, 0.22, 1.0),
-        VehicleMarkerPart(1, "navlab_vehicle_nose", "arrow", 0.18, 0.0, 0.0, 0.0, 0.24, 0.055, 0.055, 1.0, 0.78, 0.16, 1.0),
-        VehicleMarkerPart(2, "navlab_vehicle_arm_a", "cube", 0.0, 0.0, 0.005, 0.7853981633974483, 0.68, 0.035, 0.035, 0.12, 0.20, 0.28, 1.0),
-        VehicleMarkerPart(3, "navlab_vehicle_arm_b", "cube", 0.0, 0.0, 0.005, -0.7853981633974483, 0.68, 0.035, 0.035, 0.12, 0.20, 0.28, 1.0),
-        VehicleMarkerPart(4, "navlab_vehicle_x2_lidar", "cylinder", 0.10, 0.0, -0.09, 0.0, 0.08, 0.08, 0.055, 0.08, 0.65, 1.0, 1.0),
+        VehicleMarkerPart(
+            0, "navlab_vehicle_body", "sphere", 0.0, 0.0, 0.0, 0.0, 0.34, 0.22, 0.12, 0.08, 0.15, 0.22, 1.0
+        ),
+        VehicleMarkerPart(
+            1, "navlab_vehicle_nose", "arrow", 0.18, 0.0, 0.0, 0.0, 0.24, 0.055, 0.055, 1.0, 0.78, 0.16, 1.0
+        ),
+        VehicleMarkerPart(
+            2,
+            "navlab_vehicle_arm_a",
+            "cube",
+            0.0,
+            0.0,
+            0.005,
+            0.7853981633974483,
+            0.68,
+            0.035,
+            0.035,
+            0.12,
+            0.20,
+            0.28,
+            1.0,
+        ),
+        VehicleMarkerPart(
+            3,
+            "navlab_vehicle_arm_b",
+            "cube",
+            0.0,
+            0.0,
+            0.005,
+            -0.7853981633974483,
+            0.68,
+            0.035,
+            0.035,
+            0.12,
+            0.20,
+            0.28,
+            1.0,
+        ),
+        VehicleMarkerPart(
+            4, "navlab_vehicle_x2_lidar", "cylinder", 0.10, 0.0, -0.09, 0.0, 0.08, 0.08, 0.055, 0.08, 0.65, 1.0, 1.0
+        ),
     ]
     for index, (dx, dy) in enumerate(rotor_offsets):
         parts.append(

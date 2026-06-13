@@ -97,8 +97,14 @@ def test_stabilization_validates_threshold_order() -> None:
 
 
 def test_stabilization_wraps_full_scan_angle_bins() -> None:
-    assert angle_to_scan_bin(angle_rad=math.pi, angle_min=-math.pi, angle_increment=2.0 * math.pi / 36.0, beam_count=36) == 0
-    assert angle_to_scan_bin(angle_rad=-math.pi, angle_min=-math.pi, angle_increment=2.0 * math.pi / 36.0, beam_count=36) == 0
+    assert (
+        angle_to_scan_bin(angle_rad=math.pi, angle_min=-math.pi, angle_increment=2.0 * math.pi / 36.0, beam_count=36)
+        == 0
+    )
+    assert (
+        angle_to_scan_bin(angle_rad=-math.pi, angle_min=-math.pi, angle_increment=2.0 * math.pi / 36.0, beam_count=36)
+        == 0
+    )
 
 
 def test_stabilization_reports_scan_attitude_time_offset_ms() -> None:

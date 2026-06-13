@@ -380,9 +380,7 @@ def write_foxglove_notes(*, artifact_dir: Path) -> None:
         rosbag_dir=artifact_dir / "rosbag",
         fixed_frame="navlab_world",
         recommended_panels=("3D", "Raw Messages", "Plot", "Topic Graph"),
-        marker_topics=(
-            "/sim/markers",
-        ),
+        marker_topics=("/sim/markers",),
         pose_topics=(
             "/gazebo/truth/odom",
             "/external_nav/odom",
@@ -495,7 +493,7 @@ def write_summary(
     }
     observation_mode = {
         "gazebo_physics_expected": True,
-            "pose_mirror_set_pose_disabled": pose_mirror_set_pose_disabled_result,
+        "pose_mirror_set_pose_disabled": pose_mirror_set_pose_disabled_result,
         "pose_mirror_observation_only": pose_mirror_observation_only,
         "pose_source": "mavlink_local_position_observer",
         "world_markers_mode": "sdf_marker_observer",

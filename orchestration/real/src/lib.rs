@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod config;
+pub mod contracts;
 pub mod errors;
 pub mod logging;
 pub mod runtime;

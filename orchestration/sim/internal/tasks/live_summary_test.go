@@ -48,8 +48,11 @@ func TestBuildLiveRunSummaryRuntimeSuccessStillEvaluatesGateBlockers(t *testing.
 	if len(summary.ResultGates) != 1 || summary.GateParity.Status != "evaluated_from_runtime_artifacts" {
 		t.Fatalf("summary gates = %#v parity=%#v", summary.ResultGates, summary.GateParity)
 	}
-	if !blockersContainPrefix(summary.Blockers, helpers.LandingNotEvaluatedBlocker) {
+	if !blockersContainPrefix(summary.BlockerCodes, helpers.LandingNotEvaluatedBlocker) {
 		t.Fatalf("blockers = %#v, want landing blocker", summary.Blockers)
+	}
+	if summary.SchemaVersion != "navlab.orchestration.task_result.v1" || summary.Status != "TASK_STATUS_BLOCKED" {
+		t.Fatalf("summary contract fields = schema:%q status:%q", summary.SchemaVersion, summary.Status)
 	}
 }
 
@@ -68,8 +71,11 @@ func TestBuildLiveRunSummaryFailureRecordsBlocker(t *testing.T) {
 	if summary.OK || !summary.Blocked {
 		t.Fatalf("summary status = ok:%v blocked:%v", summary.OK, summary.Blocked)
 	}
-	if summary.RuntimeError == "" || !blockersContainPrefix(summary.Blockers, "runtime_execution_failed") {
+	if summary.RuntimeError == "" || !blockersContainPrefix(summary.BlockerCodes, "runtime_execution_failed") {
 		t.Fatalf("summary error/blockers = %q %#v", summary.RuntimeError, summary.Blockers)
+	}
+	if summary.Status != "TASK_STATUS_ERROR" || summary.ExitCode != 1 {
+		t.Fatalf("summary status = %q exitCode=%d", summary.Status, summary.ExitCode)
 	}
 }
 

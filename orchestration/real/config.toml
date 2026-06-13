@@ -13,12 +13,12 @@ artifact_root = "../../artifacts/real"
 task_config_dir = "configs/tasks"
 
 [sources]
-scan_source_claim = "real_lidar_driver"
+scan_source_claim = "ydlidar_x2"
 scan_source_topic = "/scan"
-fcu_source_claim = "real_serial_mavlink_or_ardupilot_dds_bridge"
-imu_source_claim = "real_fcu_or_sensor"
-rangefinder_source_claim = "real_or_not_required"
-slam_source_claim = "real_slam"
+fcu_source_claim = "fcu_mavlink"
+imu_source_claim = "fcu_mavlink"
+rangefinder_source_claim = "fcu_distance_sensor"
+slam_source_claim = "cartographer"
 required_real_topics = [
   "/scan",
   "/tf",

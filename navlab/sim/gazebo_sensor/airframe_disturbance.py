@@ -181,7 +181,9 @@ def apply_profile_to_iris_sdf(source: str, profile: AirframeDisturbanceProfile) 
     root = ET.fromstring(source)
     controls = list(root.findall(".//control"))
     if len(controls) < profile.motor_count:
-        raise ValueError(f"airframe_disturbance_profile_not_applied: expected {profile.motor_count} controls, found {len(controls)}")
+        raise ValueError(
+            f"airframe_disturbance_profile_not_applied: expected {profile.motor_count} controls, found {len(controls)}"
+        )
     applied: list[dict[str, Any]] = []
     for index, control in enumerate(controls[: profile.motor_count]):
         sign = -1.0 if (control.findtext("multiplier") or "").strip().startswith("-") else 1.0
@@ -204,7 +206,9 @@ def apply_profile_to_iris_sdf(source: str, profile: AirframeDisturbanceProfile) 
                 "esc_lag_model": "plugin_first_order",
             }
         )
-    root.insert(0, ET.Comment(f"NavLab P12 airframe disturbance profile: {json.dumps(profile.to_summary(), sort_keys=True)}"))
+    root.insert(
+        0, ET.Comment(f"NavLab P12 airframe disturbance profile: {json.dumps(profile.to_summary(), sort_keys=True)}")
+    )
     rendered = ET.tostring(root, encoding="unicode")
     if not rendered.startswith("<?xml"):
         rendered = "<?xml version='1.0'?>\n" + rendered

@@ -52,7 +52,12 @@ class BBox:
     def union(self, other: BBox | None) -> BBox:
         if other is None or not other.valid:
             return self
-        return BBox(min(self.xmin, other.xmin), min(self.ymin, other.ymin), max(self.xmax, other.xmax), max(self.ymax, other.ymax))
+        return BBox(
+            min(self.xmin, other.xmin),
+            min(self.ymin, other.ymin),
+            max(self.xmax, other.xmax),
+            max(self.ymax, other.ymax),
+        )
 
     def as_dict(self) -> dict[str, float]:
         return {"xmin": self.xmin, "ymin": self.ymin, "xmax": self.xmax, "ymax": self.ymax}
@@ -69,6 +74,7 @@ class TopicProfile:
     @property
     def output_required_topics(self) -> set[str]:
         return set(self.required_topics) | {self.overlay_topic}
+
 
 def resolve_run_dir(value: str | None) -> Path:
     if value:
@@ -243,9 +249,15 @@ def _load_mcap_modules() -> dict[str, Any]:
         from mcap_ros2.decoder import DecoderFactory
     except ImportError as exc:
         raise RuntimeError(
-            "missing MCAP dependencies; run with `uv run --project scripts/command python scripts/command/main.py foxglove build-replay`"
+            "missing MCAP dependencies; run with "
+            "`uv run --project scripts/command python scripts/command/main.py foxglove build-replay`"
         ) from exc
-    return {"make_reader": make_reader, "Writer": Writer, "serialize_dynamic": serialize_dynamic, "DecoderFactory": DecoderFactory}
+    return {
+        "make_reader": make_reader,
+        "Writer": Writer,
+        "serialize_dynamic": serialize_dynamic,
+        "DecoderFactory": DecoderFactory,
+    }
 
 
 def parse_walls(path: Path) -> list[Wall]:
@@ -361,7 +373,12 @@ def occupancy_known_bbox(msg: Any) -> BBox | None:
         max_row = max(max_row, row)
     if max_col < 0:
         return None
-    return BBox(ox + min_col * resolution, oy + min_row * resolution, ox + (max_col + 1) * resolution, oy + (max_row + 1) * resolution)
+    return BBox(
+        ox + min_col * resolution,
+        oy + min_row * resolution,
+        ox + (max_col + 1) * resolution,
+        oy + (max_row + 1) * resolution,
+    )
 
 
 def odom_xy(msg: Any) -> tuple[float, float] | None:
@@ -402,7 +419,12 @@ def choose_crop_bbox(
 
 
 def clamp_bbox(bbox: BBox, extent: BBox) -> BBox:
-    return BBox(max(bbox.xmin, extent.xmin), max(bbox.ymin, extent.ymin), min(bbox.xmax, extent.xmax), min(bbox.ymax, extent.ymax))
+    return BBox(
+        max(bbox.xmin, extent.xmin),
+        max(bbox.ymin, extent.ymin),
+        min(bbox.xmax, extent.xmax),
+        min(bbox.ymax, extent.ymax),
+    )
 
 
 def rasterize_walls(walls: list[Wall], bbox: BBox, *, resolution_m: float) -> dict[str, Any]:
@@ -633,7 +655,9 @@ def load_lite_topic_profile(profile_path: Path = FOXGLOVE_LITE_PROFILE) -> Topic
             continue
         if role in {"required", "optional"}:
             if len(parts) != 3 or not parts[2].startswith("interval="):
-                raise ValueError(f"{profile_path}:{line_number}: {role} line must be `{role} TOPIC interval=SECONDS|all`")
+                raise ValueError(
+                    f"{profile_path}:{line_number}: {role} line must be `{role} TOPIC interval=SECONDS|all`"
+                )
             topic = _validate_topic(profile_path, line_number, parts[1])
             if topic in seen_topics:
                 raise ValueError(f"{profile_path}:{line_number}: duplicate topic: {topic}")

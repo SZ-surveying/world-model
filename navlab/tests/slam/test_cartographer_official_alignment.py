@@ -5,8 +5,7 @@ from pathlib import Path
 
 def test_navlab_cartographer_lua_follows_official_ardupilot_baseline() -> None:
     config = Path(
-        "navlab/common/slam/ros/localization/navlab_cartographer_adapter/config/"
-        "navlab_cartographer_2d.lua"
+        "navlab/common/slam/ros/localization/navlab_cartographer_adapter/config/navlab_cartographer_2d.lua"
     ).read_text(encoding="utf-8")
 
     assert 'tracking_frame = "imu_link"' in config

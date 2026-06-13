@@ -9,6 +9,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::{info, instrument};
 
 use crate::config::{ProjectConfig, TaskConfig};
+use crate::contracts;
 
 #[derive(Debug, Clone)]
 pub struct TaskDoctorInput {
@@ -85,6 +86,7 @@ pub fn run_task_doctor(
         .summary_path
         .unwrap_or_else(|| default_summary_path(project, &task_config.id));
     write_summary(&path, &summary)?;
+    write_doctor_result(&path, &summary)?;
     info!(
         ok = summary.ok,
         blocked = summary.blocked,
@@ -93,6 +95,24 @@ pub fn run_task_doctor(
         "wrote real task-doctor summary"
     );
     Ok(summary)
+}
+
+fn write_doctor_result(summary_path: &Path, summary: &TaskDoctorSummary) -> Result<()> {
+    let result = contracts::doctor_result(
+        &summary.task_name,
+        summary.ok,
+        &summary.blockers,
+        vec![
+            ("upstream_evidence_ok", summary.upstream.ok),
+            ("task_specific_evaluated", true),
+            ("guided_gate_deferred_to_run", true),
+        ],
+    );
+    contracts::write_json(
+        &summary_path.with_file_name("doctor_result.json"),
+        &result,
+        "real task-doctor result",
+    )
 }
 
 pub fn build_task_doctor_summary(

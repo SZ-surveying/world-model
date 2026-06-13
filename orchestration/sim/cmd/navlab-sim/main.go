@@ -445,6 +445,19 @@ func prepareTaskRun(
 	if err != nil {
 		return preparedTaskRun{}, fmt.Errorf("failed to validate runtime specs for %q: %w", taskID, err)
 	}
+	runtimePlan, err := tasks.BuildRuntimePlanContract(plan, result.RunID, runtimeSpecs)
+	if err != nil {
+		return preparedTaskRun{}, fmt.Errorf("failed to build runtime plan contract for %q: %w", taskID, err)
+	}
+	runtimePlanPath := filepath.Join(result.ArtifactDir, "runtime_plan.json")
+	if err := artifacts.WriteJSONArtifact(runtimePlanPath, runtimePlan); err != nil {
+		return preparedTaskRun{}, fmt.Errorf("failed to write runtime plan contract for %q: %w", taskID, err)
+	}
+	if err := artifacts.AppendManifestArtifacts(result.ManifestPath, result.ArtifactDir, []artifacts.GeneratedArtifact{
+		{Type: "runtime_plan", Path: runtimePlanPath},
+	}); err != nil {
+		return preparedTaskRun{}, fmt.Errorf("failed to update runtime plan manifest for %q: %w", taskID, err)
+	}
 	return preparedTaskRun{
 		Project:            project,
 		TaskConfig:         taskConfig,
@@ -471,6 +484,7 @@ func runLiveTask(
 	)
 	summary := tasks.BuildLiveRunSummary(project, taskRuntimeConfig, plan, result.RunID, result.ArtifactDir, generatedArtifacts, runtimeSpecs, execution, executionErr)
 	summaryPath := filepath.Join(result.ArtifactDir, "summary.json")
+	summary.SummaryPath = summaryPath
 	if err := artifacts.WriteJSONArtifact(summaryPath, summary); err != nil {
 		return fmt.Errorf("failed to write live summary for %q: %w", plan.TaskID, err)
 	}

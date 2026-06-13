@@ -9,6 +9,7 @@ use time::OffsetDateTime;
 use tracing::{info, instrument, warn};
 
 use crate::config::{ProjectConfig, TaskConfig};
+use crate::contracts;
 use crate::runtime::{MotorDebugRuntimeReport, MotorDebugRuntimeRequest, real_motor_debug_runtime};
 use crate::tasks::{RealTask, RunOptions};
 use crate::ui::{print_key_value, print_title};
@@ -181,6 +182,8 @@ impl RealTask for MotorDebugTask {
         print_key_value("backend", &project.runtime.backend);
         print_key_value("dry_run", &options.dry_run.to_string());
         println!("{}", serde_json::to_string_pretty(&plan)?);
+        let artifact_dir = resolve_artifact_dir(project, &options);
+        write_task_request(&artifact_dir, project, config)?;
         if options.dry_run {
             return Ok(());
         }
@@ -204,6 +207,7 @@ impl RealTask for MotorDebugTask {
             Err(error) => build_runtime_error_summary(project, &plan, &error.to_string()),
         };
         write_runtime_summary(&summary_path, &summary)?;
+        write_task_result(&summary_path, project, &plan, &summary)?;
         println!("{}", serde_json::to_string_pretty(&summary)?);
         if summary.ok {
             Ok(())
@@ -526,17 +530,22 @@ fn resolve_summary_path(project: &ProjectConfig, options: &RunOptions) -> PathBu
     if let Some(path) = &options.summary_path {
         return path.clone();
     }
-    options
-        .artifact_dir
-        .clone()
-        .unwrap_or_else(|| {
-            project
-                .paths
-                .artifact_root
-                .join("motor-debug")
-                .join(run_id())
-        })
-        .join("summary.json")
+    resolve_artifact_dir(project, options).join("summary.json")
+}
+
+fn resolve_artifact_dir(project: &ProjectConfig, options: &RunOptions) -> PathBuf {
+    if let Some(path) = &options.summary_path {
+        if let Some(parent) = path.parent() {
+            return parent.to_path_buf();
+        }
+    }
+    options.artifact_dir.clone().unwrap_or_else(|| {
+        project
+            .paths
+            .artifact_root
+            .join("motor-debug")
+            .join(run_id())
+    })
 }
 
 fn write_runtime_summary(path: &Path, summary: &MotorDebugRuntimeSummary) -> Result<()> {
@@ -546,6 +555,107 @@ fn write_runtime_summary(path: &Path, summary: &MotorDebugRuntimeSummary) -> Res
     }
     fs::write(path, serde_json::to_string_pretty(summary)?)
         .with_context(|| format!("write motor-debug runtime summary {}", path.display()))
+}
+
+fn write_task_request(
+    artifact_dir: &Path,
+    project: &ProjectConfig,
+    task: &TaskConfig,
+) -> Result<()> {
+    let run_id = run_id_from_artifact_dir(artifact_dir);
+    let request = contracts::task_request(project, task, &run_id, artifact_dir);
+    contracts::write_json(
+        &artifact_dir.join("task_request.json"),
+        &request,
+        "real task request",
+    )
+}
+
+fn write_task_result(
+    summary_path: &Path,
+    project: &ProjectConfig,
+    plan: &MotorDebugPlan,
+    summary: &MotorDebugRuntimeSummary,
+) -> Result<()> {
+    let artifact_dir = summary_path.parent().unwrap_or_else(|| Path::new("."));
+    let run_id = run_id_from_artifact_dir(artifact_dir);
+    let result = contracts::task_result(contracts::TaskResultContractInput {
+        project,
+        task_id: &plan.task_id,
+        run_id: &run_id,
+        artifact_dir,
+        summary_path,
+        ok: summary.ok,
+        blockers: &summary.blockers,
+        mavlink_acks: mavlink_ack_contracts(summary),
+        details: serde_json::to_value(summary).unwrap_or_else(|_| json!({})),
+    });
+    contracts::write_json(
+        &artifact_dir.join("task_result.json"),
+        &result,
+        "real motor-debug task result",
+    )
+}
+
+fn mavlink_ack_contracts(summary: &MotorDebugRuntimeSummary) -> Vec<Value> {
+    summary
+        .acks
+        .iter()
+        .filter_map(|entry| {
+            let stage = entry
+                .get("stage")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let ack = entry.get("ack")?;
+            let result = ack
+                .get("result_name")
+                .and_then(Value::as_str)
+                .unwrap_or("UNKNOWN");
+            let result_code = ack
+                .get("result")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or_default();
+            let accepted = ack
+                .get("accepted")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let statustext = ack
+                .get("status_text")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            Some(contracts::mavlink_ack(
+                mavlink_ack_command(stage),
+                result,
+                result_code,
+                accepted,
+                "GUIDED",
+                "GUIDED",
+                statustext,
+            ))
+        })
+        .collect()
+}
+
+fn mavlink_ack_command(stage: &str) -> &'static str {
+    match stage {
+        "guided_mode" => "SET_GUIDED",
+        "arm" => "ARM",
+        "disarm" => "DISARM",
+        _ => "UNKNOWN",
+    }
+}
+
+fn run_id_from_artifact_dir(artifact_dir: &Path) -> String {
+    artifact_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("manual")
+        .to_string()
 }
 
 fn run_id() -> String {

@@ -58,6 +58,7 @@ type ProbeSpec struct {
 	CWD           string
 	Volumes       []VolumeMount
 	Networks      []string
+	OutputPath    string
 	TimeoutSec    float64
 	LogPath       string
 	Required      bool

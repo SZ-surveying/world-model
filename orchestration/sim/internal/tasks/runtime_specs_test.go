@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -162,6 +163,84 @@ func TestBuildRuntimeSpecsMapsWorkspaceArtifactsToContainerWorkspace(t *testing.
 	}
 	if bundle.Probes[0].Volumes[0].Source != workspace {
 		t.Fatalf("volume source = %q, want %q", bundle.Probes[0].Volumes[0].Source, workspace)
+	}
+}
+
+func TestBuildRuntimePlanContract(t *testing.T) {
+	artifactDir := t.TempDir()
+	topicsProfile := filepath.Join(artifactDir, "hover_rosbag.txt")
+	if err := os.WriteFile(topicsProfile, []byte("/tf\n/scan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	contract, err := BuildRuntimePlanContract(
+		Plan{TaskID: "hover"},
+		"20260613T010203Z",
+		RuntimeSpecBundle{
+			Services: []simruntime.ServiceSpec{
+				{
+					Name:        "gazebo_sensor",
+					ServiceRole: "sensors",
+					Image:       "world-model/navlab-gazebo-sensor:latest",
+					Command:     []string{"bash", "-lc", "run-sensor"},
+					Env:         map[string]string{"ROS_DOMAIN_ID": "85"},
+					CWD:         "/workspace",
+					Volumes: []simruntime.VolumeMount{
+						{Source: "/host/ws", Target: "/workspace", Mode: "ro"},
+					},
+					Networks: []string{"host"},
+					Required: true,
+					LogPath:  filepath.Join(artifactDir, "gazebo_sensor.start.log"),
+				},
+			},
+			Probes: []simruntime.ProbeSpec{
+				{
+					Name:        "rangefinder_probe",
+					ServiceRole: "sensors",
+					Image:       "world-model/navlab-official-baseline:latest",
+					Command:     []string{"bash", "-lc", "probe"},
+					Env:         map[string]string{"ROS_DOMAIN_ID": "85"},
+					TimeoutSec:  30,
+					Required:    true,
+					LogPath:     filepath.Join(artifactDir, "rangefinder_probe.log"),
+				},
+			},
+			Rosbags: []simruntime.RosbagSpec{
+				{
+					Name:          "hover_rosbag",
+					ServiceRole:   "slam-hover",
+					TopicsProfile: topicsProfile,
+					OutputPath:    "/workspace/artifacts/rosbag",
+					DurationSec:   90,
+					Storage:       "mcap",
+					Required:      true,
+					LogPath:       filepath.Join(artifactDir, "hover_rosbag.log"),
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contract["schemaVersion"] != "navlab.runtime.runtime_plan.v1" {
+		t.Fatalf("schemaVersion = %#v", contract["schemaVersion"])
+	}
+	services := contract["services"].([]map[string]any)
+	if services[0]["backend"] != "RUNTIME_BACKEND_DOCKER" || services[0]["role"] != "sensors" {
+		t.Fatalf("service contract = %#v", services[0])
+	}
+	volumes := services[0]["volumes"].([]map[string]any)
+	if volumes[0]["readOnly"] != true {
+		t.Fatalf("volume contract = %#v", volumes[0])
+	}
+	probes := contract["probes"].([]map[string]any)
+	if probes[0]["timeoutSec"] != float64(30) {
+		t.Fatalf("probe contract = %#v", probes[0])
+	}
+	rosbags := contract["rosbags"].([]map[string]any)
+	topics := rosbags[0]["topics"].([]string)
+	if strings.Join(topics, ",") != "/tf,/scan" {
+		t.Fatalf("rosbag topics = %#v", topics)
 	}
 }
 

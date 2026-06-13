@@ -14,8 +14,8 @@ from typing import Any
 for site_packages in (Path(__file__).resolve().parents[3] / ".venv" / "lib").glob("python*/site-packages"):
     sys.path.insert(0, str(site_packages))
 
-from pymavlink import mavutil
-from pymavlink.dialects.v20 import ardupilotmega as mavlink
+from pymavlink import mavutil  # noqa: E402
+from pymavlink.dialects.v20 import ardupilotmega as mavlink  # noqa: E402
 
 
 @dataclass(slots=True)
@@ -141,7 +141,9 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._drain_mavlink()
             now = time.monotonic()
             if self._target_system is not None and self._target_component is not None and now >= self._next_request:
-                _request_distance_sensor_stream(self._connection, self._target_system, self._target_component, args.rate_hz)
+                _request_distance_sensor_stream(
+                    self._connection, self._target_system, self._target_component, args.rate_hz
+                )
                 self._next_request = now + 2.0
             self._publish_status()
 

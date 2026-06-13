@@ -13,6 +13,7 @@ on:
       - "lefthook.yml"
       - "justfile"
       - "navlab/**"
+      - "contracts/**"
       - "orchestration/**"
       - "scripts/command/**"
       - "scripts/ops/**"
@@ -29,6 +30,7 @@ on:
       - "lefthook.yml"
       - "justfile"
       - "navlab/**"
+      - "contracts/**"
       - "orchestration/**"
       - "scripts/command/**"
       - "scripts/ops/**"
@@ -48,6 +50,7 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       go: ${{ steps.filter.outputs.go }}
       rust: ${{ steps.filter.outputs.rust }}
+      contracts: ${{ steps.filter.outputs.contracts }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -87,6 +90,25 @@ jobs:
               - 'scripts/quality/check-rust.sh'
               - 'scripts/quality/format-rust.sh'
               - 'orchestration/real/**'
+            contracts:
+              - '.github/workflows/main-validation.yml'
+              - 'scripts/quality/check-contracts.sh'
+              - 'contracts/**'
+
+  contracts:
+    name: Contracts CI
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install contract tools
+        run: sudo apt-get update && sudo apt-get install -y jq protobuf-compiler
+
+      - name: Run contract checks
+        run: ./scripts/quality/check-contracts.sh
 
   python:
     name: Python CI
@@ -155,6 +177,7 @@ jobs:
     if: always()
     needs:
       - changes
+      - contracts
       - python
       - go
       - rust
@@ -164,6 +187,8 @@ jobs:
         env:
           PYTHON_CHANGED: ${{ needs.changes.outputs.python }}
           PYTHON_RESULT: ${{ needs.python.result }}
+          CONTRACTS_CHANGED: ${{ needs.changes.outputs.contracts }}
+          CONTRACTS_RESULT: ${{ needs.contracts.result }}
           GO_CHANGED: ${{ needs.changes.outputs.go }}
           GO_RESULT: ${{ needs.go.result }}
           RUST_CHANGED: ${{ needs.changes.outputs.rust }}
@@ -188,6 +213,7 @@ jobs:
           }
 
           PYTHON_STATUS="$(label_for "$PYTHON_CHANGED" "$PYTHON_RESULT")"
+          CONTRACTS_STATUS="$(label_for "$CONTRACTS_CHANGED" "$CONTRACTS_RESULT")"
           GO_STATUS="$(label_for "$GO_CHANGED" "$GO_RESULT")"
           RUST_STATUS="$(label_for "$RUST_CHANGED" "$RUST_RESULT")"
 
@@ -196,6 +222,11 @@ jobs:
             echo
             echo "| Area | Changed | Result |"
             echo "| --- | --- | --- |"
+            if [ "$CONTRACTS_CHANGED" = "true" ]; then
+              echo "| contracts | yes | $CONTRACTS_STATUS |"
+            else
+              echo "| contracts | no | $CONTRACTS_STATUS |"
+            fi
             if [ "$PYTHON_CHANGED" = "true" ]; then
               echo "| python | yes | $PYTHON_STATUS |"
             else

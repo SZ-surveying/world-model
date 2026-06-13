@@ -185,8 +185,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         from std_msgs.msg import String
     except ModuleNotFoundError as exc:
         raise SystemExit(
-            "mavlink_imu_bridge requires ROS2 Python packages and pymavlink. "
-            "Run it from the NavLab companion image."
+            "mavlink_imu_bridge requires ROS2 Python packages and pymavlink. Run it from the NavLab companion image."
         ) from exc
 
     class MavlinkImuBridge(Node):
@@ -248,8 +247,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                 delta = now - self._last_sample_monotonic
                 if delta > 0.0:
                     current_rate = 1.0 / delta
-                    self._input_rate_hz = current_rate if self._input_rate_hz <= 0.0 else (
-                        0.8 * self._input_rate_hz + 0.2 * current_rate
+                    self._input_rate_hz = (
+                        current_rate if self._input_rate_hz <= 0.0 else (0.8 * self._input_rate_hz + 0.2 * current_rate)
                     )
             self._last_sample = sample
             self._last_sample_monotonic = now

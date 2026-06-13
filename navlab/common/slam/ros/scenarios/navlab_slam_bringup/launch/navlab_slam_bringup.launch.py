@@ -17,9 +17,7 @@ def generate_launch_description():
             "navlab_cartographer_adapter.params.yaml",
         ]
     )
-    cartographer_config_dir = PathJoinSubstitution(
-        [FindPackageShare("navlab_cartographer_adapter"), "config"]
-    )
+    cartographer_config_dir = PathJoinSubstitution([FindPackageShare("navlab_cartographer_adapter"), "config"])
     external_nav_params = PathJoinSubstitution(
         [
             FindPackageShare("navlab_external_nav_bridge"),
@@ -287,17 +285,11 @@ def generate_launch_description():
                 parameters=[
                     external_nav_params,
                     {
-                        "input_odom_topic": LaunchConfiguration(
-                            "external_nav_input_odom_topic"
-                        ),
+                        "input_odom_topic": LaunchConfiguration("external_nav_input_odom_topic"),
                         "imu_topic": LaunchConfiguration("imu_topic"),
                         "status_topic": LaunchConfiguration("external_nav_status_topic"),
-                        "require_imu_for_output": LaunchConfiguration(
-                            "require_imu_for_external_nav"
-                        ),
-                        "require_height_for_output": LaunchConfiguration(
-                            "require_height_for_external_nav"
-                        ),
+                        "require_imu_for_output": LaunchConfiguration("require_imu_for_external_nav"),
+                        "require_height_for_output": LaunchConfiguration("require_height_for_external_nav"),
                         "use_sim_time": LaunchConfiguration("use_sim_time"),
                     },
                 ],

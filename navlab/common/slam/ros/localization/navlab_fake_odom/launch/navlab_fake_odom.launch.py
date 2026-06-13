@@ -6,9 +6,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    params = PathJoinSubstitution(
-        [FindPackageShare("navlab_fake_odom"), "config", "navlab_fake_odom.params.yaml"]
-    )
+    params = PathJoinSubstitution([FindPackageShare("navlab_fake_odom"), "config", "navlab_fake_odom.params.yaml"])
 
     return LaunchDescription(
         [

@@ -2,4 +2,3 @@
 
 Modules under this namespace must not touch real hardware devices.
 """
-

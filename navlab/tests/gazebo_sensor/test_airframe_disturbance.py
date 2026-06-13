@@ -15,10 +15,18 @@ SDF = """<?xml version='1.0'?>
 <sdf version="1.9">
   <model name="iris_with_lidar">
     <plugin name="ArduPilotPlugin" filename="ArduPilotPlugin">
-      <control channel="0"><jointName>rotor_0_joint</jointName><multiplier>838</multiplier><p_gain>0.20</p_gain></control>
-      <control channel="1"><jointName>rotor_1_joint</jointName><multiplier>838</multiplier><p_gain>0.20</p_gain></control>
-      <control channel="2"><jointName>rotor_2_joint</jointName><multiplier>-838</multiplier><p_gain>0.20</p_gain></control>
-      <control channel="3"><jointName>rotor_3_joint</jointName><multiplier>-838</multiplier><p_gain>0.20</p_gain></control>
+      <control channel="0">
+        <jointName>rotor_0_joint</jointName><multiplier>838</multiplier><p_gain>0.20</p_gain>
+      </control>
+      <control channel="1">
+        <jointName>rotor_1_joint</jointName><multiplier>838</multiplier><p_gain>0.20</p_gain>
+      </control>
+      <control channel="2">
+        <jointName>rotor_2_joint</jointName><multiplier>-838</multiplier><p_gain>0.20</p_gain>
+      </control>
+      <control channel="3">
+        <jointName>rotor_3_joint</jointName><multiplier>-838</multiplier><p_gain>0.20</p_gain>
+      </control>
     </plugin>
   </model>
 </sdf>
@@ -33,7 +41,9 @@ def test_profile_validation_blocks_array_length_mismatch() -> None:
         esc_lag_ms=(0.0, 0.0, 0.0, 0.0),
     )
 
-    assert "airframe_disturbance_config_invalid: thrust_multipliers length must match motor_count" in validate_profile(profile)
+    assert "airframe_disturbance_config_invalid: thrust_multipliers length must match motor_count" in validate_profile(
+        profile
+    )
 
 
 def test_profile_validation_blocks_large_multiplier_without_hard_allowance() -> None:

@@ -102,10 +102,7 @@ def _source_set_uses_external_nav(parameters: Mapping[str, Any], *, prefix: str)
 
 
 def source_set_uses_gps(parameters: Mapping[str, Any], *, prefix: str) -> bool:
-    return any(
-        _int_param(_param_value(parameters, f"{prefix}_{field}")) == 3
-        for field in ("POSXY", "VELXY", "VELZ")
-    )
+    return any(_int_param(_param_value(parameters, f"{prefix}_{field}")) == 3 for field in ("POSXY", "VELXY", "VELZ"))
 
 
 def _param_value(parameters: Mapping[str, Any], name: str) -> Any:

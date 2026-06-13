@@ -21,9 +21,13 @@ type Writer struct {
 }
 
 type RunArtifact struct {
-	Type   string `json:"type"`
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256"`
+	Type          string `json:"type"`
+	Path          string `json:"path"`
+	Producer      string `json:"producer,omitempty"`
+	SchemaVersion string `json:"schemaVersion,omitempty"`
+	SHA256        string `json:"sha256"`
+	Bytes         int64  `json:"bytes"`
+	CreatedAt     string `json:"createdAt,omitempty"`
 }
 
 type GeneratedArtifact struct {
@@ -32,6 +36,7 @@ type GeneratedArtifact struct {
 }
 
 type Manifest struct {
+	SchemaVersion   string        `json:"schemaVersion"`
 	ContractVersion string        `json:"contract_version"`
 	Family          string        `json:"family"`
 	Implementation  string        `json:"implementation"`
@@ -44,10 +49,11 @@ type Manifest struct {
 }
 
 type DryRunResult struct {
-	RunID        string
-	ArtifactDir  string
-	PlanPath     string
-	ManifestPath string
+	RunID           string
+	ArtifactDir     string
+	PlanPath        string
+	TaskRequestPath string
+	ManifestPath    string
 }
 
 type RunPlanOptions struct {
@@ -100,8 +106,17 @@ func (writer Writer) WriteRunPlan(
 	if err != nil {
 		return DryRunResult{}, err
 	}
+	taskRequestPath := filepath.Join(taskDir, "task_request.json")
+	if err := writeJSON(taskRequestPath, taskRequestPayload(project, plan, runID, taskDir, now)); err != nil {
+		return DryRunResult{}, err
+	}
+	taskRequestHash, err := fileSHA256(taskRequestPath)
+	if err != nil {
+		return DryRunResult{}, err
+	}
 
 	manifest := Manifest{
+		SchemaVersion:   "navlab.orchestration.artifact_manifest.v1",
 		ContractVersion: project.Orchestration.ContractVersion,
 		Family:          project.Orchestration.Family,
 		Implementation:  project.Orchestration.Implementation,
@@ -111,11 +126,8 @@ func (writer Writer) WriteRunPlan(
 		RunID:           runID,
 		CreatedAt:       now.UTC().Format(time.RFC3339),
 		Artifacts: []RunArtifact{
-			{
-				Type:   "task_plan",
-				Path:   "task_plan.json",
-				SHA256: planHash,
-			},
+			newManifestArtifact("task_plan", "task_plan.json", planHash, planPath),
+			newManifestArtifact("task_request", "task_request.json", taskRequestHash, taskRequestPath),
 		},
 	}
 	manifestPath := filepath.Join(taskDir, "manifest.json")
@@ -124,11 +136,70 @@ func (writer Writer) WriteRunPlan(
 	}
 
 	return DryRunResult{
-		RunID:        runID,
-		ArtifactDir:  taskDir,
-		PlanPath:     planPath,
-		ManifestPath: manifestPath,
+		RunID:           runID,
+		ArtifactDir:     taskDir,
+		PlanPath:        planPath,
+		TaskRequestPath: taskRequestPath,
+		ManifestPath:    manifestPath,
 	}, nil
+}
+
+func taskRequestPayload(project config.ProjectConfig, plan tasks.Plan, runID string, artifactDir string, now time.Time) map[string]any {
+	return map[string]any{
+		"schemaVersion": "navlab.orchestration.task_request.v1",
+		"taskId":        plan.TaskID,
+		"runId":         runID,
+		"runtimeMode":   runtimeMode(project),
+		"artifactDir":   artifactDir,
+		"capabilities":  append([]string(nil), plan.Capabilities...),
+		"parameters": map[string]any{
+			"duration_sec":       plan.DurationSec,
+			"simulation_profile": plan.SimulationProfile,
+		},
+		"sourceClaims": map[string]any{
+			"runtimeDomain":           runtimeDomain(project),
+			"scanSource":              contractScanSource(project.Sensor.ScanSource),
+			"imuSource":               defaultString(project.RangefinderIMU.IMUSourceRoute, "official_gazebo_imu_bridge"),
+			"rangefinderSource":       defaultString(project.RangefinderIMU.RangefinderEndpoint, "gazebo_down_rangefinder"),
+			"slamSource":              defaultString(project.Slam.Backend, "cartographer"),
+			"usesTruthAsControlInput": false,
+		},
+		"createdAt": now.UTC().Format(time.RFC3339),
+	}
+}
+
+func runtimeMode(project config.ProjectConfig) string {
+	switch project.Runtime.Mode {
+	case "real":
+		return "RUNTIME_MODE_REAL"
+	default:
+		return "RUNTIME_MODE_SIM"
+	}
+}
+
+func runtimeDomain(project config.ProjectConfig) string {
+	switch project.Runtime.Mode {
+	case "real":
+		return "RUNTIME_DOMAIN_REAL"
+	default:
+		return "RUNTIME_DOMAIN_SIM"
+	}
+}
+
+func defaultString(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func contractScanSource(value string) string {
+	switch strings.TrimSpace(value) {
+	case "", "x2_virtual_serial":
+		return "gazebo_x2_virtual_serial"
+	default:
+		return value
+	}
 }
 
 func WriteJSONArtifact(path string, value any) error {
@@ -210,12 +281,57 @@ func AppendManifestArtifacts(manifestPath string, artifactDir string, generated 
 			relativePath = artifact.Path
 		}
 		manifest.Artifacts = append(manifest.Artifacts, RunArtifact{
-			Type:   artifact.Type,
-			Path:   filepath.ToSlash(relativePath),
-			SHA256: hash,
+			Type:          artifact.Type,
+			Path:          filepath.ToSlash(relativePath),
+			Producer:      "orchestration/sim",
+			SchemaVersion: artifactSchemaVersion(artifact.Type),
+			SHA256:        hash,
+			Bytes:         fileSize(artifact.Path),
+			CreatedAt:     fileCreatedAt(artifact.Path),
 		})
 	}
 	return writeJSON(manifestPath, manifest)
+}
+
+func newManifestArtifact(artifactType string, path string, sha256 string, fullPath string) RunArtifact {
+	return RunArtifact{
+		Type:          artifactType,
+		Path:          path,
+		Producer:      "orchestration/sim",
+		SchemaVersion: artifactSchemaVersion(artifactType),
+		SHA256:        sha256,
+		Bytes:         fileSize(fullPath),
+		CreatedAt:     fileCreatedAt(fullPath),
+	}
+}
+
+func artifactSchemaVersion(artifactType string) string {
+	switch artifactType {
+	case "task_request":
+		return "navlab.orchestration.task_request.v1"
+	case "runtime_plan":
+		return "navlab.runtime.runtime_plan.v1"
+	case "summary":
+		return "navlab.orchestration.task_result.v1"
+	default:
+		return ""
+	}
+}
+
+func fileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+func fileCreatedAt(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return info.ModTime().UTC().Format(time.RFC3339)
 }
 
 func writeJSON(path string, value any) error {

@@ -31,4 +31,3 @@ class ScanContract:
 
 
 DEFAULT_SCAN_CONTRACT = ScanContract()
-

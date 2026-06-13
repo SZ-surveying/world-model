@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-06-13: Contract enforcement stays JSON-first before codegen
+
+Decision: add contract validation through checked-in proto syntax, golden JSON
+examples, Go/Rust/Python compatibility tests, and a `scripts/quality`
+contracts check instead of introducing generated protobuf code in this slice.
+
+Basis: Go sim, Rust real, and Python runtime now emit or consume the contract
+shapes, but the repo still has no stable generated-code ownership convention.
+
+Reason: JSON-first enforcement catches boundary drift in CI while keeping sim
+and real independently movable to future repositories. Generated code can be
+added later once the schema surface stops changing.
+
+## 2026-06-13: Contracts proto starts with semantic skeletons
+
+Decision: split `contracts/proto/navlab` by semantic boundary
+(`orchestration`, `runtime`, `safety`, `sensors`) and add minimal proto
+skeletons plus golden JSON examples before wiring code generation.
+
+Basis: Go sim, Rust real, and Python runtime now need cross-language contracts,
+but the exact generated-code workflow is not yet a stable repo convention.
+
+Reason: checked-in schemas and examples freeze the boundary without coupling the
+current migration to a premature Buf/protoc, Go, Rust, or Python codegen stack.
+
 ## 2026-06-13: Root profiles only keep active cross-runtime inputs
 
 Decision: remove obsolete gate-specific rosbag topic profiles from the root

@@ -65,13 +65,17 @@ class ProgressReader:
         return chunk
 
 
-def upload_run(run: str | None = None, *, dry_run: bool = False, force: bool = False, lite: bool = False) -> dict[str, Any]:
+def upload_run(
+    run: str | None = None, *, dry_run: bool = False, force: bool = False, lite: bool = False
+) -> dict[str, Any]:
     run_dir = resolve_run_dir(run)
 
     if lite:
         lite_path = run_dir / FOXGLOVE_MCAP_RELATIVE
         if not lite_path.is_file():
-            CONSOLE.print(f"[yellow]warn:[/yellow] lite MCAP missing, generating first: {lite_path.relative_to(run_dir)}")
+            CONSOLE.print(
+                f"[yellow]warn:[/yellow] lite MCAP missing, generating first: {lite_path.relative_to(run_dir)}"
+            )
             if not _generate_lite_mcap(run_dir):
                 raise FileNotFoundError("failed to generate lite MCAP")
 
@@ -91,7 +95,7 @@ def upload_run(run: str | None = None, *, dry_run: bool = False, force: bool = F
     _load_dotenv(ENV_PATH)
     token = os.environ.get(TOKEN_ENV, "")
     if not token:
-        raise EnvironmentError(f"missing token env {TOKEN_ENV}")
+        raise OSError(f"missing token env {TOKEN_ENV}")
 
     uploaded: list[dict[str, Any]] = []
     try:
@@ -226,7 +230,9 @@ def _upload_with_retries(token: str, target: UploadTarget, progress: Progress) -
     last_error: Exception | None = None
     for attempt in range(1, MAX_UPLOAD_ATTEMPTS + 1):
         try:
-            CONSOLE.print(f"[cyan]request link[/cyan] {target.filename} [dim]attempt {attempt}/{MAX_UPLOAD_ATTEMPTS}[/dim]")
+            CONSOLE.print(
+                f"[cyan]request link[/cyan] {target.filename} [dim]attempt {attempt}/{MAX_UPLOAD_ATTEMPTS}[/dim]"
+            )
             return _upload_one(token, target, progress, attempt)
         except (HTTPError, URLError, OSError, TimeoutError, ValueError, ssl.SSLError) as exc:
             last_error = exc

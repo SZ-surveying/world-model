@@ -40,13 +40,27 @@ func TestWriteDryRunPlan(t *testing.T) {
 	if result.RunID != "20260612T010203Z" {
 		t.Fatalf("RunID = %q, want 20260612T010203Z", result.RunID)
 	}
-	for _, path := range []string{result.PlanPath, result.ManifestPath} {
+	for _, path := range []string{result.PlanPath, result.TaskRequestPath, result.ManifestPath} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("artifact %s missing: %v", path, err)
 		}
 		if filepath.Dir(path) != result.ArtifactDir {
 			t.Fatalf("artifact dir mismatch for %s", path)
 		}
+	}
+	requestData, err := os.ReadFile(result.TaskRequestPath)
+	if err != nil {
+		t.Fatalf("ReadFile(task_request) error = %v", err)
+	}
+	var request map[string]any
+	if err := json.Unmarshal(requestData, &request); err != nil {
+		t.Fatalf("Unmarshal(task_request) error = %v", err)
+	}
+	if request["schemaVersion"] != "navlab.orchestration.task_request.v1" {
+		t.Fatalf("schemaVersion = %#v", request["schemaVersion"])
+	}
+	if request["runtimeMode"] != "RUNTIME_MODE_SIM" {
+		t.Fatalf("runtimeMode = %#v", request["runtimeMode"])
 	}
 }
 
@@ -119,11 +133,14 @@ func TestAppendManifestArtifacts(t *testing.T) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if len(manifest.Artifacts) != 2 {
-		t.Fatalf("Artifacts len = %d, want 2", len(manifest.Artifacts))
+	if manifest.SchemaVersion != "navlab.orchestration.artifact_manifest.v1" {
+		t.Fatalf("manifest schemaVersion = %q", manifest.SchemaVersion)
 	}
-	got := manifest.Artifacts[1]
-	if got.Type != "slam_runtime_config" || got.Path != "slam_runtime.toml" || got.SHA256 == "" {
+	if len(manifest.Artifacts) != 3 {
+		t.Fatalf("Artifacts len = %d, want 3", len(manifest.Artifacts))
+	}
+	got := manifest.Artifacts[2]
+	if got.Type != "slam_runtime_config" || got.Path != "slam_runtime.toml" || got.SHA256 == "" || got.Producer != "orchestration/sim" || got.Bytes == 0 {
 		t.Fatalf("appended artifact = %#v", got)
 	}
 }

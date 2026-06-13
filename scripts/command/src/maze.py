@@ -21,6 +21,7 @@ class Wall:
     thickness: float
     height: float
 
+
 def parse_walls(path: Path) -> list[Wall]:
     root = ET.parse(path).getroot()
     model = root.find(".//model[@name='maze']")
@@ -82,8 +83,14 @@ def render_svg(walls: list[Wall], *, maze_path: Path) -> str:
 
     grid = []
     for value in range(-10, 11, 5):
-        grid.append(f'<line x1="{sx(value):.1f}" y1="{sy(world_min):.1f}" x2="{sx(value):.1f}" y2="{sy(world_max):.1f}" class="grid"/>')
-        grid.append(f'<line x1="{sx(world_min):.1f}" y1="{sy(value):.1f}" x2="{sx(world_max):.1f}" y2="{sy(value):.1f}" class="grid"/>')
+        grid.append(
+            f'<line x1="{sx(value):.1f}" y1="{sy(world_min):.1f}" '
+            f'x2="{sx(value):.1f}" y2="{sy(world_max):.1f}" class="grid"/>'
+        )
+        grid.append(
+            f'<line x1="{sx(world_min):.1f}" y1="{sy(value):.1f}" '
+            f'x2="{sx(world_max):.1f}" y2="{sy(value):.1f}" class="grid"/>'
+        )
         grid.append(f'<text x="{sx(value):.1f}" y="{sy(world_min) + 34:.1f}" class="tick">{value}</text>')
         grid.append(f'<text x="{sx(world_min) - 28:.1f}" y="{sy(value) + 4:.1f}" class="tick">{value}</text>')
 

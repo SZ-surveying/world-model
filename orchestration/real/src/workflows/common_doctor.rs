@@ -11,6 +11,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::{info, instrument};
 
 use crate::config::{ProjectConfig, TaskConfig};
+use crate::contracts;
 use crate::workflows::task_doctor::{TopicEvidence, UpstreamEvidence};
 
 #[derive(Debug, Clone)]
@@ -137,6 +138,7 @@ pub fn run_common_doctor(
         .summary_path
         .unwrap_or_else(|| default_summary_path(project, &task_config.id));
     write_json(&path, &summary, "real common-doctor summary")?;
+    write_contract_outputs(&path, project, &summary)?;
     info!(
         ok = summary.ok,
         blocked = summary.blocked,
@@ -145,6 +147,36 @@ pub fn run_common_doctor(
         "wrote real common-doctor summary"
     );
     Ok(summary)
+}
+
+fn write_contract_outputs(
+    summary_path: &Path,
+    project: &ProjectConfig,
+    summary: &CommonDoctorSummary,
+) -> Result<()> {
+    let doctor = contracts::doctor_result(
+        &summary.task_name,
+        summary.ok,
+        &summary.blockers,
+        vec![
+            ("required_topics_present", summary.upstream.ok),
+            ("common_state_valid", summary.common_state.ok),
+            (
+                "external_nav_ready",
+                summary.common_state.external_nav_ros_ready,
+            ),
+        ],
+    );
+    contracts::write_json(
+        &summary_path.with_file_name("doctor_result.json"),
+        &doctor,
+        "real common-doctor result",
+    )?;
+    contracts::write_json(
+        &summary_path.with_file_name("source_evidence.json"),
+        &contracts::source_evidence(project),
+        "real source evidence",
+    )
 }
 
 pub fn build_common_doctor_summary(

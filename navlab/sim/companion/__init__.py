@@ -1,2 +1,1 @@
 """Simulation companion runtime package."""
-

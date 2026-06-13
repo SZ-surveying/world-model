@@ -276,8 +276,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         from std_msgs.msg import String
     except ModuleNotFoundError as exc:
         raise SystemExit(
-            "mavlink_hover_mission_controller requires ROS2 and pymavlink. "
-            "Run it from the NavLab companion image."
+            "mavlink_hover_mission_controller requires ROS2 and pymavlink. Run it from the NavLab companion image."
         ) from exc
 
     class MavlinkHoverMissionController(Node):
@@ -570,7 +569,9 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._publish_landing_status()
             if landing_ok:
                 self._landing_state = "landing_complete"
-                self.write_summary(ok=self._hover_body_ok and landing_ok, reason=self._hover_body_reason, landing_ok=True)
+                self.write_summary(
+                    ok=self._hover_body_ok and landing_ok, reason=self._hover_body_reason, landing_ok=True
+                )
                 rclpy.try_shutdown()
 
         def _send_hold_setpoint(self, now: float) -> None:

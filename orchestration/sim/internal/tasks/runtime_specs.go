@@ -94,12 +94,13 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 			return RuntimeSpecBundle{}, err
 		}
 		spec := simruntime.ProbeSpec{
-			Name:    probe.Name,
-			Image:   image,
-			Command: []string{"bash", "-lc", "python3 " + shellQuote(containerScriptPath) + " > " + shellQuote(containerOutputPath)},
-			Env:     baselineEnv(project),
-			CWD:     containerWorkspace,
-			Volumes: []simruntime.VolumeMount{workspaceMount},
+			Name:       probe.Name,
+			Image:      image,
+			Command:    []string{"bash", "-lc", "python3 " + shellQuote(containerScriptPath) + " > " + shellQuote(containerOutputPath)},
+			Env:        baselineEnv(project),
+			CWD:        containerWorkspace,
+			Volumes:    []simruntime.VolumeMount{workspaceMount},
+			OutputPath: outputPath,
 			Networks: []string{
 				"host",
 			},

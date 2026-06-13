@@ -148,9 +148,7 @@ def test_figure8_world_has_two_shared_waist_rectangular_loops() -> None:
 def test_figure8_corridors_are_narrow_but_origin_has_takeoff_clearance() -> None:
     boxes = _obstacles_by_name()
 
-    left_side_width = _box_edge(boxes["inner_left_island"], "left") - _box_edge(
-        boxes["outer_left_west_wall"], "right"
-    )
+    left_side_width = _box_edge(boxes["inner_left_island"], "left") - _box_edge(boxes["outer_left_west_wall"], "right")
     right_side_width = _box_edge(boxes["outer_right_east_wall"], "left") - _box_edge(
         boxes["inner_right_island"], "right"
     )
@@ -160,9 +158,7 @@ def test_figure8_corridors_are_narrow_but_origin_has_takeoff_clearance() -> None
     right_south_width = _box_edge(boxes["inner_right_island"], "bottom") - _box_edge(
         boxes["outer_right_south_wall"], "top"
     )
-    shared_waist_width = _box_edge(boxes["inner_right_island"], "left") - _box_edge(
-        boxes["inner_left_island"], "right"
-    )
+    shared_waist_width = _box_edge(boxes["inner_right_island"], "left") - _box_edge(boxes["inner_left_island"], "right")
 
     assert isclose(left_side_width, 0.60, abs_tol=1e-9)
     assert isclose(right_side_width, 0.60, abs_tol=1e-9)

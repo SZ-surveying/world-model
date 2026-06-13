@@ -512,7 +512,8 @@ def run() -> int:
         def _log_status(self) -> None:
             elapsed = max(time.monotonic() - self._started, 0.001)
             logger.info(
-                "scan stabilization count={} pass={} comp={} drop={} rate_hz={:.2f} tf_ok={} attitude_seen={} height={}",
+                "scan stabilization count={} pass={} comp={} drop={} rate_hz={:.2f} "
+                "tf_ok={} attitude_seen={} height={}",
                 self._count,
                 self._passthrough,
                 self._compensated,

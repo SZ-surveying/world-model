@@ -650,9 +650,7 @@ def load_scan_integrity_config(path: str | Path | None = None) -> ScanIntegrityC
     raw_integrity = section(raw_gazebo_sensor, "scan_integrity", path=config_file, default={})
     return ScanIntegrityConfig(
         enabled=resolve_bool_value(raw_integrity, "enabled", DEFAULT_SCAN_INTEGRITY_ENABLED),
-        input_scan_topic=resolve_str_value(
-            raw_integrity, "input_scan_topic", DEFAULT_SCAN_INTEGRITY_INPUT_SCAN_TOPIC
-        ),
+        input_scan_topic=resolve_str_value(raw_integrity, "input_scan_topic", DEFAULT_SCAN_INTEGRITY_INPUT_SCAN_TOPIC),
         output_scan_topic=resolve_str_value(
             raw_integrity, "output_scan_topic", DEFAULT_SCAN_INTEGRITY_OUTPUT_SCAN_TOPIC
         ),
