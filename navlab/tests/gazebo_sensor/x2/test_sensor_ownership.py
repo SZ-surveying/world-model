@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from navlab.sim.gazebo_sensor.config import X2SensorRuntimeConfig, load_down_rangefinder_config
 
 
@@ -33,7 +35,11 @@ def test_gazebo_sensor_docker_target_owns_vendor_driver_dependency() -> None:
 
 
 def test_vendor_driver_uses_jazzy_compatible_parameter_declarations() -> None:
-    source = Path("third_party/ydlidar_ros2_driver/src/ydlidar_ros2_driver_node.cpp").read_text(encoding="utf-8")
+    source_path = Path("third_party/ydlidar_ros2_driver/src/ydlidar_ros2_driver_node.cpp")
+    if not source_path.exists():
+        pytest.skip("ydlidar_ros2_driver submodule is not initialized")
+
+    source = source_path.read_text(encoding="utf-8")
 
     assert not re.search(r'declare_parameter\("[^"]+"\)', source)
 

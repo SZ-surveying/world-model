@@ -20,7 +20,16 @@ fail() {
 
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 command -v protoc >/dev/null 2>&1 || fail "protoc is required"
-command -v protoc-gen-go >/dev/null 2>&1 || fail "protoc-gen-go is required"
+command -v go >/dev/null 2>&1 || fail "go is required"
+export PATH="$(go env GOPATH)/bin:$PATH"
+if ! command -v protoc-gen-go >/dev/null 2>&1; then
+  if [ "${CONTRACTS_ALLOW_BOOTSTRAP:-0}" = "1" ]; then
+    log_step "Installing protoc-gen-go"
+    go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.10
+  else
+    fail "protoc-gen-go is required; install it or set CONTRACTS_ALLOW_BOOTSTRAP=1"
+  fi
+fi
 command -v cargo >/dev/null 2>&1 || fail "cargo is required"
 command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 
