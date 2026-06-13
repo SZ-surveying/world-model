@@ -1,5 +1,27 @@
 # Decisions
 
+## 2026-06-13: Sim Docker images are split into infra and runtime layers
+
+Decision: move simulation Dockerfiles into `docker/images/base/*.Dockerfile`,
+`docker/images/infra/*.Dockerfile`, and `docker/images/runtime/*.Dockerfile`, import the
+former `sim-infra` image definitions as base/infra images, and make
+`navlab-sim build` resolve `base`, `infra`, `runtime`, or `all` as build
+groups. A single image is selected with `--image` inside the `infra` or
+`runtime` group.
+
+Basis: Go sim now owns image build orchestration, while runtime images depend
+on reusable base images such as ROS base, ArduPilot SITL, MAVLink Router, and
+Gazebo headless. Keeping those base Dockerfiles in a separate repository makes
+the sim build path harder to understand and harder to split later.
+
+Reason: the sim repository boundary should own the full simulation image stack.
+Image repositories use the `navlab/*` namespace, for example
+`navlab/ros-base` and `navlab/gazebo-headless`. Tags carry the ROS distro
+through the allowed policies `distro-git-commit`, `distro-datetime`, or
+`distro-latest`, with `humble` as the default distro. Operators can select
+`humble` or `jazzy` with `NAVLAB_SIM_DISTRO` or `navlab-sim build --distro`;
+other distro values fail before Docker starts.
+
 ## 2026-06-13: Python contracts use generated navlab_contracts package
 
 Decision: add `contracts/gen/python` as a generated `navlab_contracts` package,
@@ -88,14 +110,14 @@ current migration to a premature Buf/protoc, Go, Rust, or Python codegen stack.
 ## 2026-06-13: Root profiles only keep active cross-runtime inputs
 
 Decision: remove obsolete gate-specific rosbag topic profiles from the root
-`profiles/` directory after Go sim started generating runtime rosbag topic
-profiles under each run's artifact directory. Root `profiles/` now keeps only
+`docker/profiles/` directory after Go sim started generating runtime rosbag topic
+profiles under each run's artifact directory. Root `docker/profiles/` now keeps only
 files with active non-historical consumers: X2 vendor params, SITL ExternalNav
 params, Foxglove-lite topic profiles, and the remaining generic rosbag
 fallbacks.
 
 Basis: active Go sim tasks build rosbag record topic profiles from execution
-plans at runtime instead of reading legacy `profiles/navlab-*-rosbag-topics.txt`
+plans at runtime instead of reading legacy `docker/profiles/navlab-*-rosbag-topics.txt`
 files. Non-historical references now point only to the retained files.
 
 Reason: leaving old P-stage rosbag profiles in the root made retired Python
@@ -408,10 +430,9 @@ executable path only exposes dry-run behavior.
 ## 2026-06-12: Go sim owns simulation image builds
 
 Decision: move simulation Docker image build orchestration into Go sim and
-delete the legacy Python build surface. `navlab-sim build` now owns
-`companion`, `slam`, `gazebo-sensor`, `official-baseline`, and `all` image
-builds from the Go `config.toml` image catalog, with `--tag` override and
-`--dry-run` command inspection. The Python CLI `build` command and
+delete the legacy Python build surface. `navlab-sim build` owns image builds
+from the Go `config.toml` image catalog, with `--tag` override and `--dry-run`
+command inspection. The Python CLI `build` command and
 `orchestration/src/images.py` were removed.
 
 Basis: Go sim now owns the simulation control plane, including task registry,
@@ -1037,7 +1058,9 @@ Reason: P4 is not complete just because a node publishes `/odom`. The completion
 
 ## 2026-06-05: Cartographer dependency uses ROS Jazzy binary package first
 
-Decision: use `ros-jazzy-cartographer-ros` in `docker/Dockerfile.slam` as the default Cartographer dependency source.
+Decision: use the distro-matched `ros-${ROS_DISTRO}-cartographer-ros` package
+in `docker/images/runtime/slam.Dockerfile` as the default Cartographer dependency
+source.
 
 Basis: local Docker build and current need to configure Cartographer rather than patch its source.
 
@@ -1077,7 +1100,7 @@ Reason: Cartographer dependencies can be present while the runtime is still usin
 
 ## 2026-06-06: P0 needs an official baseline runtime image
 
-Decision: keep `world-model/navlab-companion`, `world-model/navlab-slam-cartographer`, and `remote-sitl-lab/ardupilot-sitl` as their current service images, but do not treat any of them as the official ROS2/DDS baseline runtime.
+Decision: keep `navlab/companion`, `navlab/slam-cartographer`, and `navlab/ardupilot-sitl` as their current service images, but do not treat any of them as the official ROS2/DDS baseline runtime.
 
 Basis: codebase research, official ArduPilot package inspection, and P0 doctor execution.
 
@@ -1145,7 +1168,7 @@ Reason: replacing the world, vehicle model, lidar mechanism, and SLAM input at t
 
 Decision: keep launching `ardupilot_gz_bringup iris_maze.launch.py`, but bind-mount a P1 bridge YAML over the official `iris_3Dlidar_bridge.yaml` so the official `ros_gz_bridge` no longer publishes ROS `/scan`.
 
-Basis: official launch inspection inside `world-model/navlab-official-baseline:latest` and P1 acceptance runs.
+Basis: official launch inspection inside `navlab/official-baseline:latest` and P1 acceptance runs.
 
 Reason: the official Iris lidar bridge maps Gazebo `/lidar` directly to ROS `/scan`. P1 needs `/scan` to mean “X2 virtual serial -> `ydlidar_ros2_driver` output”, otherwise Cartographer would receive a mixed topic from both `ros_gz_bridge` and the vendor driver. The bridge override preserves the official maze, Iris model, SITL, DDS, odometry, IMU, TF, and point cloud bridges, while freeing `/scan` for the vendor driver. The P1 acceptance blocks if `/scan` has a `ros_gz_bridge` publisher or if Cartographer is not subscribed to the vendor `/scan`.
 

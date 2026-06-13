@@ -48,7 +48,7 @@
 任务：
 
 - [x] 新增 P6 SLAM hover 配置段。
-- [x] 配置 rosbag profile，默认 `profiles/navlab-slam-hover-rosbag-topics.txt`。
+- [x] 配置 rosbag profile，默认 `docker/profiles/navlab-slam-hover-rosbag-topics.txt`。
 - [x] 配置 SLAM odom topic，默认 `/slam/odom`。
 - [x] 配置 SLAM status topic，默认 `/navlab/slam/status`。
 - [x] 配置 ExternalNav status topic，默认 `/external_nav/status`。

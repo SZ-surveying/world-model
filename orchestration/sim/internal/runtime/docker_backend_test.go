@@ -31,7 +31,7 @@ func (runner *fakeRunner) Run(ctx context.Context, command string, args ...strin
 func TestDockerServiceArgs(t *testing.T) {
 	args, err := DockerServiceArgs(ServiceSpec{
 		Name:          "slam",
-		Image:         "world-model/navlab-slam:latest",
+		Image:         "navlab/slam:latest",
 		ContainerName: "navlab-slam-backend",
 		Command:       []string{"bash", "-lc", "echo ok"},
 		Env:           map[string]string{"ROS_DOMAIN_ID": "85"},
@@ -51,7 +51,7 @@ func TestDockerServiceArgs(t *testing.T) {
 		"--volume", ".:/workspace",
 		"--workdir", "/workspace",
 		"--env", "ROS_DOMAIN_ID=85",
-		"world-model/navlab-slam:latest",
+		"navlab/slam:latest",
 		"bash", "-lc", "echo ok",
 	}
 	if !reflect.DeepEqual(args, expected) {

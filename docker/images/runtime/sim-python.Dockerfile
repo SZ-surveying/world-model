@@ -1,4 +1,8 @@
-FROM remote-sitl-lab/ros-jazzy-base:latest AS sim-python-builder
+ARG ROS_DISTRO=humble
+ARG INFRA_TAG=humble-latest
+ARG ROS_BASE_IMAGE=navlab/ros-base:${INFRA_TAG}
+
+FROM ${ROS_BASE_IMAGE} AS sim-python-builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.16-python3.11-alpine /usr/local/bin/uv /usr/local/bin/uv
 
@@ -17,7 +21,7 @@ RUN uv sync \
   --no-install-project
 
 
-FROM remote-sitl-lab/ros-jazzy-base:latest AS sim-python-runtime
+FROM ${ROS_BASE_IMAGE} AS sim-python-runtime
 
 ENV VIRTUAL_ENV=/opt/sim-venv
 ENV PATH=/opt/sim-venv/bin:$PATH

@@ -203,11 +203,11 @@ navlab-official-baseline-acceptance
 
 任务：
 
-- [x] 新增 `world-model/navlab-official-baseline:latest` 镜像配置。
-- [x] 新增 `docker/Dockerfile.official-baseline`。
+- [x] 新增 `navlab/official-baseline:latest` 镜像配置。
+- [x] 新增 `docker/images/runtime/official-baseline.Dockerfile`。
 - [x] 新增 `uv run --project orchestration python orchestration/main.py build official-baseline`。
 - [x] P0 doctor 默认检查 dedicated official baseline runtime image，而不是 companion image。
-- [x] 构建 `world-model/navlab-official-baseline:latest`。
+- [x] 构建 `navlab/official-baseline:latest`。
 - [x] 构建后重跑 `uv run --project orchestration python orchestration/main.py official-baseline-doctor`。
 - [x] doctor summary 中 `official_runtime_image_available=true`。
 - [x] doctor summary 中官方 ROS packages 全部 present。
@@ -290,7 +290,7 @@ P0 全部完成必须满足：
 - 时间：2026-06-06 00:20:10
 - artifact：`artifacts/ros/navlab_official_baseline_doctor/20260606_002010`
 - 结果：未通过，符合当前 P0 预期
-- blocker：`world-model/navlab-official-baseline:latest` 尚未构建或不可运行，官方 ROS2/DDS package 和 Micro-XRCE-DDS / micro-ROS-Agent 仍缺失
+- blocker：`navlab/official-baseline:latest` 尚未构建或不可运行，官方 ROS2/DDS package 和 Micro-XRCE-DDS / micro-ROS-Agent 仍缺失
 - 备注：P0 doctor 已改为检查 dedicated official baseline runtime image；下一步是执行 `uv run --project orchestration python orchestration/main.py build official-baseline`。
 
 后续每次验证按下面格式记录：

@@ -188,8 +188,18 @@ func normalizeProject(cfg *ProjectConfig) {
 	if len(cfg.Images) == 0 && len(cfg.Navlab.Images.Catalog) > 0 {
 		cfg.Images = cfg.Navlab.Images.Catalog
 	}
+	if cfg.Navlab.Images.TagPolicy == "" {
+		if cfg.Navlab.Images.TagStrategy != "" {
+			cfg.Navlab.Images.TagPolicy = cfg.Navlab.Images.TagStrategy
+		} else {
+			cfg.Navlab.Images.TagPolicy = "distro-git-commit"
+		}
+	}
 	if cfg.Navlab.Images.TagStrategy == "" {
-		cfg.Navlab.Images.TagStrategy = "latest"
+		cfg.Navlab.Images.TagStrategy = cfg.Navlab.Images.TagPolicy
+	}
+	if cfg.Navlab.Images.Distro == "" {
+		cfg.Navlab.Images.Distro = "humble"
 	}
 	applySimulationDefaults(cfg)
 }

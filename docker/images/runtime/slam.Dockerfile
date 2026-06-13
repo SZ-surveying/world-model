@@ -1,8 +1,14 @@
-FROM remote-sitl-lab/ros-jazzy-base:latest AS navlab-slam-cartographer
+ARG ROS_DISTRO=humble
+ARG INFRA_TAG=humble-latest
+ARG ROS_BASE_IMAGE=navlab/ros-base:${INFRA_TAG}
+
+FROM ${ROS_BASE_IMAGE} AS navlab-slam-cartographer
+
+ARG ROS_DISTRO=humble
 
 RUN apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update && \
   apt-get install -y --no-install-recommends \
-    ros-jazzy-cartographer-ros && \
+    ros-${ROS_DISTRO}-cartographer-ros && \
   rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/navlab_ws

@@ -12,6 +12,7 @@ import (
 )
 
 func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
+	t.Setenv("NAVLAB_SIM_DISTRO", "")
 	project := config.ProjectConfig{
 		Orchestration: config.OrchestrationConfig{
 			Runtime: config.OrchestrationRuntimeConfig{
@@ -21,12 +22,12 @@ func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
 		Paths:       config.PathConfig{WorkspaceRoot: "."},
 		RosDomainID: "85",
 		Navlab: config.NavlabConfig{
-			Images: config.ImageCatalog{TagStrategy: "latest"},
+			Images: config.ImageCatalog{TagPolicy: "distro-latest"},
 		},
 		Images: map[string]config.Image{
-			"gazebo_sensor":     {Repository: "world-model/navlab-gazebo-sensor"},
-			"slam":              {Repository: "world-model/navlab-slam-cartographer"},
-			"official_baseline": {Repository: "world-model/navlab-official-baseline"},
+			"gazebo_sensor":     {Repository: "navlab/gazebo-sensor"},
+			"slam":              {Repository: "navlab/slam-cartographer"},
+			"official_baseline": {Repository: "navlab/official-baseline"},
 		},
 	}
 	plan := helpers.ExecutionPlan{
@@ -71,17 +72,17 @@ func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
 		t.Fatalf("services = %#v", bundle.Services)
 	}
 	official := serviceByName(bundle.Services, "official_baseline")
-	if official == nil || official.Image != "world-model/navlab-official-baseline:latest" {
+	if official == nil || official.Image != "navlab/official-baseline:humble-latest" {
 		t.Fatalf("official baseline service = %#v", bundle.Services)
 	}
 	sensor := serviceByName(bundle.Services, "gazebo_sensor")
-	if sensor == nil || sensor.Image != "world-model/navlab-gazebo-sensor:latest" {
+	if sensor == nil || sensor.Image != "navlab/gazebo-sensor:humble-latest" {
 		t.Fatalf("gazebo sensor service = %#v", bundle.Services)
 	}
 	if sensor.Env["ROS_DOMAIN_ID"] != "85" {
 		t.Fatalf("service env = %#v", sensor.Env)
 	}
-	if len(bundle.Probes) != 1 || bundle.Probes[0].Image != "world-model/navlab-official-baseline:latest" {
+	if len(bundle.Probes) != 1 || bundle.Probes[0].Image != "navlab/official-baseline:humble-latest" {
 		t.Fatalf("probes = %#v", bundle.Probes)
 	}
 	if len(bundle.Rosbags) != 1 {
@@ -93,6 +94,7 @@ func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
 }
 
 func TestBuildRuntimeSpecsMapsWorkspaceArtifactsToContainerWorkspace(t *testing.T) {
+	t.Setenv("NAVLAB_SIM_DISTRO", "")
 	workspace := t.TempDir()
 	artifactDir := filepath.Join(workspace, "artifacts", "sim", "hover", "run-1")
 	project := config.ProjectConfig{
@@ -104,10 +106,10 @@ func TestBuildRuntimeSpecsMapsWorkspaceArtifactsToContainerWorkspace(t *testing.
 		Paths:       config.PathConfig{WorkspaceRoot: workspace},
 		RosDomainID: "85",
 		Navlab: config.NavlabConfig{
-			Images: config.ImageCatalog{TagStrategy: "latest"},
+			Images: config.ImageCatalog{TagPolicy: "distro-latest"},
 		},
 		Images: map[string]config.Image{
-			"official_baseline": {Repository: "world-model/navlab-official-baseline"},
+			"official_baseline": {Repository: "navlab/official-baseline"},
 		},
 	}
 	plan := helpers.ExecutionPlan{
@@ -181,7 +183,7 @@ func TestBuildRuntimePlanContract(t *testing.T) {
 				{
 					Name:        "gazebo_sensor",
 					ServiceRole: "sensors",
-					Image:       "world-model/navlab-gazebo-sensor:latest",
+					Image:       "navlab/gazebo-sensor:latest",
 					Command:     []string{"bash", "-lc", "run-sensor"},
 					Env:         map[string]string{"ROS_DOMAIN_ID": "85"},
 					CWD:         "/workspace",
@@ -197,7 +199,7 @@ func TestBuildRuntimePlanContract(t *testing.T) {
 				{
 					Name:        "rangefinder_probe",
 					ServiceRole: "sensors",
-					Image:       "world-model/navlab-official-baseline:latest",
+					Image:       "navlab/official-baseline:latest",
 					Command:     []string{"bash", "-lc", "probe"},
 					Env:         map[string]string{"ROS_DOMAIN_ID": "85"},
 					TimeoutSec:  30,

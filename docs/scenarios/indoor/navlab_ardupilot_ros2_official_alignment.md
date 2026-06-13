@@ -111,7 +111,7 @@ ardupilot_gz_bringup
 | ROS2/DDS 接口 | `DDS_ENABLE=1`，`DDS_DOMAIN_ID` 匹配 `ROS_DOMAIN_ID`，关键 `/ap/v1/*` topic/service 可用 | P0 已收到 `/ap/v1/time` sample，并发现 `/ap/v1/prearm_check` service | P0 匹配 |
 | 官方 Cartographer package | `ardupilot_cartographer cartographer.launch.py` | 当前用 `navlab_slam_bringup` + `navlab_cartographer_adapter` 包装 Cartographer | 部分匹配 |
 | Cartographer Lua | 官方 `tracking_frame=imu_link`、`use_odometry=true`、`/odom -> /odometry` | 已将 `navlab_cartographer_2d.lua` 收敛到官方 baseline | 匹配配置，运行链仍需验证 |
-| EKF 参数 | 官方 SITL baseline：`VISO_TYPE=1`、`EK3_SRC1_POSZ=1`、`EK3_SRC1_VELXY=6`、`EK3_SRC1_VELZ=6` | 已将 `profiles/navlab-sitl-external-nav.parm` 收敛到官方 baseline | 匹配配置，运行链仍需验证 |
+| EKF 参数 | 官方 SITL baseline：`VISO_TYPE=1`、`EK3_SRC1_POSZ=1`、`EK3_SRC1_VELXY=6`、`EK3_SRC1_VELZ=6` | 已将 `docker/profiles/navlab-sitl-external-nav.parm` 收敛到官方 baseline | 匹配配置，运行链仍需验证 |
 | ExternalNav 入口 | 官方路线应优先使用 ArduPilot ROS2/DDS 外部里程计接口 | 当前仍有 `/odom -> /external_nav/odom -> MAVLink ODOMETRY -> SITL` 自定义桥 | 不匹配 |
 | Rangefinder 定高 | 官方 Cartographer 示例用 Baro 作为 POSZ；NavLab 可以另外注入下视 rangefinder 作为 FCU 外设 | 当前下视 rangefinder 在 `gazebo-sensor` 中通过 MAVLink `DISTANCE_SENSOR` 注入 | 可保留，但不能混成官方 Cartographer EKF baseline |
 | rosbag / Foxglove | 官方教程不定义批处理上传；这是 NavLab 自己的验收需求 | 当前已实现 MCAP 记录和上传 | NavLab 扩展，不影响官方对齐 |
@@ -120,7 +120,7 @@ ardupilot_gz_bringup
 
 ### EKF 参数
 
-`profiles/navlab-sitl-external-nav.parm` 已按官方 Cartographer SITL 参数收敛：
+`docker/profiles/navlab-sitl-external-nav.parm` 已按官方 Cartographer SITL 参数收敛：
 
 - `AHRS_EKF_TYPE=3`
 - `EK2_ENABLE=0`
@@ -196,7 +196,7 @@ Cartographer /odom
 
 P0 当前实测结果：
 
-- `world-model/navlab-official-baseline:latest` 已构建并通过 doctor。
+- `navlab/official-baseline:latest` 已构建并通过 doctor。
 - `uv run --project orchestration python orchestration/main.py official-baseline-acceptance 30` 已通过。
 - MCAP 已记录 `/clock`、`/tf`、`/tf_static`、`/ap/v1/time`。
 

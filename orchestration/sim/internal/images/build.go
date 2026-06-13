@@ -9,24 +9,43 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"navlab/orchestration-sim/internal/config"
 )
 
 const (
+	GroupInfra   = "infra"
+	GroupRuntime = "runtime"
+
 	KindAll              = "all"
+	KindInfra            = GroupInfra
+	KindRuntime          = GroupRuntime
+	KindBase             = "base"
+	KindRosBase          = "ros-base"
+	KindArduPilotSITL    = "ardupilot-sitl"
+	KindMAVLinkRouter    = "mavlink-router"
+	KindGazeboHeadless   = "gazebo-headless"
+	KindFastLIO          = "fast-lio"
 	KindCompanion        = "companion"
 	KindSlam             = "slam"
 	KindGazeboSensor     = "gazebo-sensor"
 	KindOfficialBaseline = "official-baseline"
 )
 
-var canonicalKinds = []string{KindCompanion, KindSlam, KindGazeboSensor, KindOfficialBaseline}
+var (
+	canonicalBaseKinds    = []string{KindRosBase}
+	canonicalInfraKinds   = []string{KindArduPilotSITL, KindMAVLinkRouter, KindGazeboHeadless, KindFastLIO}
+	canonicalRuntimeKinds = []string{KindCompanion, KindSlam, KindGazeboSensor, KindOfficialBaseline}
+)
 
 type BuildOptions struct {
 	Kind   string
+	Image  string
 	Tag    string
+	Distro string
 	DryRun bool
 	Stdout io.Writer
 	Stderr io.Writer
@@ -35,7 +54,10 @@ type BuildOptions struct {
 
 type BuildSpec struct {
 	Kind       string   `json:"kind"`
+	Group      string   `json:"group"`
 	ConfigKey  string   `json:"config_key"`
+	Distro     string   `json:"distro"`
+	Tag        string   `json:"tag"`
 	Context    string   `json:"context"`
 	Dockerfile string   `json:"dockerfile"`
 	Target     string   `json:"target"`
@@ -62,7 +84,7 @@ func (ExecRunner) Run(ctx context.Context, name string, args []string, stdout io
 }
 
 func Build(ctx context.Context, project config.ProjectConfig, options BuildOptions) (BuildResult, error) {
-	specs, err := ResolveBuildSpecs(project, options.Kind, options.Tag)
+	specs, err := ResolveBuildSpecsWithOptions(project, options)
 	if err != nil {
 		return BuildResult{}, err
 	}
@@ -94,11 +116,15 @@ func Build(ctx context.Context, project config.ProjectConfig, options BuildOptio
 }
 
 func ResolveBuildSpecs(project config.ProjectConfig, kind string, tagOverride string) ([]BuildSpec, error) {
-	normalizedKind := strings.TrimSpace(kind)
+	return ResolveBuildSpecsWithOptions(project, BuildOptions{Kind: kind, Tag: tagOverride})
+}
+
+func ResolveBuildSpecsWithOptions(project config.ProjectConfig, options BuildOptions) ([]BuildSpec, error) {
+	normalizedKind := strings.TrimSpace(options.Kind)
 	if normalizedKind == "" {
 		normalizedKind = KindAll
 	}
-	selected, err := selectKinds(normalizedKind)
+	selected, err := selectKinds(project, normalizedKind, options.Image)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +135,7 @@ func ResolveBuildSpecs(project config.ProjectConfig, kind string, tagOverride st
 		if !ok {
 			return nil, fmt.Errorf("navlab image %q is not configured", configKey)
 		}
-		spec, err := buildSpec(project, selectedKind, configKey, image, tagOverride)
+		spec, err := buildSpec(project, selectedKind, configKey, image, options.Tag, options.Distro)
 		if err != nil {
 			return nil, err
 		}
@@ -118,18 +144,53 @@ func ResolveBuildSpecs(project config.ProjectConfig, kind string, tagOverride st
 	return specs, nil
 }
 
-func selectKinds(kind string) ([]string, error) {
+func selectKinds(project config.ProjectConfig, kind string, image string) ([]string, error) {
 	switch kind {
 	case KindAll:
-		return append([]string(nil), canonicalKinds...), nil
-	case KindCompanion, KindSlam, KindGazeboSensor, KindOfficialBaseline:
-		return []string{kind}, nil
+		if strings.TrimSpace(image) != "" {
+			return nil, errors.New("--image can only be used with infra or runtime")
+		}
+		selected := append([]string(nil), canonicalBaseKinds...)
+		selected = append(selected, canonicalInfraKinds...)
+		selected = append(selected, canonicalRuntimeKinds...)
+		return selected, nil
+	case KindBase:
+		if strings.TrimSpace(image) != "" {
+			return nil, errors.New("--image can only be used with infra or runtime")
+		}
+		return []string{KindRosBase}, nil
+	case KindInfra:
+		if strings.TrimSpace(image) != "" {
+			return selectImageInGroup(project, image, GroupInfra)
+		}
+		return append([]string(nil), canonicalInfraKinds...), nil
+	case KindRuntime:
+		if strings.TrimSpace(image) != "" {
+			return selectImageInGroup(project, image, GroupRuntime)
+		}
+		return append([]string(nil), canonicalRuntimeKinds...), nil
 	default:
-		return nil, fmt.Errorf("invalid image kind %q: expected companion, slam, gazebo-sensor, official-baseline, or all", kind)
+		return nil, fmt.Errorf("invalid image group %q: expected base, infra, runtime, or all", kind)
 	}
 }
 
-func buildSpec(project config.ProjectConfig, kind string, configKey string, image config.Image, tagOverride string) (BuildSpec, error) {
+func selectImageInGroup(project config.ProjectConfig, image string, group string) ([]string, error) {
+	kind := strings.TrimSpace(image)
+	if kind == "" {
+		return nil, errors.New("--image requires an image kind")
+	}
+	configKey := configKeyForKind(kind)
+	imageConfig, ok := project.Images[configKey]
+	if !ok {
+		return nil, fmt.Errorf("image %q is not configured", kind)
+	}
+	if imageGroup(imageConfig) != group {
+		return nil, fmt.Errorf("image %q belongs to %s, not %s", kind, imageGroup(imageConfig), group)
+	}
+	return []string{kind}, nil
+}
+
+func buildSpec(project config.ProjectConfig, kind string, configKey string, image config.Image, tagOverride string, distroOverride string) (BuildSpec, error) {
 	if strings.TrimSpace(image.Repository) == "" {
 		return BuildSpec{}, fmt.Errorf("navlab image %q repository is required", configKey)
 	}
@@ -141,11 +202,8 @@ func buildSpec(project config.ProjectConfig, kind string, configKey string, imag
 	if err != nil {
 		return BuildSpec{}, fmt.Errorf("resolve %s dockerfile: %w", configKey, err)
 	}
-	target := strings.TrimSpace(image.Target)
-	if target == "" {
-		return BuildSpec{}, fmt.Errorf("navlab image %q target is required", configKey)
-	}
-	tag, err := resolveTag(project, tagOverride)
+	distro := resolveDistro(project, image, distroOverride)
+	tag, err := ResolveImageTag(project, image, tagOverride, distro)
 	if err != nil {
 		return BuildSpec{}, err
 	}
@@ -154,16 +212,26 @@ func buildSpec(project config.ProjectConfig, kind string, configKey string, imag
 		"docker",
 		"build",
 		"-f", dockerfilePath,
-		"--target", target,
+	}
+	if target := strings.TrimSpace(image.Target); target != "" {
+		command = append(command, "--target", target)
+	}
+	for _, arg := range buildArgs(image, distro, tag) {
+		command = append(command, "--build-arg", arg)
+	}
+	command = append(command,
 		"-t", fullImage,
 		contextPath,
-	}
+	)
 	return BuildSpec{
 		Kind:       kind,
+		Group:      imageGroup(image),
 		ConfigKey:  configKey,
+		Distro:     distro,
+		Tag:        tag,
 		Context:    contextPath,
 		Dockerfile: dockerfilePath,
-		Target:     target,
+		Target:     strings.TrimSpace(image.Target),
 		Image:      fullImage,
 		Command:    command,
 	}, nil
@@ -184,21 +252,57 @@ func resolveWorkspacePath(workspaceRoot string, value string) (string, error) {
 	return filepath.Clean(filepath.Join(root, trimmed)), nil
 }
 
-func resolveTag(project config.ProjectConfig, tagOverride string) (string, error) {
+func resolveDistro(project config.ProjectConfig, image config.Image, distroOverride string) string {
+	if strings.TrimSpace(distroOverride) != "" {
+		return normalizeDistro(strings.TrimSpace(distroOverride))
+	}
+	if envDistro := strings.TrimSpace(os.Getenv("NAVLAB_SIM_DISTRO")); envDistro != "" {
+		return normalizeDistro(envDistro)
+	}
+	if strings.TrimSpace(image.Distro) != "" {
+		return normalizeDistro(strings.TrimSpace(image.Distro))
+	}
+	if strings.TrimSpace(project.Navlab.Images.Distro) != "" {
+		return normalizeDistro(strings.TrimSpace(project.Navlab.Images.Distro))
+	}
+	return "humble"
+}
+
+func ResolveImageTag(project config.ProjectConfig, image config.Image, tagOverride string, distroOverride string) (string, error) {
+	distro := resolveDistro(project, image, distroOverride)
+	if err := ValidateDistro(distro); err != nil {
+		return "", err
+	}
+	return resolveTag(project, image, tagOverride, distro)
+}
+
+func resolveTag(project config.ProjectConfig, image config.Image, tagOverride string, distro string) (string, error) {
 	if strings.TrimSpace(tagOverride) != "" {
 		return strings.TrimSpace(tagOverride), nil
 	}
-	strategy := strings.TrimSpace(project.Navlab.Images.TagStrategy)
-	if strategy == "" {
-		strategy = "latest"
+	policy := strings.TrimSpace(image.TagPolicy)
+	if policy == "" {
+		policy = strings.TrimSpace(project.Navlab.Images.TagPolicy)
 	}
-	switch strings.ToLower(strategy) {
-	case "latest":
-		return "latest", nil
-	case "git-commit":
-		return gitCommitTag(project.Paths.WorkspaceRoot)
+	if policy == "" {
+		policy = strings.TrimSpace(project.Navlab.Images.TagStrategy)
+	}
+	if policy == "" {
+		policy = "distro-git-commit"
+	}
+	switch strings.ToLower(policy) {
+	case "distro-latest":
+		return distro + "-latest", nil
+	case "distro-git-commit":
+		commit, err := gitCommitTag(project.Paths.WorkspaceRoot)
+		if err != nil {
+			return "", err
+		}
+		return distro + "-" + commit, nil
+	case "distro-datetime":
+		return distro + "-" + datetimeTag(), nil
 	default:
-		return "", fmt.Errorf("invalid navlab image tag_strategy %q: expected latest or git-commit", strategy)
+		return "", fmt.Errorf("invalid navlab image tag_policy %q: expected distro-git-commit, distro-datetime, or distro-latest", policy)
 	}
 }
 
@@ -227,13 +331,68 @@ func gitCommitTag(workspaceRoot string) (string, error) {
 	return tag, nil
 }
 
+func datetimeTag() string {
+	return time.Now().UTC().Format("20060102T150405Z")
+}
+
+func buildArgs(image config.Image, distro string, tag string) []string {
+	args := map[string]string{
+		"ROS_DISTRO": distro,
+		"INFRA_TAG":  tag,
+	}
+	for key, value := range image.BuildArgs {
+		args[key] = value
+	}
+	keys := make([]string, 0, len(args))
+	for key := range args {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	values := make([]string, 0, len(keys))
+	for _, key := range keys {
+		values = append(values, key+"="+args[key])
+	}
+	return values
+}
+
+func imageGroup(image config.Image) string {
+	group := strings.TrimSpace(image.Group)
+	if group == "" {
+		return GroupRuntime
+	}
+	return group
+}
+
+func normalizeDistro(distro string) string {
+	return strings.ToLower(strings.TrimSpace(distro))
+}
+
+func ValidateDistro(distro string) error {
+	switch normalizeDistro(distro) {
+	case "humble", "jazzy":
+		return nil
+	default:
+		return fmt.Errorf("unsupported ROS distro %q: expected humble or jazzy", distro)
+	}
+}
+
 func configKeyForKind(kind string) string {
 	switch kind {
+	case KindRosBase:
+		return "ros_base"
+	case KindArduPilotSITL:
+		return "ardupilot_sitl"
+	case KindMAVLinkRouter:
+		return "mavlink_router"
+	case KindGazeboHeadless:
+		return "gazebo_headless"
+	case KindFastLIO:
+		return "fast_lio"
 	case KindGazeboSensor:
 		return "gazebo_sensor"
 	case KindOfficialBaseline:
 		return "official_baseline"
 	default:
-		return kind
+		return strings.ReplaceAll(kind, "-", "_")
 	}
 }

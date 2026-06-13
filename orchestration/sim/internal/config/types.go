@@ -73,15 +73,21 @@ type NavlabConfig struct {
 }
 
 type ImageCatalog struct {
+	Distro      string           `mapstructure:"distro"`
+	TagPolicy   string           `mapstructure:"tag_policy"`
 	TagStrategy string           `mapstructure:"tag_strategy"`
 	Catalog     map[string]Image `mapstructure:",remain"`
 }
 
 type Image struct {
-	Repository string `mapstructure:"repository"`
-	Dockerfile string `mapstructure:"dockerfile"`
-	Context    string `mapstructure:"context"`
-	Target     string `mapstructure:"target"`
+	Group      string            `mapstructure:"group"`
+	Distro     string            `mapstructure:"distro"`
+	TagPolicy  string            `mapstructure:"tag_policy"`
+	Repository string            `mapstructure:"repository"`
+	Dockerfile string            `mapstructure:"dockerfile"`
+	Context    string            `mapstructure:"context"`
+	Target     string            `mapstructure:"target"`
+	BuildArgs  map[string]string `mapstructure:"build_args"`
 }
 
 type LandingConfig struct {

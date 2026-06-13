@@ -14,6 +14,7 @@ on:
       - "justfile"
       - "navlab/**"
       - "contracts/**"
+      - "docker/**"
       - "orchestration/**"
       - "scripts/command/**"
       - "scripts/contracts/**"
@@ -32,6 +33,7 @@ on:
       - "justfile"
       - "navlab/**"
       - "contracts/**"
+      - "docker/**"
       - "orchestration/**"
       - "scripts/command/**"
       - "scripts/contracts/**"
@@ -73,6 +75,7 @@ jobs:
               - 'lefthook.yml'
               - 'justfile'
               - 'navlab/**'
+              - 'docker/**'
               - 'scripts/command/**'
               - 'scripts/ops/**/*.py'
             go:
@@ -84,6 +87,7 @@ jobs:
               - 'justfile'
               - 'scripts/quality/check-go.sh'
               - 'scripts/quality/format-go.sh'
+              - 'docker/**'
               - 'orchestration/sim/**'
             rust:
               - '.github/workflows/main-validation.yml'

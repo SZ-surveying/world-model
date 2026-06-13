@@ -6,7 +6,7 @@ x-nn-user: &nn_user
 services:
   sitl:
     <<: *nn_user
-    image: "${SITL_IMAGE:-remote-sitl-lab/ardupilot-sitl:stage1-f10500ae45aa}"
+    image: "${SITL_IMAGE:-navlab/ardupilot-sitl:humble-latest}"
     network_mode: "service:gazebo"
     environment:
       SESSION_ID: "${SESSION_ID:-manual}"
@@ -19,7 +19,7 @@ services:
       SITL_EXTRA_ARGS: "${SITL_EXTRA_ARGS:-}"
     volumes:
       - ./artifacts/sessions:/artifacts/sessions
-      - ./profiles:/workspace/profiles:ro
+      - ./docker/profiles:/workspace/profiles:ro
       - ./docker/entrypoints/start-sitl.sh:/usr/local/bin/start-sitl.sh:ro
     command: [ "bash", "/usr/local/bin/start-sitl.sh" ]
     healthcheck:
@@ -37,7 +37,7 @@ services:
 
   mavlink-router:
     <<: *nn_user
-    image: "${ROUTER_IMAGE:-remote-sitl-lab/mavlink-router:stage1-4ee567d97525}"
+    image: "${ROUTER_IMAGE:-navlab/mavlink-router:humble-latest}"
     environment:
       SESSION_ID: "${SESSION_ID:-manual}"
       ROUTER_LISTEN: "${ROUTER_LISTEN:-0.0.0.0:14550}"
@@ -59,7 +59,7 @@ services:
 
   gazebo:
     <<: *nn_user
-    image: remote-sitl-lab/gazebo-headless:latest
+    image: navlab/gazebo-headless:humble-latest
     environment:
       SESSION_ID: "${SESSION_ID:-manual}"
       ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
@@ -77,7 +77,7 @@ services:
 
   gazebo-sensor:
     <<: *nn_user
-    image: "${NAVLAB_GAZEBO_SENSOR_IMAGE:-world-model/navlab-gazebo-sensor:latest}"
+    image: "${NAVLAB_GAZEBO_SENSOR_IMAGE:-navlab/gazebo-sensor:humble-latest}"
     network_mode: "service:gazebo"
     working_dir: /workspace
     environment:
@@ -101,13 +101,13 @@ services:
 
   fast-lio:
     <<: *nn_user
-    image: "${FAST_LIO_IMAGE:-remote-sitl-lab/fast-lio:latest}"
+    image: "${FAST_LIO_IMAGE:-navlab/fast-lio:humble-latest}"
     environment:
       SESSION_ID: "${SESSION_ID:-manual}"
       ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
       RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
     volumes:
-      - ./profiles:/workspace/profiles:ro
+      - ./docker/profiles:/workspace/profiles:ro
       - ./artifacts/ros:/artifacts/ros
       - ./docker/entrypoints/start-fast-lio.sh:/usr/local/bin/start-fast-lio.sh:ro
     command: [ "bash", "/usr/local/bin/start-fast-lio.sh" ]

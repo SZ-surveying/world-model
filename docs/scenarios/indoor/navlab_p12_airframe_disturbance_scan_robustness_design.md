@@ -575,7 +575,7 @@ P12 应复用 P9 official maze overlay 作为 review-only 可视化：
 P12 使用独立 topic profile：
 
 ```text
-profiles/navlab-airframe-disturbance-foxglove-lite-topics.txt
+docker/profiles/navlab-airframe-disturbance-foxglove-lite-topics.txt
 ```
 
 该 profile 保留 `/navlab/airframe_disturbance/status/events`、`/navlab/scan_stabilization/status/events`、raw `/navlab/imu/raw`、disturbed `/imu`、stabilized `/scan`、SLAM `/map`/`/slam/odom` 和 official maze overlay。topic list 由 profile 文件提供，不写死在 replay builder 里。

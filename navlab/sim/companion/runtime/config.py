@@ -21,7 +21,7 @@ from navlab.common.toml_values import (
 )
 
 DEFAULT_CONFIG = Path("navlab/config.toml")
-DEFAULT_NAVLAB_COMPANION_IMAGE = "world-model/navlab-companion:latest"
+DEFAULT_NAVLAB_COMPANION_IMAGE = "navlab/companion:humble-latest"
 DEFAULT_STOP_DISTANCE = 0.5
 DEFAULT_CONSOLE_LOG_LEVEL = "DEBUG"
 DEFAULT_FILE_LOG_LEVEL = "INFO"

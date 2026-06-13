@@ -149,7 +149,7 @@
 
 任务：
 
-- [x] 新增 `profiles/navlab-exploration-foxglove-lite-topics.txt`。
+- [x] 新增 `docker/profiles/navlab-exploration-foxglove-lite-topics.txt`。
 - [x] topic profile 使用显式 `overlay`、`required`、`optional`、`drop` 配置，不在脚本中硬编码 required/retained/downsample/drop 列表。
 - [x] topic profile 缺失、格式错误或缺少 overlay/required/drop 时直接报错，不做静默 fallback。
 - [x] required topics 包含 `/tf`、`/tf_static`。
@@ -311,7 +311,7 @@ P9 全部完成必须满足：
 
 ### 2026-06-07 P9 Foxglove-lite topic profile 完全配置化
 
-- 变更：`profiles/navlab-exploration-foxglove-lite-topics.txt` 改为显式 `overlay`、`required`、`optional`、`drop` profile。
+- 变更：`docker/profiles/navlab-exploration-foxglove-lite-topics.txt` 改为显式 `overlay`、`required`、`optional`、`drop` profile。
 - 变更：`scripts/build_foxglove_replay_mcap.py` 从 profile 读取 overlay topic、required topic、retained/downsample interval 和 explicit drop topic。
 - 变更：移除静默 fallback；profile 缺失、格式错误、缺少 overlay/required/drop 会直接报错。
 - 重新生成：`just foxglove-replay 20260607_193218` -> `ok=true`，`missing_topics=[]`。

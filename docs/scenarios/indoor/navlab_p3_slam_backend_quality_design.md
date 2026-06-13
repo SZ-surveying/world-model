@@ -289,7 +289,7 @@ P3 summary 至少包含：
   "blockers": [],
   "p3_slam_backend": {
     "backend": "cartographer",
-    "backend_image": "world-model/navlab-slam-cartographer:latest",
+    "backend_image": "navlab/slam-cartographer:latest",
     "backend_source": "official_cartographer",
     "launch_command": "ros2 launch ardupilot_cartographer cartographer.launch.py",
     "config_path": null,

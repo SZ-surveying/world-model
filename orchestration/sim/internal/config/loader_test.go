@@ -70,10 +70,16 @@ func TestLoaderReadsProjectAndYAMLTasks(t *testing.T) {
 	if len(project.AirframeDisturbanceGate.RequiredProfiles) < 5 {
 		t.Fatalf("airframe required profiles = %#v", project.AirframeDisturbanceGate.RequiredProfiles)
 	}
-	if project.Navlab.Images.TagStrategy != "latest" {
-		t.Fatalf("image tag strategy = %q, want latest", project.Navlab.Images.TagStrategy)
+	if project.Navlab.Images.TagPolicy != "distro-git-commit" {
+		t.Fatalf("image tag policy = %q, want distro-git-commit", project.Navlab.Images.TagPolicy)
 	}
-	if project.Images["official_baseline"].Repository != "world-model/navlab-official-baseline" {
+	if project.Navlab.Images.Distro != "humble" {
+		t.Fatalf("image distro = %q, want humble", project.Navlab.Images.Distro)
+	}
+	if project.Images["ros_base"].Repository != "navlab/ros-base" {
+		t.Fatalf("ros base image = %#v", project.Images["ros_base"])
+	}
+	if project.Images["official_baseline"].Repository != "navlab/official-baseline" {
 		t.Fatalf("official baseline image = %#v", project.Images["official_baseline"])
 	}
 

@@ -53,7 +53,7 @@ gate 已通过；不能说明自主探索、Nav2、覆盖率或 NavLab 自定义
 任务：
 
 - [x] 新增 P7 motion gate 配置段。
-- [x] 配置 rosbag profile，默认 `profiles/navlab-motion-gate-rosbag-topics.txt`。
+- [x] 配置 rosbag profile，默认 `docker/profiles/navlab-motion-gate-rosbag-topics.txt`。
 - [x] 配置 SLAM odom topic，默认 `/slam/odom`。
 - [x] 配置 SLAM status topic，默认 `/navlab/slam/status`。
 - [x] 配置 ExternalNav status topic，默认 `/external_nav/status`。

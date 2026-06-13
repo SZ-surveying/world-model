@@ -40,7 +40,7 @@ func TestWriteBridgeOverrideAndVendorProfile(t *testing.T) {
 
 func TestGazeboSensorDockerArgs(t *testing.T) {
 	args, err := GazeboSensorDockerArgs(GazeboSensorRunSpec{
-		Image:                  "world-model/navlab-gazebo-sensor",
+		Image:                  "navlab/gazebo-sensor",
 		SessionID:              "session",
 		RosDomainID:            "85",
 		RMWImplementation:      "rmw_fastrtps_cpp",
@@ -57,7 +57,7 @@ func TestGazeboSensorDockerArgs(t *testing.T) {
 		"run",
 		"--name " + GazeboSensorContainer,
 		"NAVLAB_CONFIG=/workspace/artifacts/sensor.toml",
-		"world-model/navlab-gazebo-sensor",
+		"navlab/gazebo-sensor",
 		"navlab.sim.gazebo_sensor.cli",
 	} {
 		if !strings.Contains(joined, want) {

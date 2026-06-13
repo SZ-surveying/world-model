@@ -1,4 +1,8 @@
-FROM remote-sitl-lab/ros-jazzy-base:latest AS gazebo-sensor-python-builder
+ARG ROS_DISTRO=humble
+ARG INFRA_TAG=humble-latest
+ARG ROS_BASE_IMAGE=navlab/ros-base:${INFRA_TAG}
+
+FROM ${ROS_BASE_IMAGE} AS gazebo-sensor-python-builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.16-python3.11-alpine /usr/local/bin/uv /usr/local/bin/uv
 
@@ -17,7 +21,9 @@ RUN uv sync \
   --no-install-project
 
 
-FROM remote-sitl-lab/ros-jazzy-base:latest AS navlab-gazebo-sensor
+FROM ${ROS_BASE_IMAGE} AS navlab-gazebo-sensor
+
+ARG ROS_DISTRO=humble
 
 ENV VIRTUAL_ENV=/opt/gazebo-sensor-venv
 ENV PATH=/opt/gazebo-sensor-venv/bin:$PATH
@@ -27,8 +33,8 @@ RUN apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https
     build-essential \
     cmake \
     pkg-config \
-    ros-jazzy-ros-gz-bridge \
-    ros-jazzy-rosbag2-storage-mcap && \
+    ros-${ROS_DISTRO}-ros-gz-bridge \
+    ros-${ROS_DISTRO}-rosbag2-storage-mcap && \
   rm -rf /var/lib/apt/lists/*
 
 COPY --from=gazebo-sensor-python-builder /opt/gazebo-sensor-venv /opt/gazebo-sensor-venv

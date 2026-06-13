@@ -17,17 +17,17 @@ def test_x2_sensor_code_lives_under_sensor_package() -> None:
 
 
 def test_gazebo_sensor_docker_target_owns_vendor_driver_dependency() -> None:
-    companion_dockerfile = Path("docker/Dockerfile.companion").read_text(encoding="utf-8")
-    dockerfile = Path("docker/Dockerfile.gazebo-sensor").read_text(encoding="utf-8")
+    companion_dockerfile = Path("docker/images/runtime/companion.Dockerfile").read_text(encoding="utf-8")
+    dockerfile = Path("docker/images/runtime/gazebo-sensor.Dockerfile").read_text(encoding="utf-8")
 
     assert "AS navlab-gazebo-sensor" in dockerfile
     assert "AS gazebo-sensor-python-builder" in dockerfile
 
-    sensor_stage = dockerfile.split("FROM remote-sitl-lab/ros-jazzy-base:latest AS navlab-gazebo-sensor", 1)[1]
+    sensor_stage = dockerfile.split("AS navlab-gazebo-sensor", 1)[1]
 
     assert "third_party/YDLidar-SDK" in sensor_stage
     assert "third_party/ydlidar_ros2_driver" in sensor_stage
-    assert "ros-jazzy-ros-gz-bridge" in sensor_stage
+    assert "ros-${ROS_DISTRO}-ros-gz-bridge" in sensor_stage
     assert "navlab-gazebo-sensor" not in companion_dockerfile
     assert "third_party/ydlidar_ros2_driver" not in companion_dockerfile
 

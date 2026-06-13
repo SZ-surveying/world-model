@@ -4,3 +4,21 @@
 [submodule "third_party/YDLidar-SDK"]
 	path = third_party/YDLidar-SDK
 	url = https://github.com/YDLIDAR/YDLidar-SDK.git
+[submodule "third_party/ardupilot"]
+	path = third_party/ardupilot
+	url = https://github.com/ArduPilot/ardupilot.git
+[submodule "third_party/mavlink-router"]
+	path = third_party/mavlink-router
+	url = https://github.com/mavlink-router/mavlink-router.git
+[submodule "third_party/FAST_LIO"]
+	path = third_party/FAST_LIO
+	url = https://github.com/Ericsii/FAST_LIO_ROS2.git
+[submodule "third_party/livox_ros_driver2"]
+	path = third_party/livox_ros_driver2
+	url = https://github.com/Livox-SDK/livox_ros_driver2.git
+[submodule "third_party/Livox-SDK2"]
+	path = third_party/Livox-SDK2
+	url = https://github.com/Livox-SDK/Livox-SDK2
+[submodule "third_party/ardupilot_gazebo"]
+	path = third_party/ardupilot_gazebo
+	url = https://github.com/ArduPilot/ardupilot_gazebo.git

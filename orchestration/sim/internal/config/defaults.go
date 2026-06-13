@@ -4,7 +4,7 @@ func applySimulationDefaults(cfg *ProjectConfig) {
 	cfg.SessionID = defaultString(cfg.SessionID, "navlab_companion_sitl_gazebo")
 	cfg.RosDomainID = defaultString(cfg.RosDomainID, "85")
 	cfg.GazeboWorld = defaultString(cfg.GazeboWorld, "/workspace/worlds/navlab_iq_quad_figure8.sdf")
-	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "profiles/navlab-rosbag-topics.txt")
+	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "docker/profiles/navlab-rosbag-topics.txt")
 
 	cfg.Sensor.ScanSource = defaultString(cfg.Sensor.ScanSource, "x2_virtual_serial")
 	cfg.Sensor.Image = defaultString(cfg.Sensor.Image, imageRepository(cfg, "gazebo_sensor"))

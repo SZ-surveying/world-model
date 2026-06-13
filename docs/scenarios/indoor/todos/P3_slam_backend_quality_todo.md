@@ -300,7 +300,7 @@ P3 全部完成必须满足：
 ```text
 - 命令：uv run --project orchestration python orchestration/main.py build slam
 - 时间：2026-06-06
-- artifact：world-model/navlab-slam-cartographer:latest
+- artifact：navlab/slam-cartographer:latest
 - 结果：通过
 - blocker：无
 - 备注：重建后包含 use_sim_time launch wiring 和 Cartographer adapter TF 过滤诊断。

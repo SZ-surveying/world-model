@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"navlab/orchestration-sim/internal/config"
+	simimages "navlab/orchestration-sim/internal/images"
 	simruntime "navlab/orchestration-sim/internal/runtime"
 	"navlab/orchestration-sim/internal/tasks/helpers"
 )
@@ -168,9 +169,9 @@ func resolveImageRef(project config.ProjectConfig, ref string) (string, error) {
 	if strings.Contains(repository, ":") {
 		return repository, nil
 	}
-	tag := project.Navlab.Images.TagStrategy
-	if tag == "" {
-		tag = "latest"
+	tag, err := simimages.ResolveImageTag(project, image, "", "")
+	if err != nil {
+		return "", err
 	}
 	return repository + ":" + tag, nil
 }

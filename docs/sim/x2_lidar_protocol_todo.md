@@ -28,7 +28,7 @@ Gazebo/sensor 镜像内。companion、SLAM、SITL 等其他镜像不应该感知
 
 ### 任务
 
-- [x] 新增 `profiles/x2-vendor-sim.yaml`。
+- [x] 新增 `docker/profiles/x2-vendor-sim.yaml`。
 - [x] 使用 `range_min: 0.1`、`range_max: 8.0`、`sample_rate: 3`、`frequency: 7.0`。
 - [x] 保持 `third_party/ydlidar_ros2_driver/params/X2.yaml` 不变。
 - [x] 新增 X2 协议仿真模式配置入口。
@@ -36,7 +36,7 @@ Gazebo/sensor 镜像内。companion、SLAM、SITL 等其他镜像不应该感知
 
 ### 验收
 
-- [x] `profiles/x2-vendor-sim.yaml` 存在，且是合法 ROS 2 params YAML。
+- [x] `docker/profiles/x2-vendor-sim.yaml` 存在，且是合法 ROS 2 params YAML。
 - [x] profile 的 `port` 指向 `/tmp/navlab_x2`。
 - [x] 文档明确协议模式下 `/scan` 必须由厂商 driver 输出。
 
@@ -123,7 +123,7 @@ SLAM 或 SITL 镜像感知厂商协议和传感器内部实现。
 - [x] 在同一个 Gazebo/sensor 容器内启动 `ydlidar_ros2_driver_node` 并连接 `/tmp/navlab_x2`。
 - [x] 确保 Gazebo/sensor 镜像中包含 `ydlidar_ros2_driver`。
 - [x] 确保 companion、SLAM、SITL 镜像不包含或不依赖 `ydlidar_ros2_driver`。
-- [x] 确保 driver 可以加载 `profiles/x2-vendor-sim.yaml`。
+- [x] 确保 driver 可以加载 `docker/profiles/x2-vendor-sim.yaml`。
 - [x] 录制一个包含 `/scan` 和 `/sim/x2/status` 的小 rosbag。
 
 ### 验收

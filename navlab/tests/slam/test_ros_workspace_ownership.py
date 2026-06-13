@@ -13,8 +13,8 @@ def test_slam_ros_packages_live_under_navlab_slam_without_src_wrapper() -> None:
 
 
 def test_companion_image_does_not_copy_slam_ros_workspace() -> None:
-    companion_dockerfile = Path("docker/Dockerfile.companion").read_text(encoding="utf-8")
-    slam_dockerfile = Path("docker/Dockerfile.slam").read_text(encoding="utf-8")
+    companion_dockerfile = Path("docker/images/runtime/companion.Dockerfile").read_text(encoding="utf-8")
+    slam_dockerfile = Path("docker/images/runtime/slam.Dockerfile").read_text(encoding="utf-8")
 
     assert "navlab-slam-cartographer" not in companion_dockerfile
     assert "navlab/common/slam/ros" not in companion_dockerfile

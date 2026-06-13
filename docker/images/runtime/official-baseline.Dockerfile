@@ -1,6 +1,12 @@
 # syntax=docker/dockerfile:1.7
 
-FROM remote-sitl-lab/gazebo-headless:latest AS navlab-official-baseline
+ARG ROS_DISTRO=humble
+ARG INFRA_TAG=humble-latest
+ARG GAZEBO_HEADLESS_IMAGE=navlab/gazebo-headless:${INFRA_TAG}
+
+FROM ${GAZEBO_HEADLESS_IMAGE} AS navlab-official-baseline
+
+ARG ROS_DISTRO=humble
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV GZ_VERSION=harmonic
@@ -46,16 +52,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       python3-wheel \
       python3-yaml \
       rapidjson-dev \
-      ros-jazzy-cartographer-ros \
-      ros-jazzy-gps-msgs \
-      ros-jazzy-micro-ros-msgs \
-      ros-jazzy-nav2-bringup \
-      ros-jazzy-navigation2 \
-      ros-jazzy-robot-state-publisher \
-      ros-jazzy-ros-gz \
-      ros-jazzy-sdformat-urdf \
-      ros-jazzy-topic-tools \
-      ros-jazzy-twist-stamper \
+      ros-${ROS_DISTRO}-cartographer-ros \
+      ros-${ROS_DISTRO}-gps-msgs \
+      ros-${ROS_DISTRO}-micro-ros-msgs \
+      ros-${ROS_DISTRO}-nav2-bringup \
+      ros-${ROS_DISTRO}-navigation2 \
+      ros-${ROS_DISTRO}-robot-state-publisher \
+      ros-${ROS_DISTRO}-ros-gz \
+      ros-${ROS_DISTRO}-sdformat-urdf \
+      ros-${ROS_DISTRO}-topic-tools \
+      ros-${ROS_DISTRO}-twist-stamper \
       && python3 -m pip install --break-system-packages --no-cache-dir \
         dronecan \
         empy==3.3.4 \

@@ -245,7 +245,7 @@ Gazebo ideal ray 的采样数可以保持较高，方便几何插值。最终 X2
 新增仿真专用 profile，不直接修改 third-party 文件：
 
 ```text
-profiles/x2-vendor-sim.yaml
+docker/profiles/x2-vendor-sim.yaml
 ```
 
 建议内容：

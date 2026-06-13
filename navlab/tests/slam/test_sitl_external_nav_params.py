@@ -5,7 +5,7 @@ from pathlib import Path
 
 def _load_params() -> dict[str, str]:
     params: dict[str, str] = {}
-    for raw_line in Path("profiles/navlab-sitl-external-nav.parm").read_text(encoding="utf-8").splitlines():
+    for raw_line in Path("docker/profiles/navlab-sitl-external-nav.parm").read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue

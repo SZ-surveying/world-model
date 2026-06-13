@@ -185,17 +185,21 @@ func newTUICommand() *cobra.Command {
 }
 
 func newBuildCommand(ctx *appContext) *cobra.Command {
+	var image string
 	var tag string
+	var distro string
 	var dryRun bool
 	cmd := &cobra.Command{
-		Use:   "build <companion|slam|gazebo-sensor|official-baseline|all>",
+		Use:   "build <base|infra|runtime|all>",
 		Short: "Build NavLab simulation Docker images",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return buildImages(ctx.loader(), args[0], tag, dryRun)
+			return buildImages(ctx.loader(), args[0], image, tag, distro, dryRun)
 		},
 	}
-	cmd.Flags().StringVar(&tag, "tag", "", "override configured NavLab image tag strategy")
+	cmd.Flags().StringVar(&image, "image", "", "build one image inside the selected infra or runtime group")
+	cmd.Flags().StringVar(&tag, "tag", "", "override configured NavLab image tag")
+	cmd.Flags().StringVar(&distro, "distro", "", "override ROS distro; defaults to NAVLAB_SIM_DISTRO or humble")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print docker build commands without running them")
 	return cmd
 }
@@ -225,7 +229,7 @@ func doctor(loader config.Loader) error {
 	return nil
 }
 
-func buildImages(loader config.Loader, kind string, tag string, dryRun bool) error {
+func buildImages(loader config.Loader, kind string, image string, tag string, distro string, dryRun bool) error {
 	project, err := loader.LoadProject()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -235,7 +239,9 @@ func buildImages(loader config.Loader, kind string, tag string, dryRun bool) err
 	}
 	result, err := simimages.Build(context.Background(), project, simimages.BuildOptions{
 		Kind:   kind,
+		Image:  image,
 		Tag:    tag,
+		Distro: distro,
 		DryRun: dryRun,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
@@ -246,11 +252,20 @@ func buildImages(loader config.Loader, kind string, tag string, dryRun bool) err
 	fmt.Println(ui.Title("NavLab Sim Image Build"))
 	fmt.Println(ui.KeyValue("dry_run", result.DryRun))
 	fmt.Println(ui.KeyValue("kind", kind))
+	if image != "" {
+		fmt.Println(ui.KeyValue("image_filter", image))
+	}
 	if tag != "" {
 		fmt.Println(ui.KeyValue("tag_override", tag))
 	}
+	if distro != "" {
+		fmt.Println(ui.KeyValue("distro_override", distro))
+	}
 	for _, spec := range result.Specs {
 		fmt.Println(ui.Subtitle(spec.Kind))
+		fmt.Println(ui.KeyValue("group", spec.Group))
+		fmt.Println(ui.KeyValue("distro", spec.Distro))
+		fmt.Println(ui.KeyValue("tag", spec.Tag))
 		fmt.Println(ui.KeyValue("context", spec.Context))
 		fmt.Println(ui.KeyValue("dockerfile", spec.Dockerfile))
 		fmt.Println(ui.KeyValue("target", spec.Target))

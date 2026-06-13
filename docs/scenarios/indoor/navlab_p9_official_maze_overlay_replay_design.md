@@ -316,7 +316,7 @@ visualization_msgs/msg/MarkerArray
 Foxglove-lite MCAP 的 topic contract 来自：
 
 ```text
-profiles/navlab-exploration-foxglove-lite-topics.txt
+docker/profiles/navlab-exploration-foxglove-lite-topics.txt
 ```
 
 profile 必须显式声明：

@@ -35,7 +35,7 @@ def test_x2_protocol_config_loads_vendor_defaults() -> None:
 def test_x2_vendor_profile_matches_protocol_baseline() -> None:
     yaml = pytest.importorskip("yaml")
 
-    profile_path = Path("profiles/x2-vendor-sim.yaml")
+    profile_path = Path("docker/profiles/x2-vendor-sim.yaml")
     profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
     params = profile["ydlidar_ros2_driver_node"]["ros__parameters"]
 

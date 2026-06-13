@@ -19,8 +19,8 @@ DEFAULT_RESOLUTION_M = 0.10
 DEFAULT_MARGIN_M = 4.0
 PUBLISHABLE_MIN_PATH_LENGTH_M = 2.5
 PUBLISHABLE_MIN_ACCEPTED_GOALS = 5
-EXPLORATION_FOXGLOVE_LITE_PROFILE = REPO_ROOT / "profiles/navlab-exploration-foxglove-lite-topics.txt"
-HOVER_FOXGLOVE_LITE_PROFILE = REPO_ROOT / "profiles/navlab-hover-foxglove-lite-topics.txt"
+EXPLORATION_FOXGLOVE_LITE_PROFILE = REPO_ROOT / "docker/profiles/navlab-exploration-foxglove-lite-topics.txt"
+HOVER_FOXGLOVE_LITE_PROFILE = REPO_ROOT / "docker/profiles/navlab-hover-foxglove-lite-topics.txt"
 FOXGLOVE_LITE_PROFILE = EXPLORATION_FOXGLOVE_LITE_PROFILE
 
 

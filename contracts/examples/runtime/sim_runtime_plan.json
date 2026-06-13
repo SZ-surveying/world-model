@@ -7,7 +7,7 @@
       "name": "official_baseline",
       "role": "official-stack",
       "backend": "RUNTIME_BACKEND_DOCKER",
-      "image": "world-model/navlab-official-baseline:latest",
+      "image": "navlab/official-baseline:humble-latest",
       "command": [
         "bash",
         "-lc",
@@ -36,7 +36,7 @@
       "name": "slam_hover_probe",
       "role": "slam-hover",
       "backend": "RUNTIME_BACKEND_DOCKER",
-      "image": "world-model/navlab-official-baseline:latest",
+      "image": "navlab/official-baseline:humble-latest",
       "command": [
         "bash",
         "-lc",
