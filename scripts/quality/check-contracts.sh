@@ -8,6 +8,7 @@ EXAMPLES_DIR="$ROOT_DIR/contracts/examples"
 GEN_GO_DIR="$ROOT_DIR/contracts/gen/go"
 GEN_RUST_DIR="$ROOT_DIR/contracts/gen/rust"
 GEN_PYTHON_DIR="$ROOT_DIR/contracts/gen/python"
+PROTOC_GEN_GO_VERSION="v1.36.11"
 
 log_step() {
   printf '\n[contracts] %s\n' "$1"
@@ -25,9 +26,17 @@ export PATH="$(go env GOPATH)/bin:$PATH"
 if ! command -v protoc-gen-go >/dev/null 2>&1; then
   if [ "${CONTRACTS_ALLOW_BOOTSTRAP:-0}" = "1" ]; then
     log_step "Installing protoc-gen-go"
-    go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.10
+    go install "google.golang.org/protobuf/cmd/protoc-gen-go@$PROTOC_GEN_GO_VERSION"
   else
     fail "protoc-gen-go is required; install it or set CONTRACTS_ALLOW_BOOTSTRAP=1"
+  fi
+fi
+if [ "$(protoc-gen-go --version)" != "protoc-gen-go $PROTOC_GEN_GO_VERSION" ]; then
+  if [ "${CONTRACTS_ALLOW_BOOTSTRAP:-0}" = "1" ]; then
+    log_step "Installing protoc-gen-go $PROTOC_GEN_GO_VERSION"
+    go install "google.golang.org/protobuf/cmd/protoc-gen-go@$PROTOC_GEN_GO_VERSION"
+  else
+    fail "protoc-gen-go $PROTOC_GEN_GO_VERSION is required; found $(protoc-gen-go --version)"
   fi
 fi
 command -v cargo >/dev/null 2>&1 || fail "cargo is required"
