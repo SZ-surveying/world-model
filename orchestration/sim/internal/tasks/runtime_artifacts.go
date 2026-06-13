@@ -86,6 +86,11 @@ func GenerateRuntimeArtifacts(
 			spec.DisturbanceStatusTopic = runtimeConfig.AirframeDisturbance.StatusTopic
 			spec.DisturbanceProfile = runtimeConfig.AirframeDisturbance.Profile
 			spec.RequiredProfiles = append([]string(nil), runtimeConfig.AirframeDisturbanceGate.RequiredProfiles...)
+			spec.ESCLagMS = append([]float64(nil), runtimeConfig.AirframeDisturbance.ESCLagMS...)
+			spec.MotorJitterHz = runtimeConfig.AirframeDisturbance.MotorJitterHz
+			spec.ThrustNoiseStd = runtimeConfig.AirframeDisturbance.ThrustNoiseStd
+			spec.IMUVibrationEnabled = runtimeConfig.AirframeDisturbance.IMUVibrationEnabled
+			spec.IMUVibrationRollPitchAmpDeg = runtimeConfig.AirframeDisturbance.IMUVibrationRollPitchAmpDeg
 		}
 		if err := helpers.WriteFCUControllerRuntimeConfig(path, spec); err != nil {
 			return nil, err

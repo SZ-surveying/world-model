@@ -30,6 +30,7 @@ type LiveRunSummary struct {
 	FinishedAt                string                     `json:"finishedAt"`
 	DurationSec               float64                    `json:"duration_sec"`
 	SimulationProfile         string                     `json:"simulation_profile"`
+	Stage1ProfileResult       Stage1ProfileResult        `json:"stage1_profile_result"`
 	RuntimeMode               string                     `json:"runtime_mode"`
 	Backend                   string                     `json:"backend"`
 	GeneratedRuntimeArtifacts []GeneratedRuntimeArtifact `json:"generated_runtime_artifacts"`
@@ -106,7 +107,7 @@ func BuildLiveRunSummary(
 			"Go sim evaluates runtime errors, probe outputs, rosbag metadata, task config checks, and landing acceptance from artifacts.",
 		},
 	}
-	return LiveRunSummary{
+	summary := LiveRunSummary{
 		SchemaVersion:             "navlab.orchestration.task_result.v1",
 		OK:                        ok,
 		Blocked:                   !ok,
@@ -142,6 +143,8 @@ func BuildLiveRunSummary(
 		GateEvaluation:   gateEvaluation,
 		CreatedAt:        now,
 	}
+	summary.Stage1ProfileResult = Stage1ProfileResultFromSummary(summary)
+	return summary
 }
 
 func taskStatus(ok bool, executionErr error) string {

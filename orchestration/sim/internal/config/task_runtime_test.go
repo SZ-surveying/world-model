@@ -74,7 +74,7 @@ func TestBuildTaskRuntimeConfigAppliesScanRobustnessOverrides(t *testing.T) {
 	if !runtimeConfig.ScanRobustness.Live {
 		t.Fatalf("scan robustness live = false")
 	}
-	if runtimeConfig.AirframeDisturbance.Profile != "nominal_realistic" {
+	if runtimeConfig.AirframeDisturbance.Profile != "ideal" {
 		t.Fatalf("airframe profile = %q", runtimeConfig.AirframeDisturbance.Profile)
 	}
 	if runtimeConfig.Landing.ScanRobustnessPolicy != "land_in_place" {

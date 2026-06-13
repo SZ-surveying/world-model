@@ -19,8 +19,8 @@
 
 - [ ] 所有降落逻辑先在 Gazebo/SITL 里验收完成。
 - [x] hover / P8 必须向 P12 已跑通的 runtime contract 对齐，不能为了早期 task 单独降级。
-- [ ] 每个 built-in flight task 的 Gazebo/SITL Stage 1 必须包含 `ideal` 和 `mild_disturbance` 两种 profile。
-- [ ] `ideal` 和 `mild_disturbance` 两种 profile 都通过后，才算对应 task 的 Stage 1 通过。
+- [ ] 每个 built-in flight task 的 Gazebo/SITL Stage 1 必须包含 `ideal` 和 `realistic` 两种 profile。
+- [ ] `ideal` 和 `realistic` 两种 profile 都通过后，才算对应 task 的 Stage 1 通过。
 - [x] Gazebo/SITL Stage 1 通过后，才能进入真机 Stage 2 验收。
 - [x] 真机未验收时必须标记 `real_landing_claim=not_evaluated`。
 - [x] Stage 1 通过不等于 Stage 2 通过。
@@ -39,7 +39,7 @@
 - [x] 设计文档明确 hover、P8、P12 的 landing policy。
 - [x] 设计文档明确 P12 runtime contract 是 hover/P8 前向迁移标准。
 - [x] 设计文档明确两阶段验收：先 Gazebo/SITL，再真机。
-- [x] 设计文档明确 Stage 1 至少覆盖 `ideal` 和 `mild_disturbance` 两种仿真 profile。
+- [x] 设计文档明确 Stage 1 至少覆盖 `ideal` 和 `realistic` 两种仿真 profile。
 - [x] 设计文档明确 Gazebo truth 只能诊断，不能控制或作为唯一 touchdown 判据。
 
 验收：
@@ -64,8 +64,8 @@
 - [x] summary 新增 `real_landing_claim`。
 - [x] summary 新增 `acceptance_stage`。
 - [x] summary 新增统一 `landing` block。
-- [ ] summary 新增 `simulation_profile`，取值至少包含 `ideal` / `mild_disturbance`。
-- [ ] summary 新增 task-level Stage 1 profile matrix，记录每个 profile 的 artifact、`ok`、landing claim。
+- [x] summary 新增 `simulation_profile`，取值至少包含 `ideal` / `realistic`。
+- [x] summary 新增 task-level Stage 1 profile matrix，记录每个 profile 的 artifact、`ok`、landing claim。
 
 验收：
 
@@ -73,7 +73,7 @@
 - [x] task 未显式选择 policy 时使用安全默认值。
 - [x] 真机未验收时 `real_landing_claim=not_evaluated`。
 - [x] Stage 1 未通过时 Stage 2 summary blocked。
-- [ ] 任一 required simulation profile 未通过时，task-level Stage 1 summary blocked。
+- [x] 任一 required simulation profile 未通过时，task-level Stage 1 summary blocked。
 
 ## L2：Landing state machine
 
@@ -179,61 +179,61 @@
 - [x] 用 P12 已通过 artifact 作为基准，记录 hover/P8/P12 的 runtime config diff。
 - [x] 消除 hover 与 P12 标准 bootstrap 的不一致，而不是关闭 P12/official baseline 配置。
 - [x] Stage 1 hover `ideal` landing acceptance 通过。
-- [x] Stage 1 hover `mild_disturbance` landing acceptance 通过。
+- [x] Stage 1 hover `realistic` landing acceptance 通过。
 - [x] Stage 1 P8 `ideal` return-home landing acceptance 通过。
-- [x] Stage 1 P8 `mild_disturbance` return-home landing acceptance 通过。
+- [x] Stage 1 P8 `realistic` return-home landing acceptance 通过。
 - [ ] Stage 1 P12 `ideal` in-place landing acceptance 通过。
-- [ ] Stage 1 P12 `mild_disturbance` in-place landing acceptance 通过。
+- [ ] Stage 1 P12 `realistic` in-place landing acceptance 通过。
 - [ ] Stage 1 P12 configured robustness profiles in-place landing acceptance 通过。
-- [ ] 每个 task 的 `ideal` 与 `mild_disturbance` artifact 使用同一 P12/P8 runtime contract，差异只来自 disturbance profile。
-- [ ] Stage 1 profile matrix summary 汇总 hover/P8/P12 的 profile 结果。
+- [ ] 每个 task 的 `ideal` 与 `realistic` artifact 使用同一 P12/P8 runtime contract，差异只来自 disturbance profile。
+- [x] Stage 1 profile matrix summary 汇总 hover/P8/P12 的 profile 结果。
 - [ ] Stage 1 归档 summary、rosbag、Foxglove notes。
 - [x] Hover Stage 1 `ideal` 归档 summary、rosbag、Foxglove notes：`artifacts/ros/navlab_companion_sitl_gazebo/20260609_120302/summary.json`。
 - [x] Hover Stage 1 `ideal` summary 记录 `acceptance_stage=simulation`。
 - [x] Hover Stage 1 `ideal` summary 记录 `simulation_profile=ideal`。
 - [x] Hover Stage 1 `ideal` summary 记录 `simulation_landing_claim=evaluated`。
 - [x] Hover Stage 1 `ideal` summary 记录 `real_landing_claim=not_evaluated`。
-- [x] Hover Stage 1 `mild_disturbance` 归档 summary、rosbag、Foxglove notes：`artifacts/ros/navlab_companion_sitl_gazebo/20260609_115602/summary.json`。
-- [x] Hover Stage 1 `mild_disturbance` summary 记录 `acceptance_stage=simulation`。
-- [x] Hover Stage 1 `mild_disturbance` summary 记录 `simulation_profile=mild_disturbance`。
-- [x] Hover Stage 1 `mild_disturbance` summary 记录 `simulation_landing_claim=evaluated`。
-- [x] Hover Stage 1 `mild_disturbance` summary 记录 `real_landing_claim=not_evaluated`。
+- [x] Hover Stage 1 `realistic` 归档 summary、rosbag、Foxglove notes：`artifacts/ros/navlab_companion_sitl_gazebo/20260609_115602/summary.json`。
+- [x] Hover Stage 1 `realistic` summary 记录 `acceptance_stage=simulation`。
+- [x] Hover Stage 1 `realistic` summary 记录 `simulation_profile=realistic`。
+- [x] Hover Stage 1 `realistic` summary 记录 `simulation_landing_claim=evaluated`。
+- [x] Hover Stage 1 `realistic` summary 记录 `real_landing_claim=not_evaluated`。
 - [x] P8 Stage 1 `ideal` 归档 summary、rosbag、Foxglove notes：`artifacts/ros/navlab_companion_sitl_gazebo/20260609_122759/summary.json`。
 - [x] P8 Stage 1 `ideal` summary 记录 `acceptance_stage=simulation`。
 - [x] P8 Stage 1 `ideal` summary 记录 `simulation_profile=ideal`。
 - [x] P8 Stage 1 `ideal` summary 记录 `simulation_landing_claim=evaluated`。
 - [x] P8 Stage 1 `ideal` summary 记录 `real_landing_claim=not_evaluated`。
-- [x] P8 Stage 1 `mild_disturbance` 归档 summary、rosbag、Foxglove notes：`artifacts/ros/navlab_companion_sitl_gazebo/20260609_125158/summary.json`。
-- [x] P8 Stage 1 `mild_disturbance` summary 记录 `acceptance_stage=simulation`。
-- [x] P8 Stage 1 `mild_disturbance` summary 记录 `simulation_profile=mild_disturbance`。
-- [x] P8 Stage 1 `mild_disturbance` summary 记录 `simulation_landing_claim=evaluated`。
-- [x] P8 Stage 1 `mild_disturbance` summary 记录 `real_landing_claim=not_evaluated`。
+- [x] P8 Stage 1 `realistic` 归档 summary、rosbag、Foxglove notes：`artifacts/ros/navlab_companion_sitl_gazebo/20260609_125158/summary.json`。
+- [x] P8 Stage 1 `realistic` summary 记录 `acceptance_stage=simulation`。
+- [x] P8 Stage 1 `realistic` summary 记录 `simulation_profile=realistic`。
+- [x] P8 Stage 1 `realistic` summary 记录 `simulation_landing_claim=evaluated`。
+- [x] P8 Stage 1 `realistic` summary 记录 `real_landing_claim=not_evaluated`。
 
 验收：
 
 - [x] Gazebo/SITL hover `ideal` 降落并解除武装。
-- [x] Gazebo/SITL hover `mild_disturbance` 降落并解除武装。
+- [x] Gazebo/SITL hover `realistic` 降落并解除武装。
 - [x] Gazebo/SITL P8 `ideal` 返回 home 后降落并解除武装。
-- [x] Gazebo/SITL P8 `mild_disturbance` 返回 home 后降落并解除武装。
+- [x] Gazebo/SITL P8 `realistic` 返回 home 后降落并解除武装。
 - [ ] Gazebo/SITL P12 `ideal` 原地降落并解除武装。
-- [ ] Gazebo/SITL P12 `mild_disturbance` 原地降落并解除武装。
+- [ ] Gazebo/SITL P12 `realistic` 原地降落并解除武装。
 - [x] Hover Stage 1 `ideal` `uses_gazebo_truth_as_input=false`。
-- [x] Hover Stage 1 `mild_disturbance` `uses_gazebo_truth_as_input=false`。
+- [x] Hover Stage 1 `realistic` `uses_gazebo_truth_as_input=false`。
 - [x] P8 Stage 1 `ideal` `uses_gazebo_truth_as_input=false`。
-- [x] P8 Stage 1 `mild_disturbance` `uses_gazebo_truth_as_input=false`。
+- [x] P8 Stage 1 `realistic` `uses_gazebo_truth_as_input=false`。
 - [x] Hover Stage 1 `ideal` 未使用 Gazebo reset / set_pose 代替降落。
-- [x] Hover Stage 1 `mild_disturbance` 未使用 Gazebo reset / set_pose 代替降落。
+- [x] Hover Stage 1 `realistic` 未使用 Gazebo reset / set_pose 代替降落。
 - [x] P8 Stage 1 `ideal` 未使用 Gazebo reset / set_pose 代替降落。
-- [x] P8 Stage 1 `mild_disturbance` 未使用 Gazebo reset / set_pose 代替降落。
+- [x] P8 Stage 1 `realistic` 未使用 Gazebo reset / set_pose 代替降落。
 
 ## L8：Stage 2 真机验收
 
 任务：
 
 - [ ] Stage 2 入口检查对应 Stage 1 summary `ok=true`。
-- [ ] Stage 2 入口检查对应 task 的 Stage 1 `ideal` 和 `mild_disturbance` profile 都 `ok=true`。
+- [ ] Stage 2 入口检查对应 task 的 Stage 1 `ideal` 和 `realistic` profile 都 `ok=true`。
 - [ ] Stage 2 入口检查 Stage 1 artifact 已归档。
-- [x] P8 Stage 2 入口所需 Stage 1 `ideal` / `mild_disturbance` artifacts 已归档。
+- [x] P8 Stage 2 入口所需 Stage 1 `ideal` / `realistic` artifacts 已归档。
 - [ ] Stage 2 入口检查 real preflight doctor summary `ok=true`。
 - [ ] Stage 2 入口检查 real preflight doctor summary 未超过有效窗口。
 - [ ] Stage 2 入口记录 real preflight artifact path。
@@ -263,9 +263,9 @@
 - [x] 增加 blocker 测试：P8 return-home fail + emergency landing success 仍 fail。
 - [x] 增加 blocker 测试：Stage 1 未通过时 Stage 2 blocked。
 - [x] 增加 blocker 测试：Gazebo truth 不能作为 landing 控制输入。
-- [ ] 增加 profile matrix 测试：缺少 `ideal` 或 `mild_disturbance` 时 task-level Stage 1 blocked。
+- [x] 增加 profile matrix 测试：缺少 `ideal` 或 `realistic` 时 task-level Stage 1 blocked。
 - [ ] 增加 profile matrix 测试：hover/P8/P12 两种 required simulation profile 都通过后，Stage 1 才允许通过。
-- [ ] 增加 Stage 2 入口测试：对应 task 的 `ideal` 和 `mild_disturbance` 未全部通过时 blocked。
+- [ ] 增加 Stage 2 入口测试：对应 task 的 `ideal` 和 `realistic` 未全部通过时 blocked。
 - [x] 增加 CLI/just smoke。
 
 验收：
@@ -276,11 +276,11 @@
 
 ## 最终完成标准
 
-- [x] hover Stage 1 Gazebo/SITL landing 通过：`ideal` 和 `mild_disturbance` 都通过。
+- [x] hover Stage 1 Gazebo/SITL landing 通过：`ideal` 和 `realistic` 都通过。
 - [x] hover Stage 1 Gazebo/SITL `ideal` landing 通过。
-- [x] hover Stage 1 Gazebo/SITL `mild_disturbance` landing 通过。
-- [x] P8 Stage 1 Gazebo/SITL return-home landing 通过：`ideal` 和 `mild_disturbance` 都通过。
-- [ ] P12 Stage 1 Gazebo/SITL in-place landing 通过：`ideal`、`mild_disturbance` 和 configured robustness profiles 都通过。
+- [x] hover Stage 1 Gazebo/SITL `realistic` landing 通过。
+- [x] P8 Stage 1 Gazebo/SITL return-home landing 通过：`ideal` 和 `realistic` 都通过。
+- [ ] P12 Stage 1 Gazebo/SITL in-place landing 通过：`ideal`、`realistic` 和 configured robustness profiles 都通过。
 - [ ] hover Stage 2 real landing 通过。
 - [ ] P8 Stage 2 real return-home landing 通过。
 - [ ] P12 Stage 2 real in-place landing 通过。

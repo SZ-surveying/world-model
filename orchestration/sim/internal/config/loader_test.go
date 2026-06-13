@@ -64,10 +64,10 @@ func TestLoaderReadsProjectAndYAMLTasks(t *testing.T) {
 	if project.ScanStabilization.Mode != "bounded_2d_projection" || !project.ScanStabilization.Enabled {
 		t.Fatalf("scan stabilization = %#v", project.ScanStabilization)
 	}
-	if project.AirframeDisturbance.Profile != "nominal_realistic" {
+	if project.AirframeDisturbance.Profile != "realistic" {
 		t.Fatalf("airframe disturbance profile = %q", project.AirframeDisturbance.Profile)
 	}
-	if len(project.AirframeDisturbanceGate.RequiredProfiles) < 5 {
+	if len(project.AirframeDisturbanceGate.RequiredProfiles) != 2 {
 		t.Fatalf("airframe required profiles = %#v", project.AirframeDisturbanceGate.RequiredProfiles)
 	}
 	if project.Navlab.Images.TagPolicy != "distro-git-commit" {

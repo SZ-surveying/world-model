@@ -60,7 +60,7 @@ P12 包含：
 - 加入可参数化的 motor noise / thrust noise / IMU angular noise / vibration profile。
 - 保持 P9 representative replay motion profile 作为主验收运动强度。
 - 复用 P10/P11 scan integrity / bounded 2D stabilization，不绕过它们。
-- 对比 baseline clean profile 和 disturbed profiles。
+- 对比 baseline `ideal` profile 和 disturbed profiles。
 - 记录 roll/pitch/yaw-rate/attitude-rate、scan stabilization、drop/compensate/floor-hit、SLAM health、map risk 和 FCU health。
 - 增加扰动扫参：mild / nominal-realistic / hard / invalid config。
 - 在 summary 中给出 `airframe_disturbance_claim=evaluated` 和每个 profile 的 pass/fail/blocker。
@@ -112,7 +112,7 @@ IMU vibration 注入点有明确局限：P12 runtime 注入在 `/navlab/imu/raw 
 | `/ap/v1/pose/filtered` / pose | 不直接影响 P10/P11 | FCU EKF 没消费 NavLab disturbed `/imu` |
 | Gazebo truth / `/odometry` | 禁止 | no-truth contract 直接 fail |
 
-因此 `imu_vibration_claim=evaluated` 的含义必须和 attitude source 一起解读；如果配置不是受影响路径，required vibration profile 应 blocked 或标记 `imu_vibration_profile_not_available`，不能用 clean attitude path 冒充。
+因此 `imu_vibration_claim=evaluated` 的含义必须和 attitude source 一起解读；如果配置不是受影响路径，required vibration profile 应 blocked 或标记 `imu_vibration_profile_not_available`，不能用 `ideal` attitude path 冒充。
 
 ### 4.2 扰动 profile 必须参数化，不能 hardcode
 
@@ -121,7 +121,7 @@ IMU vibration 注入点有明确局限：P12 runtime 注入在 `/navlab/imu/raw 
 ```toml
 [airframe_disturbance]
 enabled = true
-profile = "nominal_realistic"
+profile = "realistic"
 injection_layer = "gazebo_motor_model"
 seed = 12012
 
@@ -146,8 +146,8 @@ imu_vibration_freq_hz = 80.0
 imu_vibration_roll_pitch_amp_deg = 0.4
 
 [airframe_disturbance_gate]
-profile_set = ["clean", "mild_bias", "nominal_realistic", "hard_bias", "esc_lag", "vibration"]
-required_profiles = ["clean", "mild_bias", "nominal_realistic", "esc_lag", "vibration"]
+profile_set = ["ideal", "realistic"]
+required_profiles = ["ideal", "realistic"]
 allow_hard_profile_fail = true
 max_abs_roll_deg = 8.0
 max_abs_pitch_deg = 8.0
@@ -180,23 +180,27 @@ required_profiles subset of profile_set
 uses_gazebo_truth_as_input=false
 ```
 
-配置无效时 blocker 为 `airframe_disturbance_config_invalid`，不能 fallback 到 clean profile。
+配置无效时 blocker 为 `airframe_disturbance_config_invalid`，不能 fallback 到 `ideal` profile。
 
-### 4.3 Profile 分层
+### 4.3 Profile 和 Component 分层
 
-P12 至少定义这些 profile：
+Stage 1 simulation profile 只定义两类：
 
 | profile | 目的 | 预期 |
 |---|---|---|
-| `clean` | 无扰动基线 | P11 应稳定通过 |
-| `mild_bias` | 小 motor mismatch | 大部分 passthrough，少量 warn/compensate |
-| `nominal_realistic` | 温和真实组合扰动 | 允许 compensation，SLAM 不明显退化 |
-| `esc_lag` | 主要验证响应时延/动态超调 | attitude rate 可观测，scan availability 不崩 |
-| `vibration` | 主要验证 IMU 噪声和虚高 tilt | 不应大量误 drop，summary 记录噪声影响 |
-| `hard_bias` | 超出安全范围的负例 | 可以 fail，但必须 fail 得清楚，不污染 SLAM |
-| `invalid_config` | 配置负例 | 必须 blocked |
+| `ideal` | 无扰动基线 | P11 应稳定通过 |
+| `realistic` | 真实机器扰动组合 | motor bias、ESC lag、thrust noise、IMU vibration/noise 同时开启，证明 P11/P12 在接近真实机器的扰动下仍安全 |
 
-`hard_bias` 不是必须 ok 的成功 profile。它的作用是证明 gate 会拒绝危险扰动，而不是假装系统能承受所有情况。
+`realistic` 下面的扰动 component 必须显式配置和写入 summary：
+
+| component | 目的 | 预期 |
+|---|---|---|
+| `motor_bias` | 小 motor mismatch / thrust multiplier | 大部分 passthrough，少量 warn/compensate |
+| `esc_lag` | 响应时延/动态超调 | attitude rate 可观测，scan availability 不崩 |
+| `thrust_noise` | 推力噪声和 motor jitter | 不应导致控制和 scan 大量抖动 |
+| `imu_vibration` | IMU 噪声和虚高 tilt | 不应大量误 drop，summary 记录噪声影响 |
+
+`hard_bias` 和 `invalid_config` 是 fault case，不是 Stage 1 required profile。它们的作用是证明 gate 会拒绝危险扰动或无效配置，而不是假装系统能承受所有情况。
 
 ### 4.4 P12 复用 P11 水平复原，而不是重写 scan 算法
 
@@ -238,7 +242,7 @@ floor_hit_rejected_ratio
 max_vertical_projection_error_m
 false_wall_risk_score
 map_artifact_score
-known_cell_growth_delta_vs_clean
+known_cell_growth_delta_vs_ideal
 slam_odom_rate_hz
 external_nav_rate_hz
 controller_ready_ratio
@@ -246,7 +250,7 @@ controller_ready_ratio
 
 `map_artifact_score` 首版可以是可解释的启发式指标，例如：
 
-- 相比 clean baseline，障碍 cell 增长异常比例。
+- 相比 `ideal` baseline，障碍 cell 增长异常比例。
 - 短时间内孤立 obstacle cluster 数量。
 - 与 official maze overlay 的 review-only 对照差异分数。
 - 斜向/弧形假墙段数量。
@@ -295,7 +299,7 @@ false_drop_ratio
 imu_vibration_claim = "not_available"
 ```
 
-不能把 clean IMU run 当成 vibration 验收。
+不能把 `ideal` IMU run 当成 vibration 验收。
 
 ## 5. 目标架构
 
@@ -322,7 +326,7 @@ navlab_airframe_disturbance_profile
   - publishes /navlab/airframe_disturbance/events
 
 navlab_airframe_disturbance_gate
-  - runs clean and disturbed profiles
+  - runs ideal and disturbed profiles
   - parses P10/P11 summaries
   - compares scan/SLAM/FCU/map risk
   - writes P12 summary
@@ -378,12 +382,12 @@ P12 acceptance 建议分四段：
 - no-truth / unique-owner / no-set-pose 规则仍生效。
 - rosbag profile 包含 P12 status/events 和 P10/P11 状态。
 
-### 7.2 Clean baseline
+### 7.2 Ideal baseline
 
-运行 P9 representative replay + clean profile，记录：
+运行 P9 representative replay + `ideal` profile，记录：
 
 ```text
-profile = clean
+profile = ideal
 scan_contract = p11_stabilized_scan
 slam_health
 external_nav_health
@@ -391,20 +395,21 @@ fcu_health
 map_artifact_score
 ```
 
-clean baseline 必须 ok，否则 P12 不继续宣称 disturbed profile 结果。
+`ideal` baseline 必须 ok，否则 P12 不继续宣称 disturbed profile 结果。
 
-### 7.3 Disturbed profiles
+### 7.3 Realistic Disturbance Components
 
-至少运行：
+至少运行 `realistic` profile，并确认以下 component 都被配置、启用并写入 summary：
 
 ```text
-mild_bias
-nominal_realistic
+realistic
 esc_lag
+motor_bias
+thrust_noise
 vibration
 ```
 
-每个 profile 都记录：
+`realistic` profile 记录：
 
 ```text
 max_abs_roll_deg
@@ -441,16 +446,17 @@ invalid_config
 - disturbance window 内 FCU mode 必须持续为配置的 `required_fcu_mode_number=4` / `required_fcu_mode_name=GUIDED`；当前 window 由 `fcu_mode_window_topic=/navlab/exploration/status` 首尾样本定义，排除 pre-replay bootstrap 阶段。
 - FCU mode 不能意外进入 RTL/LAND/failsafe 后还被当作 successful disturbance profile；如果 `/ap/v1/status` 缺失、schema 缺配置字段 `mode` 或 window 内出现非 GUIDED，必须给出明确 blocker。
 - 如果 SLAM map 出现假障碍，应作为污染风险 fail，而不是把“能继续发布 scan”当成功。
-- `invalid_config` 必须 blocked，不能 fallback 到 clean。
+- `invalid_config` 必须 blocked，不能 fallback 到 `ideal`。
 
 ## 8. P12 ok 判定
 
 P12 `ok=true` 必须满足：
 
 - `airframe_disturbance_claim=evaluated`。
-- required profiles 全部运行：clean、mild_bias、nominal_realistic、esc_lag、vibration。
-- clean baseline ok。
-- required disturbed profiles 的 scan/SLAM/ExternalNav/FCU health 不低于阈值。
+- required profiles 全部运行：ideal、realistic。
+- ideal baseline ok。
+- realistic profile 的 motor bias、ESC lag、thrust noise、IMU vibration/noise components 全部启用并写入 summary。
+- realistic profile 的 scan/SLAM/ExternalNav/FCU health 不低于阈值。
 - hard profile 的危险行为被 gate 明确拦截。
 - invalid config 被明确 blocked。
 - required live disturbed profiles 的 `fcu_mode_gate.ok=true`，且 `non_guided_count=0`。
@@ -466,7 +472,7 @@ P12 blocker 示例：
 airframe_disturbance_config_invalid
 airframe_disturbance_profile_not_applied
 required_disturbance_profile_missing
-clean_baseline_failed
+ideal_baseline_failed
 scan_contract_not_p11_stabilized
 scan_drop_ratio_too_high
 stabilized_scan_rate_too_low
@@ -503,12 +509,18 @@ P12 summary 建议写入：
   "disturbance_config": {
     "injection_layer": "gazebo_motor_model",
     "seed": 12012,
-    "required_profiles": ["clean", "mild_bias", "nominal_realistic", "esc_lag", "vibration"]
+    "required_profiles": ["ideal", "realistic"]
   },
   "profiles": {
-    "nominal_realistic": {
+    "realistic": {
       "ok": true,
       "blockers": [],
+      "components": {
+        "motor_bias": true,
+        "esc_lag": true,
+        "thrust_noise": true,
+        "imu_vibration": true
+      },
       "motor": {
         "thrust_multipliers": [0.97, 1.03, 1.0, 0.98],
         "esc_lag_ms": [20.0, 35.0, 25.0, 45.0],

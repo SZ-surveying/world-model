@@ -74,28 +74,39 @@ Gazebo/SITL Stage 1 不是单一 nominal run。后续每个 built-in flight task
 | simulation profile | 目的 | 通过含义 |
 |---|---|---|
 | `ideal` | 无额外 airframe disturbance 的标准 Gazebo/SITL | 证明 runtime、task body、landing sequence 的基础链路正确 |
-| `mild_disturbance` | 轻量 P12 风格 disturbance，例如 mild motor bias / ESC lag / vibration 的保守组合 | 证明同一 task 在轻微倾斜或执行器扰动下仍能完成任务结束和安全降落 |
+| `realistic` | 轻量 P12 风格 disturbance，例如 mild motor bias / ESC lag / vibration 的保守组合 | 证明同一 task 在轻微倾斜或执行器扰动下仍能完成任务结束和安全降落 |
 
 Stage 1 的完成条件必须按 task/profile 矩阵判定：
 
 ```text
-hover:             ideal pass + mild_disturbance pass
-exploration / P8:  ideal pass + mild_disturbance pass
-scan-robustness:   ideal pass + mild_disturbance pass + configured P12 robustness profiles
+hover:             ideal pass + realistic pass
+exploration / P8:  ideal pass + realistic pass
+scan-robustness:   ideal pass + realistic pass + configured P12 robustness profiles
 ```
 
-其中 `ideal` 不能替代 `mild_disturbance`，`mild_disturbance` 也不能替代 `ideal`。ideal 用来隔离基础链路问题，mild disturbance 用来避免 hover/P8 只在理想电机下通过、到了 P12 风格倾斜或扰动就失败。
+其中 `ideal` 不能替代 `realistic`，`realistic` 也不能替代 `ideal`。ideal 用来隔离基础链路问题，mild disturbance 用来避免 hover/P8 只在理想电机下通过、到了 P12 风格倾斜或扰动就失败。
 
 summary 应显式记录当前仿真 profile，例如：
 
 ```json
 {
   "acceptance_stage": "simulation",
-  "simulation_profile": "mild_disturbance",
+  "simulation_profile": "realistic",
   "simulation_landing_claim": "evaluated",
   "real_landing_claim": "not_evaluated"
 }
 ```
+
+Go sim 的 task-level matrix 由 `navlab-sim stage1-matrix <task-id>` 生成。该命令消费多个 profile run 的 `summary.json`：
+
+```bash
+navlab-sim stage1-matrix hover \
+  --summary artifacts/sim/hover/ideal/summary.json \
+  --summary artifacts/sim/hover/realistic/summary.json \
+  --output artifacts/sim/hover/stage1_profile_matrix.json
+```
+
+输出 schema 为 `navlab.orchestration.stage1_profile_matrix.v1`，必须包含 `required_profiles`、每个 profile 的 `artifact_dir` / `summary_path` / `ok` / `landing_claim` / `simulation_landing_claim`，并在任一 required profile 缺失或未通过时 `blocked=true`。
 
 真机 Stage 2 的入口条件也要检查对应 task 的 Stage 1 profile matrix 已全部通过，而不是只检查某一个 Gazebo/SITL run。
 

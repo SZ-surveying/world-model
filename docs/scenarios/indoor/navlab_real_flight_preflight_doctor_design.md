@@ -96,12 +96,12 @@ Stage 1 仍由 Gazebo/SITL built-in task 负责，但它不是任何真机 wrapp
 
 | task | Stage 1 command | 结果 |
 |---|---|---|
-| hover | `just navlab-run hover ... --simulation-profile ideal` 和 `mild_disturbance` | 证明仿真起飞、悬停、原地降落 |
-| P8 exploration | `just navlab-run exploration ... --simulation-profile ideal` 和 `mild_disturbance` | 证明仿真移动、返航、降落 |
+| hover | `just navlab-run hover ... --simulation-profile ideal` 和 `realistic` | 证明仿真起飞、悬停、原地降落 |
+| P8 exploration | `just navlab-run exploration ... --simulation-profile ideal` 和 `realistic` | 证明仿真移动、返航、降落 |
 | P12 scan robustness | `just navlab-run scan-robustness ...` | 证明仿真扰动/scan 鲁棒性和原地降落 |
 
 Stage 1 允许使用 Gazebo/SITL 生成可复现实验数据，但这些数据只能作为开发参考
-和回归诊断。缺少 `ideal` 或 `mild_disturbance` artifact 时，不能因此 block
+和回归诊断。缺少 `ideal` 或 `realistic` artifact 时，不能因此 block
 真机 preflight / prepare / task doctor；更不能把 Gazebo truth 作为控制、SLAM、
 ExternalNav 或 landing 的输入。
 

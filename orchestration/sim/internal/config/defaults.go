@@ -415,7 +415,7 @@ func defaultScanStabilizationGate(cfg *ScanStabilizationGateConfig) {
 }
 
 func defaultAirframeDisturbance(cfg *AirframeDisturbanceConfig) {
-	cfg.Profile = defaultString(cfg.Profile, "nominal_realistic")
+	cfg.Profile = defaultString(cfg.Profile, "realistic")
 	cfg.InjectionLayer = defaultString(cfg.InjectionLayer, "gazebo_motor_model")
 	cfg.Seed = defaultInt(cfg.Seed, 7)
 	cfg.MotorCount = defaultInt(cfg.MotorCount, 4)
@@ -433,8 +433,8 @@ func defaultAirframeDisturbance(cfg *AirframeDisturbanceConfig) {
 func defaultAirframeDisturbanceGate(cfg *AirframeDisturbanceGateConfig) {
 	cfg.MotionProfile = defaultString(cfg.MotionProfile, "representative_replay")
 	cfg.ScanContract = defaultString(cfg.ScanContract, "stabilized_scan")
-	cfg.ProfileSet = defaultStrings(cfg.ProfileSet, []string{"clean", "mild_bias", "nominal_realistic", "esc_lag", "vibration"})
-	cfg.RequiredProfiles = defaultStrings(cfg.RequiredProfiles, []string{"clean", "mild_bias", "nominal_realistic", "esc_lag", "vibration"})
+	cfg.ProfileSet = defaultStrings(cfg.ProfileSet, []string{"ideal", "realistic"})
+	cfg.RequiredProfiles = defaultStrings(cfg.RequiredProfiles, []string{"ideal", "realistic"})
 	cfg.FaultProfiles = defaultStrings(cfg.FaultProfiles, []string{"invalid_config"})
 	cfg.MaxAbsRollDeg = defaultFloat(cfg.MaxAbsRollDeg, 12)
 	cfg.MaxAbsPitchDeg = defaultFloat(cfg.MaxAbsPitchDeg, 12)

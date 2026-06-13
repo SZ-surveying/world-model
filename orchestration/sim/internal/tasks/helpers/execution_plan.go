@@ -317,7 +317,7 @@ func addExplorationWorkflowExecution(plan *ExecutionPlan, task config.TaskConfig
 		Status:       "ported_script_generation",
 	})
 	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlan("exploration-workflow", "exploration_rosbag", "configs/rosbag/exploration.yaml", durationSec, []string{spec.ControllerStatusTopic, spec.SetpointOutputTopic, spec.SlamOdomTopic}))
-	if simulationProfile == "mild_disturbance" {
+	if simulationProfile == "realistic" {
 		plan.GeneratedArtifacts = append(plan.GeneratedArtifacts, ArtifactPlan{HelperID: "exploration-workflow", Kind: "airframe_disturbance_runtime", Path: "exploration_airframe_disturbance.toml"})
 	}
 	plan.ResultGates = append(plan.ResultGates, ResultGatePlan{

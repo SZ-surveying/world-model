@@ -56,3 +56,32 @@ func TestEvaluateResultGatesReadsProbeAndRosbagArtifacts(t *testing.T) {
 		t.Fatalf("blockers = %#v", evaluation.Blockers)
 	}
 }
+
+func TestMetricSummaryIncludesP12DeepMetrics(t *testing.T) {
+	metrics := metricSummaryFromEvidence([]ProbeOutputSummary{
+		{
+			Name: "p12_probe",
+			Payload: map[string]any{
+				"samples": map[string]any{
+					"/navlab/airframe_disturbance/status": map[string]any{
+						"data": `{"claim":"evaluated","profile":"realistic","estimated_attitude_response_lag_ms":12.5,"attitude_overshoot_count":1,"attitude_noise_rms_deg":0.4,"false_drop_ratio":0.02,"compensation_jitter_score":0.1,"scan_integrity":{"scan_contract":"p11_stabilized_scan","false_drop_ratio":0.02}}`,
+					},
+					"/navlab/scan_integrity/status": map[string]any{
+						"data": `{"claim":"evaluated","scan_contract":"p11_stabilized_scan","scan_samples":42,"drop_ratio":0.01,"false_drop_ratio":0.02,"compensated_ratio":0.3,"floor_hit_risk_beam_ratio":0.0,"max_scan_attitude_time_offset_ms":4.0}`,
+					},
+				},
+			},
+		},
+	}, nil)
+	if metrics.AirframeDisturbance["estimated_attitude_response_lag_ms"] == nil ||
+		metrics.AirframeDisturbance["attitude_overshoot_count"] == nil ||
+		metrics.AirframeDisturbance["attitude_noise_rms_deg"] == nil ||
+		metrics.AirframeDisturbance["false_drop_ratio"] == nil ||
+		metrics.AirframeDisturbance["compensation_jitter_score"] == nil ||
+		metrics.AirframeDisturbance["scan_integrity"] == nil {
+		t.Fatalf("airframe metrics = %#v", metrics.AirframeDisturbance)
+	}
+	if metrics.ScanIntegrity["scan_contract"] != "p11_stabilized_scan" || metrics.ScanIntegrity["false_drop_ratio"] == nil {
+		t.Fatalf("scan integrity metrics = %#v", metrics.ScanIntegrity)
+	}
+}

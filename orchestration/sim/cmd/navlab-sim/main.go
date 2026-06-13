@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -72,6 +73,7 @@ func newRootCommand() *cobra.Command {
 		newListTasksCommand(ctx),
 		newShowTaskCommand(ctx),
 		newRunCommand(ctx),
+		newStage1MatrixCommand(ctx),
 		newTUICommand(),
 		newBuildCommand(ctx),
 	)
@@ -170,6 +172,22 @@ func newRunCommand(ctx *appContext) *cobra.Command {
 	cmd.Flags().BoolVar(&tuiMode, "tui", false, "open the replay TUI after dry-run artifact generation")
 	cmd.Flags().Float64Var(&durationSec, "duration-sec", 0, "override task duration in seconds")
 	cmd.Flags().StringVar(&simulationProfile, "simulation-profile", "", "override simulation profile")
+	return cmd
+}
+
+func newStage1MatrixCommand(ctx *appContext) *cobra.Command {
+	var summaryPaths []string
+	var outputPath string
+	cmd := &cobra.Command{
+		Use:   "stage1-matrix <task-id>",
+		Short: "Aggregate Stage 1 simulation profile summaries for one task",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return stage1Matrix(ctx.loader(), args[0], summaryPaths, outputPath)
+		},
+	}
+	cmd.Flags().StringArrayVar(&summaryPaths, "summary", nil, "summary.json path from one simulation profile run; repeat for multiple profiles")
+	cmd.Flags().StringVar(&outputPath, "output", "stage1_profile_matrix.json", "output Stage 1 profile matrix JSON path")
 	return cmd
 }
 
@@ -276,6 +294,60 @@ func buildImages(loader config.Loader, kind string, image string, tag string, di
 		fmt.Println(ui.StatusOK("NavLab image build completed"))
 	}
 	return nil
+}
+
+func stage1Matrix(loader config.Loader, taskID string, summaryPaths []string, outputPath string) error {
+	if len(summaryPaths) == 0 {
+		return fmt.Errorf("at least one --summary path is required")
+	}
+	project, err := loader.LoadProject()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	if err := resolveWorkspaceRoot(loader, &project); err != nil {
+		return fmt.Errorf("failed to resolve workspace root: %w", err)
+	}
+	taskConfig, err := loader.LoadTask(project, taskID)
+	if err != nil {
+		return fmt.Errorf("failed to load task %q: %w", taskID, err)
+	}
+	runtimeConfig, err := config.BuildTaskRuntimeConfig(project, taskConfig)
+	if err != nil {
+		return fmt.Errorf("failed to build runtime config for %q: %w", taskID, err)
+	}
+	summaries := make([]tasks.LiveRunSummary, 0, len(summaryPaths))
+	for _, path := range summaryPaths {
+		resolvedPath, err := resolveProjectPath(loader, path)
+		if err != nil {
+			return fmt.Errorf("failed to resolve summary path %q: %w", path, err)
+		}
+		summary, err := tasks.ReadLiveRunSummary(resolvedPath)
+		if err != nil {
+			return fmt.Errorf("failed to read summary %q: %w", resolvedPath, err)
+		}
+		summaries = append(summaries, summary)
+	}
+	matrix := tasks.BuildStage1ProfileMatrix(taskID, tasks.RequiredStage1Profiles(taskID, runtimeConfig), summaries, time.Now())
+	resolvedOutputPath, err := resolveProjectPath(loader, outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve output path %q: %w", outputPath, err)
+	}
+	if err := artifacts.WriteJSONArtifact(resolvedOutputPath, matrix); err != nil {
+		return fmt.Errorf("failed to write Stage 1 profile matrix: %w", err)
+	}
+
+	fmt.Println(ui.Title("Stage 1 Profile Matrix"))
+	fmt.Println(ui.KeyValue("task_id", taskID))
+	fmt.Println(ui.KeyValue("output", resolvedOutputPath))
+	fmt.Println(ui.KeyValue("required_profiles", matrix.RequiredProfiles))
+	fmt.Println(ui.KeyValue("profiles", len(matrix.Profiles)))
+	if matrix.OK {
+		fmt.Println(ui.KeyValue("status", "ok"))
+		return nil
+	}
+	fmt.Println(ui.KeyValue("status", "blocked"))
+	fmt.Println(ui.KeyValue("blockers", matrix.Blockers))
+	return fmt.Errorf("stage 1 profile matrix blocked: %s", strings.Join(matrix.Blockers, ", "))
 }
 
 func listTasks(loader config.Loader) error {
@@ -466,6 +538,10 @@ func prepareTaskRun(
 	if err != nil {
 		return preparedTaskRun{}, fmt.Errorf("failed to build runtime config for %q: %w", taskID, err)
 	}
+	taskRuntimeConfig, err = tasks.ApplySimulationProfile(taskRuntimeConfig, plan)
+	if err != nil {
+		return preparedTaskRun{}, fmt.Errorf("failed to apply simulation profile for %q: %w", taskID, err)
+	}
 	plan.Execution.TaskParameters["runtime_config"] = taskRuntimeConfig
 	artifactRootPath := project.Paths.ArtifactRoot
 	if artifactRootOverride != "" {
@@ -532,6 +608,7 @@ func runLiveTask(
 	summary := tasks.BuildLiveRunSummary(project, taskRuntimeConfig, plan, result.RunID, result.ArtifactDir, generatedArtifacts, runtimeSpecs, execution, executionErr)
 	summaryPath := filepath.Join(result.ArtifactDir, "summary.json")
 	summary.SummaryPath = summaryPath
+	summary.Stage1ProfileResult = tasks.Stage1ProfileResultFromSummary(summary)
 	if err := artifacts.WriteJSONArtifact(summaryPath, summary); err != nil {
 		return fmt.Errorf("failed to write live summary for %q: %w", plan.TaskID, err)
 	}
@@ -626,6 +703,13 @@ func resolveWorkspaceRoot(loader config.Loader, project *config.ProjectConfig) e
 	}
 	project.Paths.WorkspaceRoot = resolved
 	return nil
+}
+
+func resolveProjectPath(loader config.Loader, path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	return loader.ResolveProjectPath(path)
 }
 
 func manifestArtifacts(generated []tasks.GeneratedRuntimeArtifact) []artifacts.GeneratedArtifact {

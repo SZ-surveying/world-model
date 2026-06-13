@@ -477,7 +477,7 @@ TODO：
 - 在 P11 已经提供 bounded 2D scan stabilization 后，补上真机前的机体扰动仿真 gap。
 - 在仿真中显式加入 motor thrust multiplier / motor bias / ESC lag / thrust noise / IMU vibration profile。
 - 使用 P9 representative replay motion profile 验证更真实姿态扰动来源下的 P10/P11 scan 链路。
-- 对比 clean baseline 和 mild/nominal/esc_lag/vibration disturbed profiles。
+- 对比 ideal baseline 和 realistic disturbed profile；realistic 内部组合 motor bias、ESC lag、thrust noise 和 IMU vibration/noise components。
 - 验证 P11 水平复原不会把地面、过大垂直误差或 hard tilt scan 投影成假墙。
 - 记录 roll/pitch/RMS/yaw-rate/attitude-rate、scan availability、drop/compensate/floor-hit、SLAM/ExternalNav/FCU/map risk。
 
@@ -493,10 +493,10 @@ TODO：
 完成标准：
 
 - P12 主验收明确 `scan_contract=p11_stabilized_scan` 和 `motion_profile=p9_representative_replay`。
-- clean baseline ok。
-- `mild_bias`、`nominal_realistic`、`esc_lag`、`vibration` required profiles 全部 evaluated。
+- ideal baseline ok。
+- `ideal` 和 `realistic` required profiles 全部 evaluated。
 - `hard_bias` 和 `invalid_config` fault profiles 全部 evaluated，危险扰动必须明确 fail/block。
-- 所有 motor/ESC/noise/vibration profile 和 gate 阈值来自配置并写入 summary。
+- realistic 下所有 motor/ESC/noise/vibration components 和 gate 阈值来自配置并写入 summary。
 - `/scan` publisher 唯一，SLAM 不消费 raw scan，`owner.unique=true`，`set_pose_count=0`。
 - summary 明确 `airframe_disturbance_claim=evaluated`、`horizontal_recovery_claim=evaluated`、`uses_gazebo_truth_as_input=false`、`uses_official_maze_as_input=false`。
 

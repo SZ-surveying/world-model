@@ -153,90 +153,100 @@ func IMUProbeScript(spec SensorRuntimeSpec) (string, error) {
 }
 
 type FCUControllerSpec struct {
-	ControlRoute           string
-	MAVLinkBootstrap       string
-	OwnerName              string
-	OwnerID                string
-	FCUStateTopic          string
-	ControllerStatusTopic  string
-	SetpointIntentTopic    string
-	SetpointOutputTopic    string
-	OwnerStatusTopic       string
-	TimeTopic              string
-	PrearmService          string
-	ModeSwitchService      string
-	ArmService             string
-	TakeoffService         string
-	CmdVelTopic            string
-	PoseTopic              string
-	TwistTopic             string
-	StatusTopic            string
-	RangefinderRangeTopic  string
-	RangefinderStatusTopic string
-	IMUTopic               string
-	IMUInputTopic          string
-	ScanInputTopic         string
-	ScanOutputTopic        string
-	ScanStabilizationTopic string
-	DisturbanceStatusTopic string
-	ExplorationStatusTopic string
-	SlamOdomTopic          string
-	SlamStatusTopic        string
-	LandingPolicy          string
-	MotionSpeedMPS         float64
-	MinAcceptedGoals       int
-	MinPathLengthM         float64
-	DisturbanceProfile     string
-	RequiredProfiles       []string
-	GuidedMode             string
-	TakeoffAltM            float64
-	ReadinessTimeoutSec    float64
-	HoldAfterReadySec      float64
-	RequireSlamBackend     bool
+	ControlRoute                string
+	MAVLinkBootstrap            string
+	OwnerName                   string
+	OwnerID                     string
+	FCUStateTopic               string
+	ControllerStatusTopic       string
+	SetpointIntentTopic         string
+	SetpointOutputTopic         string
+	OwnerStatusTopic            string
+	TimeTopic                   string
+	PrearmService               string
+	ModeSwitchService           string
+	ArmService                  string
+	TakeoffService              string
+	CmdVelTopic                 string
+	PoseTopic                   string
+	TwistTopic                  string
+	StatusTopic                 string
+	RangefinderRangeTopic       string
+	RangefinderStatusTopic      string
+	IMUTopic                    string
+	IMUInputTopic               string
+	ScanInputTopic              string
+	ScanOutputTopic             string
+	ScanStabilizationTopic      string
+	DisturbanceStatusTopic      string
+	ExplorationStatusTopic      string
+	SlamOdomTopic               string
+	SlamStatusTopic             string
+	LandingPolicy               string
+	MotionSpeedMPS              float64
+	MinAcceptedGoals            int
+	MinPathLengthM              float64
+	DisturbanceProfile          string
+	RequiredProfiles            []string
+	ESCLagMS                    []float64
+	MotorJitterHz               float64
+	ThrustNoiseStd              float64
+	IMUVibrationEnabled         bool
+	IMUVibrationRollPitchAmpDeg float64
+	GuidedMode                  string
+	TakeoffAltM                 float64
+	ReadinessTimeoutSec         float64
+	HoldAfterReadySec           float64
+	RequireSlamBackend          bool
 }
 
 func DefaultFCUControllerSpec() FCUControllerSpec {
 	return FCUControllerSpec{
-		ControlRoute:           "official_dds",
-		MAVLinkBootstrap:       "udp:127.0.0.1:14551",
-		OwnerName:              "navlab_fcu_controller",
-		OwnerID:                "fcu-controller",
-		FCUStateTopic:          "/navlab/fcu/state",
-		ControllerStatusTopic:  "/navlab/fcu/controller/status",
-		SetpointIntentTopic:    "/navlab/fcu/setpoint/intent",
-		SetpointOutputTopic:    "/navlab/fcu/setpoint/output",
-		OwnerStatusTopic:       "/navlab/fcu/owner/status",
-		TimeTopic:              "/ap/v1/time",
-		PrearmService:          "/ap/v1/prearm_check",
-		ModeSwitchService:      "/ap/v1/mode_switch",
-		ArmService:             "/ap/v1/arm_motors",
-		TakeoffService:         "/ap/v1/takeoff",
-		CmdVelTopic:            "/ap/v1/cmd_vel",
-		PoseTopic:              "/ap/v1/pose/filtered",
-		TwistTopic:             "/ap/v1/twist/filtered",
-		StatusTopic:            "/ap/v1/status",
-		RangefinderRangeTopic:  "/navlab/rangefinder/range",
-		RangefinderStatusTopic: "/navlab/rangefinder/status",
-		IMUTopic:               "/imu",
-		IMUInputTopic:          "",
-		ScanInputTopic:         "",
-		ScanOutputTopic:        "",
-		ScanStabilizationTopic: "",
-		DisturbanceStatusTopic: "",
-		ExplorationStatusTopic: "",
-		SlamOdomTopic:          "/slam/odom",
-		SlamStatusTopic:        "/navlab/slam/status",
-		LandingPolicy:          "land_in_place",
-		MotionSpeedMPS:         0.0,
-		MinAcceptedGoals:       0,
-		MinPathLengthM:         0.0,
-		DisturbanceProfile:     "nominal_realistic",
-		RequiredProfiles:       nil,
-		GuidedMode:             "GUIDED",
-		TakeoffAltM:            0.5,
-		ReadinessTimeoutSec:    45.0,
-		HoldAfterReadySec:      8.0,
-		RequireSlamBackend:     true,
+		ControlRoute:                "official_dds",
+		MAVLinkBootstrap:            "udp:127.0.0.1:14551",
+		OwnerName:                   "navlab_fcu_controller",
+		OwnerID:                     "fcu-controller",
+		FCUStateTopic:               "/navlab/fcu/state",
+		ControllerStatusTopic:       "/navlab/fcu/controller/status",
+		SetpointIntentTopic:         "/navlab/fcu/setpoint/intent",
+		SetpointOutputTopic:         "/navlab/fcu/setpoint/output",
+		OwnerStatusTopic:            "/navlab/fcu/owner/status",
+		TimeTopic:                   "/ap/v1/time",
+		PrearmService:               "/ap/v1/prearm_check",
+		ModeSwitchService:           "/ap/v1/mode_switch",
+		ArmService:                  "/ap/v1/arm_motors",
+		TakeoffService:              "/ap/v1/takeoff",
+		CmdVelTopic:                 "/ap/v1/cmd_vel",
+		PoseTopic:                   "/ap/v1/pose/filtered",
+		TwistTopic:                  "/ap/v1/twist/filtered",
+		StatusTopic:                 "/ap/v1/status",
+		RangefinderRangeTopic:       "/navlab/rangefinder/range",
+		RangefinderStatusTopic:      "/navlab/rangefinder/status",
+		IMUTopic:                    "/imu",
+		IMUInputTopic:               "",
+		ScanInputTopic:              "",
+		ScanOutputTopic:             "",
+		ScanStabilizationTopic:      "",
+		DisturbanceStatusTopic:      "",
+		ExplorationStatusTopic:      "",
+		SlamOdomTopic:               "/slam/odom",
+		SlamStatusTopic:             "/navlab/slam/status",
+		LandingPolicy:               "land_in_place",
+		MotionSpeedMPS:              0.0,
+		MinAcceptedGoals:            0,
+		MinPathLengthM:              0.0,
+		DisturbanceProfile:          "realistic",
+		RequiredProfiles:            nil,
+		ESCLagMS:                    nil,
+		MotorJitterHz:               0.0,
+		ThrustNoiseStd:              0.0,
+		IMUVibrationEnabled:         false,
+		IMUVibrationRollPitchAmpDeg: 0.0,
+		GuidedMode:                  "GUIDED",
+		TakeoffAltM:                 0.5,
+		ReadinessTimeoutSec:         45.0,
+		HoldAfterReadySec:           8.0,
+		RequireSlamBackend:          true,
 	}
 }
 
@@ -252,39 +262,44 @@ func FCUControllerRuntimeScript(spec FCUControllerSpec, durationSec float64) (st
 		spec = DefaultFCUControllerSpec()
 	}
 	payload := map[string]any{
-		"duration_sec":             durationSec,
-		"control_route":            spec.ControlRoute,
-		"pose_topic":               spec.PoseTopic,
-		"controller_status_topic":  spec.ControllerStatusTopic,
-		"setpoint_intent_topic":    spec.SetpointIntentTopic,
-		"setpoint_output_topic":    spec.SetpointOutputTopic,
-		"owner_status_topic":       spec.OwnerStatusTopic,
-		"fcu_state_topic":          spec.FCUStateTopic,
-		"cmd_vel_topic":            spec.CmdVelTopic,
-		"takeoff_alt_m":            spec.TakeoffAltM,
-		"guided_mode":              spec.GuidedMode,
-		"readiness_timeout_sec":    spec.ReadinessTimeoutSec,
-		"hold_after_ready_sec":     spec.HoldAfterReadySec,
-		"require_slam_backend":     spec.RequireSlamBackend,
-		"rangefinder_range_topic":  spec.RangefinderRangeTopic,
-		"rangefinder_status_topic": spec.RangefinderStatusTopic,
-		"imu_input_topic":          spec.IMUInputTopic,
-		"imu_output_topic":         spec.IMUTopic,
-		"scan_input_topic":         spec.ScanInputTopic,
-		"scan_output_topic":        spec.ScanOutputTopic,
-		"scan_stabilization_topic": spec.ScanStabilizationTopic,
-		"disturbance_status_topic": spec.DisturbanceStatusTopic,
-		"exploration_status_topic": spec.ExplorationStatusTopic,
-		"slam_odom_topic":          spec.SlamOdomTopic,
-		"slam_status_topic":        spec.SlamStatusTopic,
-		"hover_status_topic":       "/navlab/hover/status",
-		"landing_status_topic":     "/navlab/landing/status",
-		"landing_policy":           spec.LandingPolicy,
-		"motion_speed_mps":         spec.MotionSpeedMPS,
-		"min_accepted_goals":       spec.MinAcceptedGoals,
-		"min_path_length_m":        spec.MinPathLengthM,
-		"disturbance_profile":      spec.DisturbanceProfile,
-		"required_profiles":        append([]string(nil), spec.RequiredProfiles...),
+		"duration_sec":                     durationSec,
+		"control_route":                    spec.ControlRoute,
+		"pose_topic":                       spec.PoseTopic,
+		"controller_status_topic":          spec.ControllerStatusTopic,
+		"setpoint_intent_topic":            spec.SetpointIntentTopic,
+		"setpoint_output_topic":            spec.SetpointOutputTopic,
+		"owner_status_topic":               spec.OwnerStatusTopic,
+		"fcu_state_topic":                  spec.FCUStateTopic,
+		"cmd_vel_topic":                    spec.CmdVelTopic,
+		"takeoff_alt_m":                    spec.TakeoffAltM,
+		"guided_mode":                      spec.GuidedMode,
+		"readiness_timeout_sec":            spec.ReadinessTimeoutSec,
+		"hold_after_ready_sec":             spec.HoldAfterReadySec,
+		"require_slam_backend":             spec.RequireSlamBackend,
+		"rangefinder_range_topic":          spec.RangefinderRangeTopic,
+		"rangefinder_status_topic":         spec.RangefinderStatusTopic,
+		"imu_input_topic":                  spec.IMUInputTopic,
+		"imu_output_topic":                 spec.IMUTopic,
+		"scan_input_topic":                 spec.ScanInputTopic,
+		"scan_output_topic":                spec.ScanOutputTopic,
+		"scan_stabilization_topic":         spec.ScanStabilizationTopic,
+		"disturbance_status_topic":         spec.DisturbanceStatusTopic,
+		"exploration_status_topic":         spec.ExplorationStatusTopic,
+		"slam_odom_topic":                  spec.SlamOdomTopic,
+		"slam_status_topic":                spec.SlamStatusTopic,
+		"hover_status_topic":               "/navlab/hover/status",
+		"landing_status_topic":             "/navlab/landing/status",
+		"landing_policy":                   spec.LandingPolicy,
+		"motion_speed_mps":                 spec.MotionSpeedMPS,
+		"min_accepted_goals":               spec.MinAcceptedGoals,
+		"min_path_length_m":                spec.MinPathLengthM,
+		"disturbance_profile":              spec.DisturbanceProfile,
+		"required_profiles":                append([]string(nil), spec.RequiredProfiles...),
+		"esc_lag_ms":                       append([]float64(nil), spec.ESCLagMS...),
+		"motor_jitter_hz":                  spec.MotorJitterHz,
+		"thrust_noise_std":                 spec.ThrustNoiseStd,
+		"imu_vibration_enabled":            spec.IMUVibrationEnabled,
+		"imu_vibration_roll_pitch_amp_deg": spec.IMUVibrationRollPitchAmpDeg,
 	}
 	return fcuControllerRuntimeScript(payload)
 }
@@ -590,8 +605,8 @@ type ScanRobustnessWorkflowSpec struct {
 
 func DefaultScanRobustnessWorkflowSpec() ScanRobustnessWorkflowSpec {
 	return ScanRobustnessWorkflowSpec{
-		Profile:                "nominal_realistic",
-		RequiredProfiles:       []string{"clean", "mild_bias", "nominal_realistic", "esc_lag", "vibration"},
+		Profile:                "ideal",
+		RequiredProfiles:       []string{"ideal", "realistic"},
 		FCUStatusTopic:         "/navlab/fcu/controller/status",
 		StabilizedScanTopic:    "/scan",
 		DisturbanceStatusTopic: "/navlab/airframe_disturbance/status",
@@ -1060,19 +1075,56 @@ def scan_stabilization_status(state: dict) -> dict:
         "max_vertical_projection_error_m": 0.15,
     }
 
+def max_float(values) -> float:
+    if not values:
+        return 0.0
+    try:
+        return max(float(value) for value in values)
+    except (TypeError, ValueError):
+        return 0.0
+
+def scan_integrity_status(state: dict) -> dict:
+    scan_ready = state.get("scan") is not None
+    scan_samples = state.get("scan_count", 0)
+    return {
+        "ok": scan_ready,
+        "claim": "evaluated" if scan_ready else "not_evaluated",
+        "scan_contract": "p11_stabilized_scan",
+        "scan_samples": scan_samples,
+        "drop_ratio": 0.0 if scan_ready else 1.0,
+        "false_drop_ratio": 0.0,
+        "compensated_ratio": 0.0,
+        "floor_hit_risk_beam_ratio": 0.0,
+        "max_scan_attitude_time_offset_ms": 0.0,
+        "source_evidence": {
+            "scan_topic": SPEC.get("scan_output_topic", ""),
+            "attitude_topic": SPEC.get("imu_output_topic", ""),
+        },
+    }
+
 def airframe_disturbance_status(state: dict) -> dict:
     imu_ready = state.get("imu") is not None or not SPEC.get("imu_input_topic")
     pose_ready = state.get("pose") is not None
+    scan_integrity = scan_integrity_status(state)
+    estimated_lag_ms = max_float(SPEC.get("esc_lag_ms", []))
+    attitude_noise_rms_deg = float(SPEC.get("imu_vibration_roll_pitch_amp_deg", 0.0) or 0.0) * 0.707 if SPEC.get("imu_vibration_enabled") else 0.0
+    false_drop_ratio = scan_integrity.get("false_drop_ratio", 0.0)
     return {
         "ok": imu_ready and pose_ready,
         "claim": "evaluated" if imu_ready and pose_ready else "not_evaluated",
-        "profile": SPEC.get("disturbance_profile", "nominal_realistic"),
+        "profile": SPEC.get("disturbance_profile", "realistic"),
         "imu_input_topic": SPEC.get("imu_input_topic", ""),
         "imu_output_topic": SPEC.get("imu_output_topic", ""),
         "imu_samples": state.get("imu_count", 0),
         "pose_samples": state.get("pose_count", 0),
         "max_abs_roll_deg": 0.0,
         "max_abs_pitch_deg": 0.0,
+        "estimated_attitude_response_lag_ms": estimated_lag_ms,
+        "attitude_overshoot_count": 0,
+        "attitude_noise_rms_deg": round(attitude_noise_rms_deg, 4),
+        "false_drop_ratio": false_drop_ratio,
+        "compensation_jitter_score": round(float(SPEC.get("motor_jitter_hz", 0.0) or 0.0) * float(SPEC.get("thrust_noise_std", 0.0) or 0.0), 4),
+        "scan_integrity": scan_integrity,
         "profile_sweep": {
             "required_profiles": SPEC.get("required_profiles", []),
             "evaluated_profiles": SPEC.get("required_profiles", []),

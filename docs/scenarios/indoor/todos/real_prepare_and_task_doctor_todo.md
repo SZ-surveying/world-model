@@ -514,7 +514,7 @@ real prepare 对齐后的目标链路：
 
 任务：
 
-- [x] 文档明确 Stage 1 `ideal` / `mild_disturbance` simulation artifact 不作为真机 wrapper 必需 gate。
+- [x] 文档明确 Stage 1 `ideal` / `realistic` simulation artifact 不作为真机 wrapper 必需 gate。
 - [x] 文档明确 Stage 1 artifact 只能作为开发参考和回归诊断，不能替代真实传感器 / FCU / safety evidence。
 - [x] wrapper 检查 manual takeover confirmation：真实非 dry-run 执行前必须显式传
   `--confirm-manual-takeover`。
@@ -527,7 +527,7 @@ real prepare 对齐后的目标链路：
 验收：
 
 - [x] 缺 `ideal` Stage 1 artifact 时 real wrapper 不应 blocked。
-- [x] 缺 `mild_disturbance` Stage 1 artifact 时 real wrapper 不应 blocked。
+- [x] 缺 `realistic` Stage 1 artifact 时 real wrapper 不应 blocked。
 - [x] 缺 operator safety confirmation 时 arm/takeoff 前 blocked，并输出稳定 blocker：
   `operator_manual_takeover_not_confirmed`、`operator_kill_switch_not_confirmed`、
   `operator_safe_area_not_confirmed`。
@@ -673,7 +673,7 @@ readiness 或 landing readiness 的替代。
 - [x] 增加 compass/manual override 存在但 ExternalNav yaw 不 ready 时 blocked 的测试。
 - [x] 增加 forbidden simulation source 测试。
 - [x] 增加 companion 不提前启动测试。
-- [x] 不增加 Stage 1 `ideal` + `mild_disturbance` real gate；它们不是飞行前必需 blocker。
+- [x] 不增加 Stage 1 `ideal` + `realistic` real gate；它们不是飞行前必需 blocker。
 - [ ] 增加 wrapper summary schema 测试。
 
 验收：
@@ -717,7 +717,7 @@ RTD 全部完成必须满足：
 - [ ] common doctor 明确输出 FCU / EKF / ExternalNav / RC 共同状态。
 - [x] task doctor 明确检查 yaw source evidence；无 GPS / 未校准磁罗盘场景必须由 ExternalNav/SLAM yaw ready 补足。
 - [x] companion 只在 prepare 和 task doctor 通过后启动。
-- [x] Stage 1 `ideal` 和 `mild_disturbance` artifacts 不作为 real task run 必需条件。
+- [x] Stage 1 `ideal` 和 `realistic` artifacts 不作为 real task run 必需条件。
 - [x] operator safety confirmation 缺失时不会进入 arm/takeoff。
 - [x] 无桨 motor-debug 只能在 no-props 和 operator safety 全部确认后转电机。
 - [ ] summary 能追溯 preflight、prepare、task doctor、operator safety 和 real flight artifact。
@@ -742,4 +742,4 @@ RTD 全部完成必须满足：
 - 结果：142 passed。`run <task>` 的 real mode 顺序固定为 preflight -> prepare -> common doctor -> task doctor -> flight boundary；prepare 配置、MAVLink router serial provenance、MAVROS 不直连串口、真实 upstream topic helper、task-specific doctor 和 companion 不提前启动均有测试覆盖。
 - 命令：`git diff --check`
 - 结果：通过。
-- blocker：operator safety confirmation、topic source-claim summary、flight rosbag 和真正 companion/arm/takeoff wrapper 尚未实现；Stage 1 `ideal` + `mild_disturbance` 不再作为 real gate。
+- blocker：operator safety confirmation、topic source-claim summary、flight rosbag 和真正 companion/arm/takeoff wrapper 尚未实现；Stage 1 `ideal` + `realistic` 不再作为 real gate。

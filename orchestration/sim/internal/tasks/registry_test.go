@@ -21,15 +21,15 @@ func TestDefaultRegistryConfiguresKnownTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConfigureOne() error = %v", err)
 	}
-	plan, err := task.Plan(PlanOptions{DurationSec: 10, SimulationProfile: "mild_disturbance"}, helpers.DefaultRegistry())
+	plan, err := task.Plan(PlanOptions{DurationSec: 10, SimulationProfile: "realistic"}, helpers.DefaultRegistry())
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
 	if plan.DurationSec != 10 {
 		t.Fatalf("DurationSec = %v, want 10", plan.DurationSec)
 	}
-	if plan.SimulationProfile != "mild_disturbance" {
-		t.Fatalf("SimulationProfile = %q, want mild_disturbance", plan.SimulationProfile)
+	if plan.SimulationProfile != "realistic" {
+		t.Fatalf("SimulationProfile = %q, want realistic", plan.SimulationProfile)
 	}
 	if len(plan.Steps) == 0 {
 		t.Fatal("plan steps are empty")

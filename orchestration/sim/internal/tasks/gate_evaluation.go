@@ -50,6 +50,7 @@ type MetricSummary struct {
 	Owner                 map[string]any            `json:"owner,omitempty"`
 	Exploration           map[string]any            `json:"exploration,omitempty"`
 	SLAM                  map[string]any            `json:"slam,omitempty"`
+	ScanIntegrity         map[string]any            `json:"scan_integrity,omitempty"`
 	ScanStabilization     map[string]any            `json:"scan_stabilization,omitempty"`
 	AirframeDisturbance   map[string]any            `json:"airframe_disturbance,omitempty"`
 	RosbagMessageCounts   map[string]map[string]int `json:"rosbag_message_counts,omitempty"`
@@ -146,12 +147,16 @@ func metricSummaryFromEvidence(probes []ProbeOutputSummary, rosbags []RosbagGate
 		summary.SLAM = subsetMap(payload, "ready", "tracking_state", "odom_samples", "pose_samples", "max_position_jump_m", "map_frame", "base_frame", "quality")
 		summary.MetricEvidenceSources["slam"] = topic
 	}
+	if payload, topic := statusPayloadBySuffix(probes, "/scan_integrity/status"); payload != nil {
+		summary.ScanIntegrity = subsetMap(payload, "claim", "scan_contract", "scan_samples", "drop_ratio", "false_drop_ratio", "compensated_ratio", "floor_hit_risk_beam_ratio", "max_scan_attitude_time_offset_ms", "source_evidence")
+		summary.MetricEvidenceSources["scan_integrity"] = topic
+	}
 	if payload, topic := statusPayloadBySuffix(probes, "/scan_stabilization/status"); payload != nil {
 		summary.ScanStabilization = subsetMap(payload, "claim", "mode", "scan_samples", "imu_samples", "retained_beam_ratio", "rejected_beam_ratio", "floor_hit_risk_beam_ratio", "max_vertical_projection_error_m")
 		summary.MetricEvidenceSources["scan_stabilization"] = topic
 	}
 	if payload, topic := statusPayloadBySuffix(probes, "/airframe_disturbance/status"); payload != nil {
-		summary.AirframeDisturbance = subsetMap(payload, "claim", "profile", "imu_samples", "pose_samples", "max_abs_roll_deg", "max_abs_pitch_deg", "profile_sweep", "fcu_mode_window")
+		summary.AirframeDisturbance = subsetMap(payload, "claim", "profile", "imu_samples", "pose_samples", "max_abs_roll_deg", "max_abs_pitch_deg", "estimated_attitude_response_lag_ms", "attitude_overshoot_count", "attitude_noise_rms_deg", "false_drop_ratio", "compensation_jitter_score", "scan_integrity", "profile_sweep", "fcu_mode_window")
 		summary.MetricEvidenceSources["airframe_disturbance"] = topic
 	}
 	for _, rosbag := range rosbags {

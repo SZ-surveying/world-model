@@ -14,13 +14,14 @@ scan_robustness:
   live: true
   live_profiles: []
 airframe_disturbance:
-  profile: nominal_realistic
+  profile: ideal
+airframe_disturbance_gate:
+  profile_set:
+    - ideal
+    - realistic
   required_profiles:
-    - clean
-    - mild_bias
-    - nominal_realistic
-    - esc_lag
-    - vibration
+    - ideal
+    - realistic
 landing:
   scan_robustness_policy: land_in_place
   max_landing_duration_sec: 35.0
