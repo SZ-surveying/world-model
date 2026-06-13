@@ -36,5 +36,13 @@ Current implementation note:
 - New or migrated cross-language artifacts should write proto-compatible JSON
   such as `task_request.json`, `runtime_plan.json`, `doctor_result.json`,
   `task_result.json`, and `manifest.json`.
-- Protobuf code generation is intentionally not wired in yet; schemas and JSON
-  examples should stabilize first.
+- Go protobuf code generation is wired under `contracts/gen/go` and validated by
+  `scripts/quality/check-contracts.sh`. Regenerate it with
+  `scripts/contracts/generate-contracts-go.sh`.
+- Rust protobuf code generation is wired under `contracts/gen/rust` as the
+  `navlab-contracts` crate. It uses `prost-build` at Cargo build time and is
+  validated by `scripts/quality/check-contracts.sh`.
+- Python protobuf code generation is wired under `contracts/gen/python` as the
+  `navlab_contracts` package and validated by
+  `scripts/quality/check-contracts.sh`. Regenerate it with
+  `scripts/contracts/generate-contracts-python.sh`.

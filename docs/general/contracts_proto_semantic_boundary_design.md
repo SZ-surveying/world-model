@@ -404,7 +404,12 @@ contracts/
 - [x] Validate `.proto` syntax.
 - [x] Validate golden examples against Go/Rust/Python readers.
 - [x] Fail CI when `schemaVersion` is missing from contract artifacts that require it.
-- [x] Keep generated code out of source control unless repo policy changes.
+- [x] Add checked-in Go generated contracts under `contracts/gen/go` once Go sim
+  starts consuming contract readers directly.
+- [x] Add Rust generated contract crate under `contracts/gen/rust` once Rust real
+  starts validating outputs against generated types.
+- [x] Add Python generated contract package under `contracts/gen/python` once
+  Python runtime clients need class-based contract access.
 
 ## Current Repository Mapping
 

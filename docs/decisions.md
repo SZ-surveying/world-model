@@ -1,6 +1,66 @@
 # Decisions
 
+## 2026-06-13: Python contracts use generated navlab_contracts package
+
+Decision: add `contracts/gen/python` as a generated `navlab_contracts` package,
+generate Python protobuf classes with `protoc --python_out`, rewrite generated
+imports under the `navlab_contracts.navlab` namespace, and validate golden JSON
+examples with `google.protobuf.json_format.Parse`.
+
+Basis: the repository already has a business/runtime `navlab` Python package.
+Generating protobuf modules directly into top-level `navlab/...` would mix
+contract code with runtime implementation code and make future repo splits
+harder. The separate `navlab_contracts` package lets Python runtime code import
+contract classes without reusing Go/Rust helpers or colliding with runtime
+modules.
+
+Reason: Python clients can now operate on generated protobuf classes while
+still exchanging proto-compatible JSON artifacts when needed. The artifact
+format remains language-neutral; only the reader/writer code moves from ad hoc
+dict parsing to generated class parsing.
+
+## 2026-06-13: Rust real depends on generated contract crate
+
+Decision: add `contracts/gen/rust` as the `navlab-contracts` crate, generate
+Rust protobuf structs with `prost-build`, validate the crate in
+`scripts/quality/check-contracts.sh`, and make `orchestration/real` depend on it
+through a local path dependency.
+
+Basis: Rust real already emits proto-compatible JSON for task request, task
+result, doctor result, source evidence, and MAVLink ACK artifacts. The generated
+crate now proves the Rust client can compile against the same `contracts/proto`
+schemas as Go sim, and real contract tests compare emitted JSON status/backend
+strings against generated enum names.
+
+Reason: sim and real should share schema/generated type contracts, not helper
+code. `prost-build` keeps Rust generated code owned by the crate build while
+still giving real-machine code a stable dependency boundary for a future repo
+split. Python generated contracts are handled separately under
+`contracts/gen/python`.
+
+## 2026-06-13: Go contract codegen is checked in for sim readers
+
+Decision: add checked-in Go protobuf generation under `contracts/gen/go` and
+make Go sim TUI artifact replay read proto-compatible artifacts through the
+generated `TaskRequest`, `RuntimePlan`, `TaskResult`, and `ArtifactManifest`
+types with `protojson`.
+
+Basis: the proto skeletons and golden JSON examples now parse through generated
+Go types, and Go sim is the first consumer that benefits from stronger reader
+types. `scripts/quality/check-contracts.sh` now validates proto syntax,
+regenerates Go contracts through `scripts/contracts/generate-contracts-go.sh`,
+runs the generated module tests, and fails only when
+the generated output changes relative to the pre-check state.
+
+Reason: this keeps the shared boundary in `contracts/proto` while avoiding a
+new common helper package between sim and real. Go sim depends only on the
+generated contract module through a local `replace`, so a future repo split can
+keep the same generated module boundary. Rust and Python generated contracts
+are handled by their own language-specific packages.
+
 ## 2026-06-13: Contract enforcement stays JSON-first before codegen
+
+Superseded by: `2026-06-13: Go contract codegen is checked in for sim readers`.
 
 Decision: add contract validation through checked-in proto syntax, golden JSON
 examples, Go/Rust/Python compatibility tests, and a `scripts/quality`
@@ -1449,3 +1509,40 @@ now owns the orchestration surface and fails closed with truthful blockers. But
 live task acceptance is not complete until the Go-generated runtime layer starts
 real SLAM/controller/hover/exploration/scan behavior and produces the evidence
 that the final summary gates require.
+
+## 2026-06-13: Go sim TUI starts with artifact replay
+
+Decision: implement the first Go sim TUI slice as replay-only plus dry-run replay:
+`navlab-sim tui <artifact-dir>` reads existing artifacts, and
+`navlab-sim run <task> --dry-run --tui` generates dry-run artifacts before
+opening the same view. Live Docker/ROS monitoring remains a later event-sink
+slice.
+
+Basis: `orchestration/sim` already writes `manifest.json`, `task_request.json`,
+`runtime_plan.json`, `summary.json`, and `doctor_summary.json`; these are enough
+to render task identity, runtime component counts, blockers, artifact status,
+and log paths without starting runtime services.
+
+Reason: replay-only TUI gives operators a faster artifact inspection surface
+without introducing Docker/ROS side effects or changing task execution
+semantics. Bubble Tea is pinned to `v1.2.4` so the sim module keeps its Go 1.24
+toolchain boundary while still using the Charm terminal stack selected for Go
+sim.
+
+## 2026-06-13: Go sim live TUI consumes runtime events
+
+Decision: add `RuntimeEventSink` to the Go sim runtime runner and make
+`navlab-sim run <task> --tui` execute the existing live runner behind a Bubble
+Tea monitor. The TUI updates service/probe/rosbag state from events, tails the
+selected component log file, focuses the blocker panel on failures, and refreshes
+from `summary.json` after the run writes final artifacts.
+
+Basis: the runner already has deterministic service, rosbag, probe, wait, and
+cleanup boundaries. Emitting events at those points avoids changing Docker CLI
+execution or task semantics while giving the TUI enough state for live
+monitoring.
+
+Reason: live TUI should be a monitor over the same runner and artifacts, not a
+second execution path. Keeping JSON artifacts canonical preserves CI/replay
+behavior, while the event sink can later map cleanly to
+`runtime.v1.ProcessEvent` when generated contract types are adopted.

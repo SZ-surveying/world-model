@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package navlab.runtime.v1;
 
+option go_package = "navlab/contracts/gen/go/navlab/runtime/v1;runtimev1";
+
 import "google/protobuf/timestamp.proto";
 
 message ProcessEvent {

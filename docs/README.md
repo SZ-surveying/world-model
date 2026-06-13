@@ -71,6 +71,7 @@
 - `docs/general/orchestration_runtime_backend_inventory.md`: runtime backend 迁移清单和当前样板
 - `docs/general/orchestration_legacy_helper_deep_split_todo.md`: legacy helper 深拆和最终删除 TODO
 - `docs/general/navlab_real_sim_package_boundary_design.md`: `navlab.real` / `navlab.sim` / `navlab.common` 包边界设计
+- `docs/general/orchestration_sim_tui_monitor_design.md`: Go sim TUI monitor 设计，覆盖 live 运行监控和 artifact replay
 
 ## 推荐阅读顺序
 
@@ -119,7 +120,8 @@
 43. `docs/general/orchestration_config_precedence_split_design.md`
 44. `docs/general/orchestration_legacy_helper_deep_split_todo.md`
 45. `docs/general/navlab_real_sim_package_boundary_design.md`
-46. `contracts/README.md`
+46. `docs/general/orchestration_sim_tui_monitor_design.md`
+47. `contracts/README.md`
 
 ## 当前目录结构
 
@@ -136,6 +138,7 @@ docs/
     orchestration_config_precedence_split_design.md
     orchestration_legacy_helper_deep_split_todo.md
     navlab_real_sim_package_boundary_design.md
+    orchestration_sim_tui_monitor_design.md
   scenarios/
     indoor/
       navlab_master_roadmap.md

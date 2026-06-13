@@ -176,10 +176,17 @@ fn blocker_source(code: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
     use crate::config::{
         CommonDoctorConfig, OrchestrationConfig, PathConfig, PreflightConfig, PrepareConfig,
         RuntimeConfig, SourceConfig, TaskDoctorConfig,
     };
+    use navlab_contracts::navlab::orchestration::v1::{
+        RuntimeMode, TaskRequest, TaskResult, TaskStatus,
+    };
+    use navlab_contracts::navlab::safety::v1::MavlinkAck;
+    use navlab_contracts::navlab::sensors::v1::{RuntimeDomain, SourceEvidence};
 
     fn project() -> ProjectConfig {
         ProjectConfig {
@@ -249,5 +256,99 @@ mod tests {
         assert_eq!(actual["command"], golden["command"]);
         assert_eq!(actual["accepted"], golden["accepted"]);
         assert_eq!(actual["resultCode"], golden["resultCode"]);
+    }
+
+    #[test]
+    fn generated_contract_types_match_real_json_output() {
+        let project = project();
+        let task = TaskConfig {
+            id: "motor-debug".to_string(),
+            family: "real".to_string(),
+            description: "debug motors".to_string(),
+            capabilities: vec!["requires_operator".to_string()],
+            task: BTreeMap::from([("duration_sec".to_string(), serde_json::json!(1.0))]),
+            safety: BTreeMap::new(),
+        };
+        let request = task_request(&project, &task, "run", Path::new("artifacts/real/run"));
+        assert_eq!(request["runtimeMode"], RuntimeMode::Real.as_str_name());
+        assert_eq!(
+            request["sourceClaims"]["runtimeDomain"],
+            RuntimeDomain::Real.as_str_name()
+        );
+
+        let blockers = vec!["mavlink_ack_failed: ARM".to_string()];
+        let result = task_result(TaskResultContractInput {
+            project: &project,
+            task_id: "motor-debug",
+            run_id: "run",
+            artifact_dir: Path::new("artifacts/real/run"),
+            summary_path: Path::new("artifacts/real/run/summary.json"),
+            ok: false,
+            blockers: &blockers,
+            mavlink_acks: vec![mavlink_ack(
+                "ARM",
+                "MAV_RESULT_FAILED",
+                4,
+                false,
+                "GUIDED",
+                "GUIDED",
+                "Arm: RC not found",
+            )],
+            details: serde_json::json!({}),
+        });
+        assert_eq!(result["status"], TaskStatus::Blocked.as_str_name());
+
+        let generated_request = TaskRequest {
+            schema_version: request["schemaVersion"].as_str().unwrap().to_string(),
+            task_id: request["taskId"].as_str().unwrap().to_string(),
+            run_id: request["runId"].as_str().unwrap().to_string(),
+            runtime_mode: RuntimeMode::Real as i32,
+            artifact_dir: request["artifactDir"].as_str().unwrap().to_string(),
+            capabilities: vec!["requires_operator".to_string()],
+            parameters: None,
+            source_claims: Some(SourceEvidence {
+                runtime_domain: RuntimeDomain::Real as i32,
+                scan_source: project.sources.scan_source_claim,
+                imu_source: project.sources.imu_source_claim,
+                rangefinder_source: project.sources.rangefinder_source_claim,
+                slam_source: project.sources.slam_source_claim,
+                uses_truth_as_control_input: false,
+                topics: vec![],
+            }),
+            created_at: None,
+        };
+        assert_eq!(generated_request.runtime_mode, RuntimeMode::Real as i32);
+
+        let generated_result = TaskResult {
+            schema_version: result["schemaVersion"].as_str().unwrap().to_string(),
+            task_id: result["taskId"].as_str().unwrap().to_string(),
+            run_id: result["runId"].as_str().unwrap().to_string(),
+            status: TaskStatus::Blocked as i32,
+            ok: false,
+            blocked: true,
+            exit_code: result["exitCode"].as_i64().unwrap() as i32,
+            artifact_dir: result["artifactDir"].as_str().unwrap().to_string(),
+            summary_path: result["summaryPath"].as_str().unwrap().to_string(),
+            blockers: vec![],
+            warnings: vec![],
+            source_evidence: None,
+            mavlink_acks: vec![MavlinkAck {
+                command: "ARM".to_string(),
+                result: "MAV_RESULT_FAILED".to_string(),
+                result_code: 4,
+                accepted: false,
+                mode_before: "GUIDED".to_string(),
+                mode_after: "GUIDED".to_string(),
+                statustext: "Arm: RC not found".to_string(),
+                observed_at: None,
+            }],
+            metrics: None,
+            evidence: None,
+            details: None,
+            started_at: None,
+            finished_at: None,
+        };
+        assert_eq!(generated_result.status, TaskStatus::Blocked as i32);
+        assert_eq!(generated_result.mavlink_acks[0].command, "ARM");
     }
 }

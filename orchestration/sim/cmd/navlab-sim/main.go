@@ -15,6 +15,7 @@ import (
 	simruntime "navlab/orchestration-sim/internal/runtime"
 	"navlab/orchestration-sim/internal/tasks"
 	"navlab/orchestration-sim/internal/tasks/helpers"
+	simtui "navlab/orchestration-sim/internal/tui"
 	"navlab/orchestration-sim/internal/ui"
 )
 
@@ -71,6 +72,7 @@ func newRootCommand() *cobra.Command {
 		newListTasksCommand(ctx),
 		newShowTaskCommand(ctx),
 		newRunCommand(ctx),
+		newTUICommand(),
 		newBuildCommand(ctx),
 	)
 	return root
@@ -141,6 +143,7 @@ func newShowTaskCommand(ctx *appContext) *cobra.Command {
 
 func newRunCommand(ctx *appContext) *cobra.Command {
 	var dryRun bool
+	var tuiMode bool
 	var durationSec float64
 	var simulationProfile string
 	cmd := &cobra.Command{
@@ -154,6 +157,7 @@ func newRunCommand(ctx *appContext) *cobra.Command {
 				ctx.helperRegistry(),
 				args[0],
 				dryRun,
+				tuiMode,
 				ctx.artifactRoot,
 				tasks.PlanOptions{
 					DurationSec:       durationSec,
@@ -163,9 +167,21 @@ func newRunCommand(ctx *appContext) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the task plan without starting runtime services")
+	cmd.Flags().BoolVar(&tuiMode, "tui", false, "open the replay TUI after dry-run artifact generation")
 	cmd.Flags().Float64Var(&durationSec, "duration-sec", 0, "override task duration in seconds")
 	cmd.Flags().StringVar(&simulationProfile, "simulation-profile", "", "override simulation profile")
 	return cmd
+}
+
+func newTUICommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "tui <artifact-dir>",
+		Short: "Open a replay TUI for one simulation artifact directory",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return simtui.RunReplay(args[0], simtui.RunOptions{RequireTTY: true})
+		},
+	}
 }
 
 func newBuildCommand(ctx *appContext) *cobra.Command {
@@ -317,15 +333,29 @@ func runTask(
 	helperRegistry *helpers.Registry,
 	taskID string,
 	dryRun bool,
+	tuiMode bool,
 	artifactRootOverride string,
 	options tasks.PlanOptions,
 ) error {
+	if tuiMode {
+		if err := simtui.EnsureInteractiveTerminal(); err != nil {
+			return err
+		}
+	}
 	prepared, err := prepareTaskRun(loader, registry, helperRegistry, taskID, dryRun, artifactRootOverride, options)
 	if err != nil {
 		return err
 	}
 	if !dryRun {
-		return runLiveTask(prepared.Project, prepared.TaskRuntimeConfig, prepared.Plan, prepared.Result, prepared.GeneratedArtifacts, prepared.RuntimeSpecs)
+		if tuiMode {
+			return simtui.RunLive(prepared.Result.ArtifactDir, func(sink tasks.RuntimeEventSink) error {
+				return runLiveTask(prepared.Project, prepared.TaskRuntimeConfig, prepared.Plan, prepared.Result, prepared.GeneratedArtifacts, prepared.RuntimeSpecs, sink, false)
+			}, simtui.RunOptions{RequireTTY: false})
+		}
+		return runLiveTask(prepared.Project, prepared.TaskRuntimeConfig, prepared.Plan, prepared.Result, prepared.GeneratedArtifacts, prepared.RuntimeSpecs, nil, true)
+	}
+	if tuiMode {
+		return simtui.RunReplay(prepared.Result.ArtifactDir, simtui.RunOptions{RequireTTY: true})
 	}
 	fmt.Println(ui.Title("Simulation Task Plan"))
 	fmt.Println(ui.KeyValue("dry_run", true))
@@ -476,11 +506,13 @@ func runLiveTask(
 	result artifacts.DryRunResult,
 	generatedArtifacts []tasks.GeneratedRuntimeArtifact,
 	runtimeSpecs tasks.RuntimeSpecBundle,
+	eventSink tasks.RuntimeEventSink,
+	printSummary bool,
 ) error {
 	execution, executionErr := tasks.ExecuteRuntimeSpecs(
 		simruntime.NewDockerBackend(nil),
 		runtimeSpecs,
-		tasks.RuntimeExecutionOptions{WaitForRosbags: true},
+		tasks.RuntimeExecutionOptions{WaitForRosbags: true, TaskID: plan.TaskID, RunID: result.RunID, EventSink: eventSink},
 	)
 	summary := tasks.BuildLiveRunSummary(project, taskRuntimeConfig, plan, result.RunID, result.ArtifactDir, generatedArtifacts, runtimeSpecs, execution, executionErr)
 	summaryPath := filepath.Join(result.ArtifactDir, "summary.json")
@@ -488,6 +520,12 @@ func runLiveTask(
 	if err := artifacts.WriteJSONArtifact(summaryPath, summary); err != nil {
 		return fmt.Errorf("failed to write live summary for %q: %w", plan.TaskID, err)
 	}
+	emitTaskEvent(eventSink, plan.TaskID, result.RunID, tasks.RuntimeEvent{
+		Phase:    "summary.written",
+		Level:    "info",
+		Message:  "summary written",
+		Artifact: summaryPath,
+	})
 	finalArtifacts, err := artifacts.FinalizeRunArtifacts(project, plan, result, stageLabel(plan.TaskID), controlMode(plan.TaskID, plan.SimulationProfile))
 	if err != nil {
 		return fmt.Errorf("failed to finalize live artifacts for %q: %w", plan.TaskID, err)
@@ -498,6 +536,20 @@ func runLiveTask(
 	manifestEntries = append(manifestEntries, finalArtifacts...)
 	if err := artifacts.AppendManifestArtifacts(result.ManifestPath, result.ArtifactDir, manifestEntries); err != nil {
 		return fmt.Errorf("failed to update live manifest for %q: %w", plan.TaskID, err)
+	}
+	if summary.OK {
+		emitTaskEvent(eventSink, plan.TaskID, result.RunID, tasks.RuntimeEvent{Phase: "run.completed", Level: "info", Message: "task completed"})
+	} else {
+		emitTaskEvent(eventSink, plan.TaskID, result.RunID, tasks.RuntimeEvent{Phase: "run.blocked", Level: "error", Message: "task blocked"})
+	}
+	if !printSummary {
+		if !summary.OK {
+			if executionErr != nil {
+				return fmt.Errorf("task %q live run failed; summary: %s: %w", plan.TaskID, summaryPath, executionErr)
+			}
+			return fmt.Errorf("task %q live run blocked; summary: %s", plan.TaskID, summaryPath)
+		}
+		return nil
 	}
 	fmt.Println(ui.Title("Simulation Task Run"))
 	fmt.Println(ui.KeyValue("dry_run", false))
@@ -517,6 +569,16 @@ func runLiveTask(
 	}
 	fmt.Println(ui.KeyValue("status", "ok"))
 	return nil
+}
+
+func emitTaskEvent(sink tasks.RuntimeEventSink, taskID string, runID string, event tasks.RuntimeEvent) {
+	if sink == nil {
+		return
+	}
+	event.Time = time.Now().UTC()
+	event.TaskID = taskID
+	event.RunID = runID
+	sink.EmitRuntimeEvent(event)
 }
 
 func stageLabel(taskID string) string {

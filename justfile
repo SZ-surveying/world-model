@@ -10,11 +10,7 @@ command_cmd := "uv run --project scripts/command python scripts/command/main.py"
 default:
     @just --list
 
-# Orchestration tasks
-
-# Build orchestration runtime images.
-navlab-build kind='all' *args='':
-    {{sim_cmd}} build {{kind}} {{args}}
+# Check
 
 # Check Go sim orchestration.
 check-go *args='':
@@ -39,6 +35,12 @@ check-python *args='':
 # Format Python projects.
 format-python *args='':
     ./scripts/quality/format-python.sh {{args}}
+
+# Orchestration tasks
+
+# Build orchestration runtime images.
+navlab-build kind='all' *args='':
+    {{sim_cmd}} build {{kind}} {{args}}
 
 # Check sim orchestration.
 navlab-doctor *args='':

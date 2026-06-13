@@ -20,6 +20,14 @@ type fakeRuntimeBackend struct {
 	serviceStartTime time.Time
 }
 
+type captureEventSink struct {
+	events []RuntimeEvent
+}
+
+func (sink *captureEventSink) EmitRuntimeEvent(event RuntimeEvent) {
+	sink.events = append(sink.events, event)
+}
+
 func (backend *fakeRuntimeBackend) StartService(spec simruntime.ServiceSpec) (simruntime.RuntimeHandle, error) {
 	backend.events = append(backend.events, "start-service:"+spec.Name)
 	if spec.Name == backend.failService {
@@ -98,6 +106,44 @@ func TestExecuteRuntimeSpecsStartsRunsWaitsAndCleansUp(t *testing.T) {
 	})
 }
 
+func TestExecuteRuntimeSpecsEmitsRuntimeEvents(t *testing.T) {
+	backend := newFakeRuntimeBackend()
+	sink := &captureEventSink{}
+	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
+		Services: []simruntime.ServiceSpec{{Name: "gazebo", LogPath: "gazebo.log"}},
+		Rosbags:  []simruntime.RosbagSpec{{Name: "hover_rosbag", LogPath: "rosbag.log", OutputPath: "hover.mcap"}},
+		Probes:   []simruntime.ProbeSpec{{Name: "frame_probe", Required: true, LogPath: "probe.log"}},
+	}, RuntimeExecutionOptions{WaitForRosbags: true, TaskID: "hover", RunID: "run", EventSink: sink})
+	if err != nil {
+		t.Fatalf("ExecuteRuntimeSpecs() error = %v", err)
+	}
+	phases := make([]string, 0, len(sink.events))
+	for _, event := range sink.events {
+		phases = append(phases, event.Phase)
+		if event.TaskID != "hover" || event.RunID != "run" {
+			t.Fatalf("event task/run = %q/%q", event.TaskID, event.RunID)
+		}
+	}
+	for _, want := range []string{
+		"run.started",
+		"service.starting",
+		"service.started",
+		"rosbag.starting",
+		"rosbag.started",
+		"probe.running",
+		"probe.finished",
+		"rosbag.waiting",
+		"rosbag.finished",
+		"rosbag.stopping",
+		"service.stopping",
+		"run.completed",
+	} {
+		if !containsString(phases, want) {
+			t.Fatalf("phases missing %q: %#v", want, phases)
+		}
+	}
+}
+
 func TestExecuteRuntimeSpecsFailsRequiredProbeAndCleansUp(t *testing.T) {
 	backend := newFakeRuntimeBackend()
 	backend.probeResults["frame_probe"] = simruntime.ProbeResult{Backend: "fake", Name: "frame_probe", ReturnCode: 42}
@@ -152,4 +198,13 @@ func assertEvents(t *testing.T, got []string, want []string) {
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("events = %#v, want %#v", got, want)
 	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

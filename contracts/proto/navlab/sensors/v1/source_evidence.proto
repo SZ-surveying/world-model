@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package navlab.sensors.v1;
 
+option go_package = "navlab/contracts/gen/go/navlab/sensors/v1;sensorsv1";
+
 import "navlab/sensors/v1/topic_contract.proto";
 
 message SourceEvidence {

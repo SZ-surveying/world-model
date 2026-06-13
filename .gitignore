@@ -20,5 +20,8 @@ core
 install/
 log/
 target/
+orchestration/real/artifacts/
 orchestration/real/logs/
+.*-snap
+*.pending-snap
 scripts/command/logs

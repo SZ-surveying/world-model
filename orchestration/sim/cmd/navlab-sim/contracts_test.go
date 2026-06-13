@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"navlab/orchestration-sim/internal/config"
@@ -50,6 +51,30 @@ func TestPrepareTaskRunEmitsGoldenCompatibleContractJSON(t *testing.T) {
 	}
 	if !artifactTypeExists(manifest, "runtime_plan") {
 		t.Fatalf("manifest missing runtime_plan artifact: %#v", manifest["artifacts"])
+	}
+}
+
+func TestRunTaskTUILiveRequiresTTYBeforePreparingArtifacts(t *testing.T) {
+	artifactRoot := t.TempDir()
+	err := runTask(
+		config.NewLoader(filepath.Join("..", "..", "config.toml")),
+		tasks.DefaultRegistry(),
+		helpers.DefaultRegistry(),
+		"hover",
+		false,
+		true,
+		artifactRoot,
+		tasks.PlanOptions{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "interactive terminal") {
+		t.Fatalf("runTask() error = %v, want TTY error", err)
+	}
+	entries, readErr := os.ReadDir(artifactRoot)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("artifact root should stay empty before TTY check, got %d entries", len(entries))
 	}
 }
 
