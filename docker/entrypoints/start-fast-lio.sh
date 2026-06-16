@@ -4,7 +4,7 @@ set -euo pipefail
 # ROS setup scripts may reference unset tracing variables, so temporarily
 # disable nounset while sourcing them.
 set +u
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
 if [[ -f /workspace/ros_ws/install/setup.bash ]]; then
   source /workspace/ros_ws/install/setup.bash
 fi

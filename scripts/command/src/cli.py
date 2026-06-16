@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import shlex
 import subprocess
 import sys
@@ -13,10 +12,8 @@ from rich.console import Console
 
 from src import mavlink_serial, maze, ros_setup
 from src.command_logging import configure_command_logging
-from src.foxglove import replay, upload
 
-app = typer.Typer(add_completion=False, help="Unified command entrypoint for foxglove, serial, and maze tools.")
-foxglove_app = typer.Typer(add_completion=False, help="Foxglove replay build and upload commands.")
+app = typer.Typer(add_completion=False, help="Unified command entrypoint for serial, maze, and ROS tools.")
 serial_app = typer.Typer(add_completion=False, help="Serial bridge commands.")
 maze_app = typer.Typer(add_completion=False, help="Official maze utility commands.")
 ros_app = typer.Typer(add_completion=False, help="Real YDLidar ROS setup doctor and installer.")
@@ -97,74 +94,6 @@ def _detach_serial_bridge(config: mavlink_serial.BridgeConfig) -> None:
     console.print(f"log file: [cyan]{config.log_file}[/cyan]")
     console.print(f"attach: [bold]tmux attach -t {SERIAL_TMUX_SESSION_NAME}[/bold]")
     console.print(f"stop: [bold]tmux kill-session -t {SERIAL_TMUX_SESSION_NAME}[/bold]")
-
-
-@foxglove_app.command("build-replay")
-def build_replay_command(
-    run: Annotated[
-        str | None,
-        typer.Argument(help="Run id like 20260607_185314, or a run artifact directory. Defaults to latest run."),
-    ] = None,
-    maze_path: Annotated[
-        Path, typer.Option("--maze", help="Path to official ardupilot_gz maze.sdf")
-    ] = replay.DEFAULT_MAZE,
-    profile: Annotated[
-        Path, typer.Option("--profile", help="Foxglove-lite topic profile")
-    ] = replay.FOXGLOVE_LITE_PROFILE,
-    resolution: Annotated[
-        float, typer.Option("--resolution", help="Official maze overlay resolution in meters")
-    ] = replay.DEFAULT_RESOLUTION_M,
-    margin: Annotated[float, typer.Option("--margin", help="Auto crop margin in meters")] = replay.DEFAULT_MARGIN_M,
-    bbox: Annotated[
-        str | None, typer.Option("--bbox", help="Explicit crop bbox as xmin,ymin,xmax,ymax in map frame")
-    ] = None,
-    full: Annotated[
-        bool, typer.Option("--full", help="Use the full official maze extent instead of auto crop")
-    ] = False,
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Write only the replay summary, not the output MCAP")
-    ] = False,
-) -> None:
-    try:
-        run_dir = replay.resolve_run_dir(run)
-        summary = replay.build_replay(
-            run_dir=run_dir,
-            maze_path=maze_path.expanduser(),
-            topic_profile_path=profile.expanduser(),
-            resolution_m=resolution,
-            margin_m=margin,
-            bbox_override=replay.parse_bbox(bbox) if bbox else None,
-            full=full,
-            dry_run=dry_run,
-        )
-    except Exception as exc:  # noqa: BLE001 - CLI should emit concise blockers.
-        error_console.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(2) from exc
-
-    console.print_json(json.dumps(summary, indent=2, sort_keys=True))
-    if not summary.get("ok"):
-        raise typer.Exit(1)
-
-
-@foxglove_app.command("upload")
-def upload_command(
-    run: Annotated[
-        str | None,
-        typer.Argument(help="Run id like 20260607_144800, or the run artifact directory path. Defaults to latest run."),
-    ] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print resolved upload files without uploading.")] = False,
-    force: Annotated[bool, typer.Option("--force", help="Upload even when foxglove_upload.enabled=false.")] = False,
-    lite: Annotated[
-        bool, typer.Option("--lite", help="Upload Foxglove-lite MCAP; generate it first when missing.")
-    ] = False,
-) -> None:
-    try:
-        result = upload.upload_run(run=run, dry_run=dry_run, force=force, lite=lite)
-    except Exception as exc:  # noqa: BLE001 - CLI should emit concise blockers.
-        error_console.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(2) from exc
-    if dry_run:
-        console.print_json(json.dumps(result, indent=2, sort_keys=True))
 
 
 @serial_app.command("bridge")
@@ -284,7 +213,6 @@ def ros_install_command(
             raise typer.Exit(1)
 
 
-app.add_typer(foxglove_app, name="foxglove")
 app.add_typer(serial_app, name="serial")
 app.add_typer(maze_app, name="maze")
 app.add_typer(ros_app, name="ros")

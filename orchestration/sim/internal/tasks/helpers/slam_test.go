@@ -22,10 +22,23 @@ func TestWriteSlamRuntimeConfig(t *testing.T) {
 		`backend = 'cartographer'`,
 		`scan_topic = '/scan'`,
 		`laser_z = '0.075077'`,
+		`laser_frame_id = 'base_scan'`,
+		`launch_fake_odom = false`,
+		`publish_placeholder_odom = false`,
+		`cartographer_configuration_basename = 'navlab_cartographer_2d_real.lua'`,
+		`cartographer_odometry_topic = '/cartographer/odometry_input'`,
+		`cartographer_tf_topic = '/navlab/slam/tf'`,
+		`publish_global_tf = true`,
+		`global_tf_topic = '/tf'`,
+		`odom_source_mode = 'slam_tf'`,
+		`external_nav_input_odom_topic = '/slam/odom'`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("runtime config missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, `cartographer_odometry_topic = '/odometry'`) {
+		t.Fatalf("runtime config must not point Cartographer odometry input at diagnostic truth /odometry:\n%s", text)
 	}
 }
 
@@ -43,6 +56,7 @@ func TestSlamDockerArgs(t *testing.T) {
 	for _, want := range []string{
 		"--name " + SlamBackendContainer,
 		"NAVLAB_SLAM_RUNTIME_CONFIG=/workspace/artifacts/slam_runtime.toml",
+		"source /opt/ros/${ROS_DISTRO:-humble}/setup.bash",
 		"navlab.common.slam.cli launch",
 		"--backend 'cartographer'",
 	} {

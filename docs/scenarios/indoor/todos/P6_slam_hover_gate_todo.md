@@ -399,3 +399,9 @@ P6 全部完成必须满足：
 - 结果：`ok=true`，`blocked=false`，`blockers=[]`
 - blocker：无
 - 备注：`/slam/odom -> /external_nav/status -> FCU local position -> hover` 真实 gate 通过；rosbag required topics 全部有数据；`uses_gazebo_truth_as_input=false`；`hover_claim=evaluated`；`exploration_claim=not_evaluated`。hover window 水平漂移约 0.014m，高度误差约 0.040m，yaw 漂移约 0.001rad，ExternalNav rate 约 70.8Hz，FCU local position rate 约 16.4Hz。
+
+### 2026-06-16 P14 rangefinder 边界更新
+
+- P6 后续验收必须引用 `docs/scenarios/indoor/todos/P14_benewake_rangefinder_sitl_todo.md`。
+- FCU rangefinder 输入必须来自 `RNGFND1_TYPE=20` + `SERIAL7_PROTOCOL=9` + NavLab Benewake PTY emulator + `serial7:=uart:/tmp/navlab_benewake_tfmini:115200`，不能再由 Python/Gazebo sensor runtime 发送 MAVLink `DISTANCE_SENSOR`。`sim:benewake_tfmini` 在 2026-06-16 live 中触发 ArduPilot FPE，作为失败路径保留在 P14 审计中。
+- `/rangefinder/down/range` 只作为 ROS observation/height-estimator/replay topic；P6 hover 通过条件必须记录 `rangefinder_simulation_fidelity=benewake_serial_emulated`。

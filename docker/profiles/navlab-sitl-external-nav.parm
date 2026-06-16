@@ -3,36 +3,49 @@
 #
 # Source:
 # https://ardupilot.org/dev/docs/ros2-cartographer-slam.html
-FRAME_CLASS 1
-FRAME_TYPE 1
-MOT_PWM_MIN 1100
-MOT_PWM_MAX 1900
+# Matched to docs/debug.param so GPS-dependent prearm checks do not block
+# ExternalNav-only SITL. GPS1_* transport/extrinsic params are intentionally
+# absent because GPS1_TYPE is disabled.
 AHRS_EKF_TYPE 3
-EK3_ENABLE 1
-EK2_ENABLE 0
-GPS_TYPE 0
+ARMING_CHECK 1043902
+EK3_GPS_CHECK 0
+EK3_SRC_OPTIONS 0
 GPS1_TYPE 0
-ARMING_CHECK 388598
-FS_CRASH_CHECK 0
 VISO_TYPE 1
-VISO_POS_X 0
-VISO_POS_Y 0
-VISO_POS_Z 0
 EK3_SRC1_POSXY 6
-EK3_SRC1_POSZ 1
+EK3_SRC1_POSZ 2
 EK3_SRC1_VELXY 6
 EK3_SRC1_VELZ 6
 EK3_SRC1_YAW 6
 
-# NavLab still injects the down-facing Gazebo rangefinder as a real FCU
-# peripheral. It is not the primary EKF position source in this official
-# Cartographer profile.
-EK3_RNG_USE_HGT 70
-RNGFND1_TYPE 10
-RNGFND1_MIN_CM 5
-RNGFND1_MAX_CM 600
-RNGFND1_GNDCLEAR 10
+SCR_ENABLE 1
+AHRS_ORIG_ALT 584
+AHRS_ORIG_LAT -35.363262
+AHRS_ORIG_LON 149.165237
+
+FRAME_CLASS	1
+FRAME_TYPE	1
+
+# NavLab keeps the down-facing rangefinder profile aligned to the real machine.
+# SITL must adapt to this profile; the profile must not be rewritten to a
+# Gazebo/MAVLink-specific backend just to make the simulation pass.
+SERIAL7_BAUD 115
+SERIAL7_OPTIONS 0
+SERIAL7_PROTOCOL 9
+EK3_RNG_USE_HGT -1
+RNGFND1_ADDR 0
+RNGFND1_FUNCTION 0
+RNGFND1_OFFSET 0
+RNGFND1_PIN -1
+RNGFND1_PWRRNG 0
+RNGFND1_RMETRIC 1
+RNGFND1_SCALING 3
+RNGFND1_STOP_PIN -1
+RNGFND1_TYPE 20
+RNGFND1_MIN_CM 10
+RNGFND1_MAX_CM 1200
+RNGFND1_GNDCLEAR 15
 RNGFND1_ORIENT 25
 RNGFND1_POS_X 0
 RNGFND1_POS_Y 0
-RNGFND1_POS_Z 0.10
+RNGFND1_POS_Z 0

@@ -10,6 +10,12 @@ capabilities:
 task:
   duration_sec: 150.0
   simulation_profile: ideal
+fcu_controller:
+  takeoff_alt_m: 0.5
+  takeoff_min_height_m: 0.15
+  takeoff_min_height_ratio: 0.35
+  readiness_timeout_sec: 45.0
+  hold_after_ready_sec: 8.0
 exploration_gate:
   strategy: frontier_lite
   exploration_window_sec: 26.0

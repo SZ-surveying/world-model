@@ -25,7 +25,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "configuration_basename",
-                default_value="navlab_cartographer_2d.lua",
+                default_value="navlab_cartographer_2d_real.lua",
                 description="Cartographer Lua configuration file",
             ),
             DeclareLaunchArgument(
@@ -40,8 +40,45 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "cartographer_odometry_topic",
-                default_value="/odometry",
-                description="Official ArduPilot Cartographer odometry input remapped from /odom",
+                default_value="/cartographer/odometry_input",
+                description=(
+                    "Explicit Cartographer odometry input. Leave this off /odometry; "
+                    "/odometry is diagnostic truth in simulation."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "cartographer_tf_topic",
+                default_value="/navlab/slam/tf",
+                description=(
+                    "Isolated Cartographer dynamic TF topic. Keeps SLAM TF separate from AP/Gazebo diagnostic /tf."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "publish_global_tf",
+                default_value="false",
+                description=(
+                    "Publish accepted SLAM map->base_link transforms to global /tf "
+                    "for consumers and replay visualization."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "global_tf_topic",
+                default_value="/tf",
+                description="Global TF topic used only for accepted SLAM output transforms.",
+            ),
+            DeclareLaunchArgument(
+                "cached_odom_publish_rate_hz",
+                default_value="10.0",
+                description=(
+                    "Republish accepted fresh SLAM odometry at this rate; stale or rejected TF is not republished."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "odom_source_mode",
+                default_value="slam_tf",
+                description=(
+                    "SLAM adapter odom source: slam_tf reads Cartographer map->base_link TF; tf reads odom->base_link"
+                ),
             ),
             DeclareLaunchArgument(
                 "odom_topic",
@@ -52,6 +89,16 @@ def generate_launch_description():
                 "status_topic",
                 default_value="/navlab/slam/status",
                 description="Structured SLAM status topic",
+            ),
+            DeclareLaunchArgument(
+                "map_frame",
+                default_value="map",
+                description="SLAM map frame",
+            ),
+            DeclareLaunchArgument(
+                "odom_frame",
+                default_value="odom",
+                description="Legacy odom frame used only by legacy TF mode",
             ),
             DeclareLaunchArgument(
                 "laser_frame",
@@ -136,6 +183,14 @@ def generate_launch_description():
                     params_file,
                     {
                         "publish_placeholder_odom": LaunchConfiguration("publish_placeholder_odom"),
+                        "odom_source_mode": LaunchConfiguration("odom_source_mode"),
+                        "map_frame_id": LaunchConfiguration("map_frame"),
+                        "odom_frame_id": LaunchConfiguration("odom_frame"),
+                        "base_frame_id": LaunchConfiguration("base_frame"),
+                        "tf_topic": LaunchConfiguration("cartographer_tf_topic"),
+                        "publish_global_tf": LaunchConfiguration("publish_global_tf"),
+                        "global_tf_topic": LaunchConfiguration("global_tf_topic"),
+                        "cached_odom_publish_rate_hz": LaunchConfiguration("cached_odom_publish_rate_hz"),
                         "scan_topic": LaunchConfiguration("scan_topic"),
                         "imu_topic": LaunchConfiguration("imu_topic"),
                         "odom_topic": LaunchConfiguration("odom_topic"),
@@ -159,6 +214,7 @@ def generate_launch_description():
                     ("scan", LaunchConfiguration("scan_topic")),
                     ("imu", LaunchConfiguration("imu_topic")),
                     ("/odom", LaunchConfiguration("cartographer_odometry_topic")),
+                    ("/tf", LaunchConfiguration("cartographer_tf_topic")),
                 ],
             ),
             Node(

@@ -3,6 +3,7 @@ package config
 type ProjectConfig struct {
 	Orchestration           OrchestrationConfig           `mapstructure:"orchestration"`
 	Runtime                 RuntimeConfig                 `mapstructure:"runtime"`
+	Sections                ProjectConfigSections         `mapstructure:"-"`
 	Paths                   PathConfig                    `mapstructure:"paths"`
 	Router                  RouterConfig                  `mapstructure:"router"`
 	Navlab                  NavlabConfig                  `mapstructure:"navlab"`
@@ -24,11 +25,21 @@ type ProjectConfig struct {
 	SlamHover               SlamHoverConfig               `mapstructure:"slam_hover"`
 	MotionGate              MotionGateConfig              `mapstructure:"motion_gate"`
 	ExplorationGate         ExplorationGateConfig         `mapstructure:"exploration_gate"`
+	Nav2                    Nav2Config                    `mapstructure:"nav2"`
+	NavigationAdapter       NavigationAdapterConfig       `mapstructure:"navigation_adapter"`
+	NavigationMission       NavigationMissionConfig       `mapstructure:"navigation_mission"`
 	ScanIntegrityGate       ScanIntegrityGateConfig       `mapstructure:"scan_integrity_gate"`
 	ScanStabilization       ScanStabilizationConfig       `mapstructure:"scan_stabilization"`
 	ScanStabilizationGate   ScanStabilizationGateConfig   `mapstructure:"scan_stabilization_gate"`
 	AirframeDisturbance     AirframeDisturbanceConfig     `mapstructure:"airframe_disturbance"`
 	AirframeDisturbanceGate AirframeDisturbanceGateConfig `mapstructure:"airframe_disturbance_gate"`
+}
+
+type ProjectConfigSections struct {
+	Nav2              bool
+	Nav2Costmap       bool
+	NavigationAdapter bool
+	NavigationMission bool
 }
 
 type OrchestrationConfig struct {
@@ -95,12 +106,14 @@ type LandingConfig struct {
 	DefaultPolicy             string  `mapstructure:"default_policy"`
 	HoverPolicy               string  `mapstructure:"hover_policy"`
 	ExplorationPolicy         string  `mapstructure:"exploration_policy"`
+	NavigationPolicy          string  `mapstructure:"navigation_policy"`
 	ScanRobustnessPolicy      string  `mapstructure:"scan_robustness_policy"`
 	LandingStatusTopic        string  `mapstructure:"landing_status_topic"`
 	LandingIntentTopic        string  `mapstructure:"landing_intent_topic"`
 	HomeSource                string  `mapstructure:"home_source"`
 	HomeRadiusM               float64 `mapstructure:"home_radius_m"`
 	PreLandHoldSec            float64 `mapstructure:"pre_land_hold_sec"`
+	CompletionGraceSec        float64 `mapstructure:"completion_grace_sec"`
 	MaxReturnHomeDurationSec  float64 `mapstructure:"max_return_home_duration_sec"`
 	MaxLandingDurationSec     float64 `mapstructure:"max_landing_duration_sec"`
 	MaxDescentRateMPS         float64 `mapstructure:"max_descent_rate_mps"`
@@ -166,43 +179,39 @@ type OfficialMazeX2Config struct {
 }
 
 type RangefinderIMUConfig struct {
-	RosbagProfile                 string  `mapstructure:"rosbag_profile"`
-	WorldSource                   string  `mapstructure:"world_source"`
-	VehicleModelSource            string  `mapstructure:"vehicle_model_source"`
-	ModelOverlaySource            string  `mapstructure:"model_overlay_source"`
-	GazeboLidarTopic              string  `mapstructure:"gazebo_lidar_topic"`
-	X2ScanInputTopic              string  `mapstructure:"x2_scan_input_topic"`
-	X2ScanTopic                   string  `mapstructure:"x2_scan_topic"`
-	X2StatusTopic                 string  `mapstructure:"x2_status_topic"`
-	X2VirtualSerialLink           string  `mapstructure:"x2_virtual_serial_link"`
-	RangefinderScanIdealTopic     string  `mapstructure:"rangefinder_scan_ideal_topic"`
-	RangefinderRangeTopic         string  `mapstructure:"rangefinder_range_topic"`
-	RangefinderStatusTopic        string  `mapstructure:"rangefinder_status_topic"`
-	RangefinderFrameID            string  `mapstructure:"rangefinder_frame_id"`
-	RangefinderModelPose          string  `mapstructure:"rangefinder_model_pose"`
-	RangefinderModelUpdateRateHz  float64 `mapstructure:"rangefinder_model_update_rate_hz"`
-	RangefinderModelRayCount      string  `mapstructure:"rangefinder_model_ray_count"`
-	RangefinderModelNoiseStddevM  float64 `mapstructure:"rangefinder_model_noise_stddev_m"`
-	RangefinderEndpoint           string  `mapstructure:"rangefinder_endpoint"`
-	RangefinderFCUProbeEndpoint   string  `mapstructure:"rangefinder_fcu_probe_endpoint"`
-	RangefinderMAVLinkOrientation string  `mapstructure:"rangefinder_mavlink_orientation"`
-	RangefinderSourceSystem       string  `mapstructure:"rangefinder_source_system"`
-	RangefinderSourceComponent    string  `mapstructure:"rangefinder_source_component"`
-	RangefinderSensorID           string  `mapstructure:"rangefinder_sensor_id"`
-	RangefinderRateHz             float64 `mapstructure:"rangefinder_rate_hz"`
-	RangefinderMinDistanceM       float64 `mapstructure:"rangefinder_min_distance_m"`
-	RangefinderMaxDistanceM       float64 `mapstructure:"rangefinder_max_distance_m"`
-	RangefinderCovarianceCM       string  `mapstructure:"rangefinder_covariance_cm"`
-	IMUSourceRoute                string  `mapstructure:"imu_source_route"`
-	IMUSourceTopic                string  `mapstructure:"imu_source_topic"`
-	IMUOutputTopic                string  `mapstructure:"imu_output_topic"`
-	IMUStatusTopic                string  `mapstructure:"imu_status_topic"`
-	IMUFrameID                    string  `mapstructure:"imu_frame_id"`
-	IMUMinRateHz                  float64 `mapstructure:"imu_min_rate_hz"`
-	SyntheticFallbackEnabled      bool    `mapstructure:"synthetic_fallback_enabled"`
-	AltitudeControlClaim          string  `mapstructure:"altitude_control_claim"`
-	HoverClaim                    string  `mapstructure:"hover_claim"`
-	CartographerLaunch            string  `mapstructure:"cartographer_launch"`
+	RosbagProfile                string  `mapstructure:"rosbag_profile"`
+	WorldSource                  string  `mapstructure:"world_source"`
+	VehicleModelSource           string  `mapstructure:"vehicle_model_source"`
+	ModelOverlaySource           string  `mapstructure:"model_overlay_source"`
+	GazeboLidarTopic             string  `mapstructure:"gazebo_lidar_topic"`
+	X2ScanInputTopic             string  `mapstructure:"x2_scan_input_topic"`
+	X2ScanTopic                  string  `mapstructure:"x2_scan_topic"`
+	X2StatusTopic                string  `mapstructure:"x2_status_topic"`
+	X2VirtualSerialLink          string  `mapstructure:"x2_virtual_serial_link"`
+	RangefinderScanIdealTopic    string  `mapstructure:"rangefinder_scan_ideal_topic"`
+	RangefinderRangeTopic        string  `mapstructure:"rangefinder_range_topic"`
+	RangefinderStatusTopic       string  `mapstructure:"rangefinder_status_topic"`
+	RangefinderFrameID           string  `mapstructure:"rangefinder_frame_id"`
+	RangefinderModelPose         string  `mapstructure:"rangefinder_model_pose"`
+	RangefinderModelUpdateRateHz float64 `mapstructure:"rangefinder_model_update_rate_hz"`
+	RangefinderModelRayCount     string  `mapstructure:"rangefinder_model_ray_count"`
+	RangefinderModelNoiseStddevM float64 `mapstructure:"rangefinder_model_noise_stddev_m"`
+	RangefinderVirtualSerialLink string  `mapstructure:"rangefinder_virtual_serial_link"`
+	RangefinderSerialBaud        int     `mapstructure:"rangefinder_serial_baud"`
+	RangefinderFCUProbeEndpoint  string  `mapstructure:"rangefinder_fcu_probe_endpoint"`
+	RangefinderRateHz            float64 `mapstructure:"rangefinder_rate_hz"`
+	RangefinderMinDistanceM      float64 `mapstructure:"rangefinder_min_distance_m"`
+	RangefinderMaxDistanceM      float64 `mapstructure:"rangefinder_max_distance_m"`
+	IMUSourceRoute               string  `mapstructure:"imu_source_route"`
+	IMUSourceTopic               string  `mapstructure:"imu_source_topic"`
+	IMUOutputTopic               string  `mapstructure:"imu_output_topic"`
+	IMUStatusTopic               string  `mapstructure:"imu_status_topic"`
+	IMUFrameID                   string  `mapstructure:"imu_frame_id"`
+	IMUMinRateHz                 float64 `mapstructure:"imu_min_rate_hz"`
+	SyntheticFallbackEnabled     bool    `mapstructure:"synthetic_fallback_enabled"`
+	AltitudeControlClaim         string  `mapstructure:"altitude_control_claim"`
+	HoverClaim                   string  `mapstructure:"hover_claim"`
+	CartographerLaunch           string  `mapstructure:"cartographer_launch"`
 }
 
 type SlamBackendConfig struct {
@@ -214,6 +223,8 @@ type SlamBackendConfig struct {
 	ScanTopic                         string  `mapstructure:"scan_topic"`
 	IMUTopic                          string  `mapstructure:"imu_topic"`
 	OdometryTopic                     string  `mapstructure:"odometry_topic"`
+	CartographerTFTopic               string  `mapstructure:"cartographer_tf_topic"`
+	OdomSourceMode                    string  `mapstructure:"odom_source_mode"`
 	SlamOdomTopic                     string  `mapstructure:"slam_odom_topic"`
 	SlamStatusTopic                   string  `mapstructure:"slam_status_topic"`
 	ExternalNavStatusTopic            string  `mapstructure:"external_nav_status_topic"`
@@ -225,6 +236,7 @@ type SlamBackendConfig struct {
 	RangefinderStatusTopic            string  `mapstructure:"rangefinder_status_topic"`
 	IMUFrameID                        string  `mapstructure:"imu_frame_id"`
 	LaserFrameID                      string  `mapstructure:"laser_frame_id"`
+	MapFrameID                        string  `mapstructure:"map_frame_id"`
 	OdomFrameID                       string  `mapstructure:"odom_frame_id"`
 	BaseFrameID                       string  `mapstructure:"base_frame_id"`
 	MinSlamOdomRateHz                 float64 `mapstructure:"min_slam_odom_rate_hz"`
@@ -265,6 +277,8 @@ type FCUControllerConfig struct {
 	SlamStatusTopic                 string  `mapstructure:"slam_status_topic"`
 	GuidedMode                      int     `mapstructure:"guided_mode"`
 	TakeoffAltM                     float64 `mapstructure:"takeoff_alt_m"`
+	TakeoffMinHeightM               float64 `mapstructure:"takeoff_min_height_m"`
+	TakeoffMinHeightRatio           float64 `mapstructure:"takeoff_min_height_ratio"`
 	ReadinessTimeoutSec             float64 `mapstructure:"readiness_timeout_sec"`
 	HoldAfterReadySec               float64 `mapstructure:"hold_after_ready_sec"`
 	RequireSlamBackend              bool    `mapstructure:"require_slam_backend"`
@@ -450,6 +464,79 @@ type ExplorationGateConfig struct {
 	ExplorationClaim          string  `mapstructure:"exploration_claim"`
 }
 
+type Nav2Config struct {
+	Enabled          bool              `mapstructure:"enabled"`
+	Profile          string            `mapstructure:"profile"`
+	GlobalFrame      string            `mapstructure:"global_frame"`
+	OdomFrame        string            `mapstructure:"odom_frame"`
+	BaseFrame        string            `mapstructure:"base_frame"`
+	ScanTopic        string            `mapstructure:"scan_topic"`
+	MapTopic         string            `mapstructure:"map_topic"`
+	CmdVelTopic      string            `mapstructure:"cmd_vel_topic"`
+	BTXML            string            `mapstructure:"bt_xml"`
+	PlannerPlugin    string            `mapstructure:"planner_plugin"`
+	ControllerPlugin string            `mapstructure:"controller_plugin"`
+	UseSimTime       bool              `mapstructure:"use_sim_time"`
+	Costmap          Nav2CostmapConfig `mapstructure:"costmap"`
+}
+
+type Nav2CostmapConfig struct {
+	GlobalCostmapTopic string   `mapstructure:"global_costmap_topic"`
+	LocalCostmapTopic  string   `mapstructure:"local_costmap_topic"`
+	RequiredLayers     []string `mapstructure:"required_layers"`
+	MaxCostmapAgeSec   float64  `mapstructure:"max_costmap_age_sec"`
+	MinObstacleCells   int      `mapstructure:"min_obstacle_cells"`
+	MaxUnknownRatio    float64  `mapstructure:"max_unknown_ratio"`
+	InflationRadiusM   float64  `mapstructure:"inflation_radius_m"`
+	FootprintRadiusM   float64  `mapstructure:"footprint_radius_m"`
+	HealthTopic        string   `mapstructure:"health_topic"`
+	UsesGazeboTruth    bool     `mapstructure:"uses_gazebo_truth"`
+	CostmapHealthClaim string   `mapstructure:"costmap_health_claim"`
+}
+
+type NavigationAdapterConfig struct {
+	SetpointIntentTopic string  `mapstructure:"setpoint_intent_topic"`
+	StatusTopic         string  `mapstructure:"status_topic"`
+	MaxXYSpeedMPS       float64 `mapstructure:"max_xy_speed_mps"`
+	MaxYawRateDPS       float64 `mapstructure:"max_yaw_rate_dps"`
+	MaxAccelMPS2        float64 `mapstructure:"max_accel_mps2"`
+	FixedAltitudeM      float64 `mapstructure:"fixed_altitude_m"`
+	StopOnStaleCostmap  bool    `mapstructure:"stop_on_stale_costmap"`
+	StopOnStaleSlam     bool    `mapstructure:"stop_on_stale_slam"`
+	AdapterClaim        string  `mapstructure:"adapter_claim"`
+}
+
+type NavigationMissionConfig struct {
+	Strategy               string                 `mapstructure:"strategy"`
+	CompletionPolicy       string                 `mapstructure:"completion_policy"`
+	GoalFrame              string                 `mapstructure:"goal_frame"`
+	StatusTopic            string                 `mapstructure:"status_topic"`
+	EventsTopic            string                 `mapstructure:"events_topic"`
+	GoalTopic              string                 `mapstructure:"goal_topic"`
+	PathTopic              string                 `mapstructure:"path_topic"`
+	RecoveryTopic          string                 `mapstructure:"recovery_topic"`
+	NavigationWindowSec    float64                `mapstructure:"navigation_window_sec"`
+	MaxGoalRadiusM         float64                `mapstructure:"max_goal_radius_m"`
+	MinClearanceM          float64                `mapstructure:"min_clearance_m"`
+	MinCoverageGrowth      float64                `mapstructure:"min_coverage_growth"`
+	MinPathLengthM         float64                `mapstructure:"min_path_length_m"`
+	MinAcceptedGoals       int                    `mapstructure:"min_accepted_goals"`
+	MaxRecoveryCount       int                    `mapstructure:"max_recovery_count"`
+	ReturnHomePolicy       string                 `mapstructure:"return_home_policy"`
+	NavigationClaim        string                 `mapstructure:"navigation_claim"`
+	UsesGazeboTruthAsInput bool                   `mapstructure:"uses_gazebo_truth_as_input"`
+	ExitGoal               NavigationGoalConfig   `mapstructure:"exit_goal"`
+	BoundedGoals           []NavigationGoalConfig `mapstructure:"bounded_goals"`
+	HomeGoal               NavigationGoalConfig   `mapstructure:"home_goal"`
+}
+
+type NavigationGoalConfig struct {
+	ID     string  `mapstructure:"id"`
+	XM     float64 `mapstructure:"x_m"`
+	YM     float64 `mapstructure:"y_m"`
+	YawRad float64 `mapstructure:"yaw_rad"`
+}
+
 type ScanIntegrityGateConfig struct {
 	RosbagProfile               string  `mapstructure:"rosbag_profile"`
 	RawScanTopic                string  `mapstructure:"raw_scan_topic"`
@@ -612,5 +699,6 @@ type TaskConfig struct {
 
 type TaskParameters struct {
 	DurationSec       float64 `mapstructure:"duration_sec"`
+	TimeoutSec        float64 `mapstructure:"timeout_sec"`
 	SimulationProfile string  `mapstructure:"simulation_profile"`
 }

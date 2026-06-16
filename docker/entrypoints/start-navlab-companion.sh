@@ -2,7 +2,7 @@
 set -euo pipefail
 
 set +u
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
 if [[ -f /opt/navlab_ws/install/setup.bash ]]; then
   source /opt/navlab_ws/install/setup.bash
 fi

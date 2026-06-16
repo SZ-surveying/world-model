@@ -12,7 +12,7 @@
 
 ### 室内无 GPS 主线
 
-- `docs/scenarios/indoor/navlab_master_roadmap.md`: 总 roadmap，定义 P0-P12 顺序和完成标准
+- `docs/scenarios/indoor/navlab_master_roadmap.md`: 总 roadmap，定义 P0-P13 顺序和完成标准
 - `docs/scenarios/indoor/navlab_p0_official_baseline_design.md`: P0 官方基线验收设计
 - `docs/scenarios/indoor/todos/P0_official_baseline_todo.md`: P0 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_p1_official_maze_x2_design.md`: P1 官方 maze + NavLab X2 雷达接入设计
@@ -38,6 +38,9 @@
 - `docs/scenarios/indoor/navlab_p11_bounded_2d_lidar_scan_stabilization_design.md`: P11 有界 2D lidar 姿态稳定化设计
 - `docs/scenarios/indoor/todos/P11_bounded_2d_lidar_scan_stabilization_todo.md`: P11 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_p12_airframe_disturbance_scan_robustness_design.md`: P12 机体扰动下的 2D lidar / SLAM 水平复原鲁棒性设计
+- `docs/scenarios/indoor/todos/P12_airframe_disturbance_scan_robustness_todo.md`: P12 TODO 和验收标准
+- `docs/scenarios/indoor/navlab_p13_nav2_indoor_navigation_design.md`: P13 Nav2 室内导航与主动探索设计
+- `docs/scenarios/indoor/todos/P13_nav2_indoor_navigation_todo.md`: P13 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_unified_landing_sequence_design.md`: hover/P8/P12 统一降落流程设计
 - `docs/scenarios/indoor/navlab_real_flight_preflight_doctor_design.md`: 真机飞行前 real preflight doctor 设计
 - `docs/scenarios/indoor/navlab_real_prepare_and_task_doctor_design.md`: 真机 prepare / task doctor 分层设计
@@ -47,7 +50,6 @@
 - `docs/scenarios/indoor/todos/real_flight_preflight_doctor_todo.md`: 真机飞行前 real preflight doctor TODO 和验收标准
 - `docs/scenarios/indoor/todos/real_prepare_and_task_doctor_todo.md`: 真机 prepare / task doctor TODO 和验收标准
 - `docs/scenarios/indoor/todos/unified_landing_sequence_todo.md`: 统一降落流程 TODO 和两阶段验收标准
-- `docs/scenarios/indoor/todos/P12_airframe_disturbance_scan_robustness_todo.md`: P12 TODO 和验收标准
 - `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`: 当前系统与官方路线的对齐审计
 - `docs/scenarios/indoor/navlab_reference_projects_analysis.md`: 四个参考仓库的综合分析和改进建议
 - `docs/scenarios/indoor/navlab_cartographer_real_machine_tuning.md`: Cartographer 真机调参记录口径
@@ -70,6 +72,7 @@
 - `docs/general/orchestration_config_precedence_split_design.md`: orchestration 配置优先级和按 mode/task 拆分设计
 - `docs/general/orchestration_runtime_backend_inventory.md`: runtime backend 迁移清单和当前样板
 - `docs/general/orchestration_legacy_helper_deep_split_todo.md`: legacy helper 深拆和最终删除 TODO
+- `docs/general/orchestration_sim_python_parity_audit.md`: Go sim 迁移旧 Python orchestration 的 SLAM/topic/frame/truth parity 审计
 - `docs/general/navlab_real_sim_package_boundary_design.md`: `navlab.real` / `navlab.sim` / `navlab.common` 包边界设计
 - `docs/general/orchestration_sim_tui_monitor_design.md`: Go sim TUI monitor 设计，覆盖 live 运行监控和 artifact replay
 
@@ -101,27 +104,30 @@
 24. `docs/scenarios/indoor/navlab_p11_bounded_2d_lidar_scan_stabilization_design.md`
 25. `docs/scenarios/indoor/todos/P11_bounded_2d_lidar_scan_stabilization_todo.md`
 26. `docs/scenarios/indoor/navlab_p12_airframe_disturbance_scan_robustness_design.md`
-27. `docs/scenarios/indoor/navlab_unified_landing_sequence_design.md`
-28. `docs/scenarios/indoor/navlab_real_flight_preflight_doctor_design.md`
-29. `docs/scenarios/indoor/navlab_real_prepare_and_task_doctor_design.md`
-30. `docs/scenarios/indoor/navlab_real_pre_takeoff_development_confirmation.md`
-31. `docs/scenarios/indoor/todos/real_flight_preflight_doctor_todo.md`
-32. `docs/scenarios/indoor/todos/real_prepare_and_task_doctor_todo.md`
-33. `docs/scenarios/indoor/todos/unified_landing_sequence_todo.md`
-34. `docs/scenarios/indoor/todos/P12_airframe_disturbance_scan_robustness_todo.md`
-35. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
-36. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
-37. `docs/sim/x2_lidar_simulation_design.md`
-38. `docs/sim/x2_lidar_protocol_todo.md`
-39. `docs/general/lab_env_service_refactor_todo.md`
-40. `docs/general/orchestration_runtime_backend_refactor_todo.md`
-41. `docs/general/orchestration_runtime_backend_guide.md`
-42. `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`
-43. `docs/general/orchestration_config_precedence_split_design.md`
-44. `docs/general/orchestration_legacy_helper_deep_split_todo.md`
-45. `docs/general/navlab_real_sim_package_boundary_design.md`
-46. `docs/general/orchestration_sim_tui_monitor_design.md`
-47. `contracts/README.md`
+27. `docs/scenarios/indoor/todos/P12_airframe_disturbance_scan_robustness_todo.md`
+28. `docs/scenarios/indoor/navlab_p13_nav2_indoor_navigation_design.md`
+29. `docs/scenarios/indoor/todos/P13_nav2_indoor_navigation_todo.md`
+30. `docs/scenarios/indoor/navlab_unified_landing_sequence_design.md`
+31. `docs/scenarios/indoor/navlab_real_flight_preflight_doctor_design.md`
+32. `docs/scenarios/indoor/navlab_real_prepare_and_task_doctor_design.md`
+33. `docs/scenarios/indoor/navlab_real_pre_takeoff_development_confirmation.md`
+34. `docs/scenarios/indoor/todos/real_flight_preflight_doctor_todo.md`
+35. `docs/scenarios/indoor/todos/real_prepare_and_task_doctor_todo.md`
+36. `docs/scenarios/indoor/todos/unified_landing_sequence_todo.md`
+37. `docs/scenarios/indoor/navlab_ardupilot_ros2_official_alignment.md`
+38. `docs/scenarios/indoor/navlab_reference_projects_analysis.md`
+39. `docs/sim/x2_lidar_simulation_design.md`
+40. `docs/sim/x2_lidar_protocol_todo.md`
+41. `docs/general/lab_env_service_refactor_todo.md`
+42. `docs/general/orchestration_runtime_backend_refactor_todo.md`
+43. `docs/general/orchestration_runtime_backend_guide.md`
+44. `docs/general/orchestration_runtime_mode_real_vs_sim_design.md`
+45. `docs/general/orchestration_config_precedence_split_design.md`
+46. `docs/general/orchestration_legacy_helper_deep_split_todo.md`
+47. `docs/general/orchestration_sim_python_parity_audit.md`
+48. `docs/general/navlab_real_sim_package_boundary_design.md`
+49. `docs/general/orchestration_sim_tui_monitor_design.md`
+50. `contracts/README.md`
 
 ## 当前目录结构
 
@@ -137,6 +143,7 @@ docs/
     orchestration_runtime_mode_real_vs_sim_design.md
     orchestration_config_precedence_split_design.md
     orchestration_legacy_helper_deep_split_todo.md
+    orchestration_sim_python_parity_audit.md
     navlab_real_sim_package_boundary_design.md
     orchestration_sim_tui_monitor_design.md
   scenarios/
@@ -155,6 +162,7 @@ docs/
       navlab_p10_body_fixed_lidar_scan_integrity_design.md
       navlab_p11_bounded_2d_lidar_scan_stabilization_design.md
       navlab_p12_airframe_disturbance_scan_robustness_design.md
+      navlab_p13_nav2_indoor_navigation_design.md
       navlab_unified_landing_sequence_design.md
       navlab_real_flight_preflight_doctor_design.md
       navlab_real_prepare_and_task_doctor_design.md
@@ -178,6 +186,7 @@ docs/
         P10_body_fixed_lidar_scan_integrity_todo.md
         P11_bounded_2d_lidar_scan_stabilization_todo.md
         P12_airframe_disturbance_scan_robustness_todo.md
+        P13_nav2_indoor_navigation_todo.md
         real_flight_preflight_doctor_todo.md
         real_prepare_and_task_doctor_todo.md
         unified_landing_sequence_todo.md
@@ -197,7 +206,9 @@ docs/
 - SITL 等价于真实飞控。
 - companion 等价于机载计算盒子。
 - P0 必须先证明官方 `/ap/*` DDS baseline，而不是直接把自定义 MAVLink bridge 当作完成标准。
-- SLAM 必须消费 `/scan + /imu + /odometry`，不能消费 Gazebo truth 或 FCU fused local position。
+- SLAM 必须消费真实等价的传感器输入，例如 `/scan`、`/imu` 和 SLAM 自己需要的
+  frame/state；Gazebo `/odometry`、Gazebo pose TF、seed map 和 official maze map
+  默认只能 diagnostic/review，不能作为 SLAM/Nav2/ExternalNav/controller 输入。
 - ExternalNav 验收必须来自真实 SLAM `/slam/odom` 或官方等价 ExternalNav 路线。
 - Gazebo truth 只能用于诊断和误差对照。
 - 上游代码不能直接 `set_pose` 移动 Gazebo 无人机。

@@ -22,6 +22,7 @@ type Config struct {
 	HomeSource                string  `json:"home_source"`
 	HomeRadiusM               float64 `json:"home_radius_m"`
 	PreLandHoldSec            float64 `json:"pre_land_hold_sec"`
+	CompletionGraceSec        float64 `json:"completion_grace_sec"`
 	MaxReturnHomeDurationSec  float64 `json:"max_return_home_duration_sec"`
 	MaxLandingDurationSec     float64 `json:"max_landing_duration_sec"`
 	MaxDescentRateMPS         float64 `json:"max_descent_rate_mps"`

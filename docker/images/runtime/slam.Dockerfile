@@ -17,7 +17,7 @@ COPY navlab/common/slam/ros /opt/navlab_ws/navlab_slam_ros
 COPY navlab/common/interfaces/ydlidar_interfaces /opt/navlab_ws/navlab_interfaces/ydlidar_interfaces
 
 RUN bash -lc "\
-  source /opt/ros/jazzy/setup.bash && \
+  source /opt/ros/${ROS_DISTRO}/setup.bash && \
   colcon --log-base /tmp/navlab_slam-log build \
     --base-paths navlab_slam_ros navlab_interfaces \
     --packages-select ydlidar_interfaces navlab_fake_odom navlab_slam_imu_bridge navlab_cartographer_adapter navlab_external_nav_bridge navlab_slam_bringup \

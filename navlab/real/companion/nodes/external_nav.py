@@ -101,6 +101,7 @@ def _odometry_mapping_status(
     rate_hz: float,
     source_system: int,
     use_fcu_roll_pitch: bool,
+    align_yaw_to_fcu: bool,
 ) -> dict[str, object]:
     return {
         "input": {
@@ -120,6 +121,7 @@ def _odometry_mapping_status(
             "reset_counter": reset_counter,
             "time_usec_source": MAVLINK_TIME_SOURCE,
             "roll_pitch_source": "FCU ATTITUDE" if use_fcu_roll_pitch else "ROS odom quaternion",
+            "yaw_source": "SLAM odom yaw, initial-aligned to FCU ATTITUDE" if align_yaw_to_fcu else "SLAM odom yaw",
         },
         "field_map": {
             "time_usec": MAVLINK_TIME_SOURCE,
@@ -152,7 +154,10 @@ class MavlinkExternalNavSender(Node):
         self._reset_counter = args.reset_counter
         self._source_system = args.source_system
         self._use_fcu_roll_pitch = args.use_fcu_roll_pitch
+        self._align_yaw_to_fcu = args.align_yaw_to_fcu
         self._odom_topic = args.odom_topic
+        self._max_odom_age_ms = args.max_odom_age_ms
+        self._max_local_position_age_ms = args.max_local_position_age_ms
         self._local_position_pose_topic = args.local_position_pose_topic
         self._connection = mavutil.mavlink_connection(
             self._endpoint,
@@ -171,6 +176,7 @@ class MavlinkExternalNavSender(Node):
         self._fcu_pitch_rad: float | None = None
         self._fcu_yaw_rad: float = 0.0
         self._last_fcu_attitude_monotonic = 0.0
+        self._yaw_alignment_offset_rad: float | None = None
         self._local_position_count = 0
         self._last_local_position_monotonic = 0.0
 
@@ -189,6 +195,7 @@ class MavlinkExternalNavSender(Node):
             f"endpoint={self._endpoint} odom_topic={args.odom_topic} rate={self._rate_hz:.3f}Hz "
             f"quality={self._quality} reset_counter={self._reset_counter} "
             f"use_fcu_roll_pitch={self._use_fcu_roll_pitch} "
+            f"align_yaw_to_fcu={self._align_yaw_to_fcu} "
             f"local_position_pose_topic={args.local_position_pose_topic or '<disabled>'}"
         )
 
@@ -306,6 +313,10 @@ class MavlinkExternalNavSender(Node):
         if self._use_fcu_roll_pitch and self._fcu_roll_rad is not None and self._fcu_pitch_rad is not None:
             if attitude_fresh:
                 yaw_ned_rad = -_yaw_from_ros_quat_enu(pose.orientation)
+                if self._align_yaw_to_fcu:
+                    if self._yaw_alignment_offset_rad is None:
+                        self._yaw_alignment_offset_rad = self._fcu_yaw_rad - yaw_ned_rad
+                    yaw_ned_rad += self._yaw_alignment_offset_rad
                 return _quat_from_roll_pitch_yaw_frd(
                     roll_rad=self._fcu_roll_rad,
                     pitch_rad=self._fcu_pitch_rad,
@@ -324,13 +335,23 @@ class MavlinkExternalNavSender(Node):
         if self._last_local_position_monotonic > 0.0:
             local_position_age_ms = (time.monotonic() - self._last_local_position_monotonic) * 1000.0
 
+        odom_fresh = self._last_odom is not None and 0.0 <= age_ms <= self._max_odom_age_ms
+        local_position_fresh = (
+            self._local_position_count > 0 and 0.0 <= local_position_age_ms <= self._max_local_position_age_ms
+        )
+        state = "sending" if self._last_odom is not None else "waiting_for_external_nav_odom"
+        ready = state == "sending" and self._sent_count > 0 and odom_fresh and local_position_fresh
+
         status = {
-            "state": "sending" if self._last_odom is not None else "waiting_for_external_nav_odom",
+            "state": state,
+            "ready": ready,
             "endpoint": self._endpoint,
             "input_topic": self._odom_topic,
             "sent_count": self._sent_count,
             "rate_hz": self._rate_hz,
             "odom_age_ms": round(age_ms, 3),
+            "max_odom_age_ms": self._max_odom_age_ms,
+            "odom_fresh": odom_fresh,
             "frame_id": self._last_odom.header.frame_id if self._last_odom else "",
             "child_frame_id": self._last_odom.child_frame_id if self._last_odom else "",
             "mav_frame_id": MAVLINK_POSITION_FRAME,
@@ -340,10 +361,14 @@ class MavlinkExternalNavSender(Node):
             "estimator_type": MAVLINK_ESTIMATOR_TYPE,
             "time_usec_source": MAVLINK_TIME_SOURCE,
             "use_fcu_roll_pitch": self._use_fcu_roll_pitch,
+            "align_yaw_to_fcu": self._align_yaw_to_fcu,
+            "yaw_alignment_offset_rad": self._yaw_alignment_offset_rad,
             "fcu_attitude_age_ms": round(attitude_age_ms, 3),
             "local_position_pose_topic": self._local_position_pose_topic,
             "local_position_count": self._local_position_count,
             "local_position_age_ms": round(local_position_age_ms, 3),
+            "max_local_position_age_ms": self._max_local_position_age_ms,
+            "fcu_local_position_ready": local_position_fresh,
             "mapping": _odometry_mapping_status(
                 input_topic=self._odom_topic,
                 quality=self._quality,
@@ -351,6 +376,7 @@ class MavlinkExternalNavSender(Node):
                 rate_hz=self._rate_hz,
                 source_system=self._source_system,
                 use_fcu_roll_pitch=self._use_fcu_roll_pitch,
+                align_yaw_to_fcu=self._align_yaw_to_fcu,
             ),
         }
         msg = String()
@@ -368,7 +394,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--reset-counter", type=int, default=0)
     parser.add_argument("--source-system", type=int, default=191)
     parser.add_argument("--use-fcu-roll-pitch", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--align-yaw-to-fcu", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--local-position-pose-topic", default="")
+    parser.add_argument("--max-odom-age-ms", type=float, default=1000.0)
+    parser.add_argument("--max-local-position-age-ms", type=float, default=1000.0)
     return parser.parse_args(argv)
 
 

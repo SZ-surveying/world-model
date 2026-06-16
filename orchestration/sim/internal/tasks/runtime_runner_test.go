@@ -38,6 +38,7 @@ func (backend *fakeRuntimeBackend) StartService(spec simruntime.ServiceSpec) (si
 		ServiceName: spec.Name,
 		Identifier:  spec.Name,
 		StartedAt:   backend.serviceStartTime,
+		LogPath:     spec.LogPath,
 	}, nil
 }
 
@@ -48,6 +49,7 @@ func (backend *fakeRuntimeBackend) StartRosbag(spec simruntime.RosbagSpec) (simr
 		ServiceName: spec.Name,
 		Identifier:  spec.Name,
 		StartedAt:   backend.serviceStartTime,
+		LogPath:     spec.LogPath,
 	}, nil
 }
 
@@ -144,12 +146,37 @@ func TestExecuteRuntimeSpecsEmitsRuntimeEvents(t *testing.T) {
 	}
 }
 
+func TestExecuteRuntimeSpecsDoesNotFailCompletedRunOnCleanupWarning(t *testing.T) {
+	backend := newFakeRuntimeBackend()
+	backend.stopErrors["slam"] = errors.New("could not kill container")
+	sink := &captureEventSink{}
+
+	result, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
+		Services: []simruntime.ServiceSpec{{Name: "slam"}},
+		Probes:   []simruntime.ProbeSpec{{Name: "frame_probe", Required: true}},
+	}, RuntimeExecutionOptions{EventSink: sink})
+	if err != nil {
+		t.Fatalf("ExecuteRuntimeSpecs() error = %v, want cleanup warning only", err)
+	}
+	if len(result.StopErrors) != 1 || !strings.Contains(result.StopErrors[0], "could not kill container") {
+		t.Fatalf("StopErrors = %#v", result.StopErrors)
+	}
+	phases := make([]string, 0, len(sink.events))
+	for _, event := range sink.events {
+		phases = append(phases, event.Phase)
+	}
+	if !containsString(phases, "run.cleanup_warning") || !containsString(phases, "run.completed") {
+		t.Fatalf("phases = %#v", phases)
+	}
+}
+
 func TestExecuteRuntimeSpecsFailsRequiredProbeAndCleansUp(t *testing.T) {
 	backend := newFakeRuntimeBackend()
 	backend.probeResults["frame_probe"] = simruntime.ProbeResult{Backend: "fake", Name: "frame_probe", ReturnCode: 42}
+	logPath := t.TempDir() + "/gazebo.log"
 
 	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
-		Services: []simruntime.ServiceSpec{{Name: "gazebo"}},
+		Services: []simruntime.ServiceSpec{{Name: "gazebo", LogPath: logPath}},
 		Probes:   []simruntime.ProbeSpec{{Name: "frame_probe", Required: true}},
 	}, RuntimeExecutionOptions{})
 	if err == nil || !strings.Contains(err.Error(), "required probes failed") {
@@ -158,7 +185,51 @@ func TestExecuteRuntimeSpecsFailsRequiredProbeAndCleansUp(t *testing.T) {
 	assertEvents(t, backend.events, []string{
 		"start-service:gazebo",
 		"probe:frame_probe",
+		"logs:gazebo",
 		"stop:gazebo",
+	})
+}
+
+func TestExecuteRuntimeSpecsWaitsForRosbagBeforeProbeFailureCleanup(t *testing.T) {
+	backend := newFakeRuntimeBackend()
+	backend.probeResults["frame_probe"] = simruntime.ProbeResult{Backend: "fake", Name: "frame_probe", ReturnCode: 42}
+	logPath := t.TempDir() + "/gazebo.log"
+
+	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
+		Services: []simruntime.ServiceSpec{{Name: "gazebo", LogPath: logPath}},
+		Rosbags:  []simruntime.RosbagSpec{{Name: "hover_rosbag"}},
+		Probes:   []simruntime.ProbeSpec{{Name: "frame_probe", Required: true}},
+	}, RuntimeExecutionOptions{WaitForRosbags: true})
+	if err == nil || !strings.Contains(err.Error(), "required probes failed") {
+		t.Fatalf("ExecuteRuntimeSpecs() error = %v, want required probe failure", err)
+	}
+	assertEvents(t, backend.events, []string{
+		"start-service:gazebo",
+		"start-rosbag:hover_rosbag",
+		"probe:frame_probe",
+		"wait:hover_rosbag",
+		"logs:gazebo",
+		"stop:hover_rosbag",
+		"stop:gazebo",
+	})
+}
+
+func TestExecuteRuntimeSpecsCapturesRosbagLogsOnWaitFailure(t *testing.T) {
+	backend := newFakeRuntimeBackend()
+	backend.waitReturnCodes["hover_rosbag"] = 1
+	logPath := t.TempDir() + "/hover_rosbag.log"
+
+	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
+		Rosbags: []simruntime.RosbagSpec{{Name: "hover_rosbag", LogPath: logPath}},
+	}, RuntimeExecutionOptions{WaitForRosbags: true})
+	if err == nil || !strings.Contains(err.Error(), "wait rosbag hover_rosbag") {
+		t.Fatalf("ExecuteRuntimeSpecs() error = %v, want rosbag wait failure", err)
+	}
+	assertEvents(t, backend.events, []string{
+		"start-rosbag:hover_rosbag",
+		"wait:hover_rosbag",
+		"logs:hover_rosbag",
+		"stop:hover_rosbag",
 	})
 }
 

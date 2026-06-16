@@ -186,6 +186,14 @@ func TestResolveBuildSpecsUsesEnvDistroAndFallback(t *testing.T) {
 	}
 }
 
+func TestResolveBuildSpecsRejectsDistroPrefixedTagMismatch(t *testing.T) {
+	t.Setenv("NAVLAB_SIM_DISTRO", "jazzy")
+	_, err := ResolveBuildSpecsWithOptions(testProject(), BuildOptions{Kind: KindRuntime, Tag: "humble-latest"})
+	if err == nil || !strings.Contains(err.Error(), `image tag "humble-latest" targets ROS distro "humble" but selected distro is "jazzy"`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestResolveBuildSpecsRejectsUnsupportedDistro(t *testing.T) {
 	t.Setenv("NAVLAB_SIM_DISTRO", "iron")
 	_, err := ResolveBuildSpecsWithOptions(testProject(), BuildOptions{Kind: KindBase, Tag: "local"})

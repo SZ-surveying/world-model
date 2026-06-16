@@ -4,7 +4,7 @@ navlab_external_nav_bridge_node:
     imu_timeout_ms: 500
     height_timeout_ms: 500
     require_imu_for_output: false
-    require_height_for_output: false
+    require_height_for_output: true
     input_odom_topic: /odom
     imu_topic: /imu/data
     height_topic: /height/estimate

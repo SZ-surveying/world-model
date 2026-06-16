@@ -2,7 +2,7 @@
 set -euo pipefail
 
 set +u
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
 set -u
 
 export LIBGL_ALWAYS_SOFTWARE=1

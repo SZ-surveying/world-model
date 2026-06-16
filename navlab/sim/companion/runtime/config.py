@@ -28,7 +28,8 @@ DEFAULT_FILE_LOG_LEVEL = "INFO"
 DEFAULT_WORLD_POSE_TOPIC = "/sim/uav_pose"
 DEFAULT_WORLD_FRAME_ID = "navlab_world"
 DEFAULT_WORLD_FILE = "/workspace/docker/worlds/navlab_iq_quad_figure8.sdf"
-DEFAULT_GAZEBO_TRUTH_INPUT_TOPIC = "/world/navlab_iq_quad_figure8/dynamic_pose/info"
+DEFAULT_GAZEBO_TRUTH_GZ_POSE_TOPIC = "/world/navlab_iq_quad_figure8/dynamic_pose/info"
+DEFAULT_GAZEBO_TRUTH_TF_TOPIC = "/gazebo/tf"
 
 
 def _float(value: Any, default: float) -> float:
@@ -149,24 +150,36 @@ class ScanFeaturesConfig(RuntimeNodeConfig):
 
 @dataclass(frozen=True, slots=True)
 class GazeboTruthBridgeConfig(RuntimeNodeConfig):
-    bridge: str = f"{DEFAULT_GAZEBO_TRUTH_INPUT_TOPIC}@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V"
+    bridge: str = f"{DEFAULT_GAZEBO_TRUTH_GZ_POSE_TOPIC}@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V"
+    ros_topic: str = DEFAULT_GAZEBO_TRUTH_TF_TOPIC
 
     @classmethod
     def from_toml(cls, data: dict[str, Any]) -> GazeboTruthBridgeConfig:
         return cls(
             autostart=as_bool(data.get("autostart"), True),
             bridge=as_str(
-                data.get("bridge"), f"{DEFAULT_GAZEBO_TRUTH_INPUT_TOPIC}@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V"
+                data.get("bridge"), f"{DEFAULT_GAZEBO_TRUTH_GZ_POSE_TOPIC}@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V"
             ),
+            ros_topic=as_str(data.get("ros_topic"), DEFAULT_GAZEBO_TRUTH_TF_TOPIC),
         )
 
     def command(self) -> list[str]:
-        return ["ros2", "run", "ros_gz_bridge", "parameter_bridge", self.bridge]
+        gz_topic = self.bridge.split("@", 1)[0]
+        return [
+            "ros2",
+            "run",
+            "ros_gz_bridge",
+            "parameter_bridge",
+            self.bridge,
+            "--ros-args",
+            "-r",
+            f"{gz_topic}:={self.ros_topic}",
+        ]
 
 
 @dataclass(frozen=True, slots=True)
 class GazeboTruthOdomConfig(RuntimeNodeConfig):
-    input_topic: str = DEFAULT_GAZEBO_TRUTH_INPUT_TOPIC
+    input_topic: str = DEFAULT_GAZEBO_TRUTH_TF_TOPIC
     odom_topic: str = "/gazebo/truth/odom"
     status_topic: str = "/gazebo/truth/status"
     frame_id: str = "odom"
@@ -179,7 +192,7 @@ class GazeboTruthOdomConfig(RuntimeNodeConfig):
     def from_toml(cls, data: dict[str, Any]) -> GazeboTruthOdomConfig:
         return cls(
             autostart=as_bool(data.get("autostart"), True),
-            input_topic=as_str(data.get("input_topic"), DEFAULT_GAZEBO_TRUTH_INPUT_TOPIC),
+            input_topic=as_str(data.get("input_topic"), DEFAULT_GAZEBO_TRUTH_TF_TOPIC),
             odom_topic=as_str(data.get("odom_topic"), "/gazebo/truth/odom"),
             status_topic=as_str(data.get("status_topic"), "/gazebo/truth/status"),
             frame_id=as_str(data.get("frame_id"), "odom"),

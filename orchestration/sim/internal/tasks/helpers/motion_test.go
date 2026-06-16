@@ -29,6 +29,7 @@ func TestBuildMotionDoctorSummaryFindsContractBlockers(t *testing.T) {
 	spec.RosbagProfile = filepath.Join(t.TempDir(), "missing.txt")
 	spec.UsesGazeboTruthAsInput = true
 	spec.SlamOdomTopic = "/navlab/truth/odom"
+	spec.TruthDiagnosticTopic = "/navlab/truth/odom"
 	spec.CmdVelTopic = "/wrong/cmd_vel"
 
 	summary := BuildMotionDoctorSummary(spec, DependencyDoctor{OK: false, Blockers: []string{"hover_failed"}}, true)

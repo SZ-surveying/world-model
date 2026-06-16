@@ -5,6 +5,10 @@ func applySimulationDefaults(cfg *ProjectConfig) {
 	cfg.RosDomainID = defaultString(cfg.RosDomainID, "85")
 	cfg.GazeboWorld = defaultString(cfg.GazeboWorld, "/workspace/worlds/navlab_iq_quad_figure8.sdf")
 	cfg.RosbagProfile = defaultString(cfg.RosbagProfile, "docker/profiles/navlab-rosbag-topics.txt")
+	cfg.Router.Image = defaultString(cfg.Router.Image, imageRepository(cfg, "mavlink_router"))
+	cfg.Router.DownstreamEndpoints = defaultString(cfg.Router.DownstreamEndpoints, "127.0.0.1:14551,127.0.0.1:14552,127.0.0.1:14553")
+	cfg.Router.Listen = defaultString(cfg.Router.Listen, "0.0.0.0:14550")
+	cfg.Router.TCPPort = defaultString(cfg.Router.TCPPort, "0")
 
 	cfg.Sensor.ScanSource = defaultString(cfg.Sensor.ScanSource, "x2_virtual_serial")
 	cfg.Sensor.Image = defaultString(cfg.Sensor.Image, imageRepository(cfg, "gazebo_sensor"))
@@ -44,6 +48,7 @@ func applySimulationDefaults(cfg *ProjectConfig) {
 	cfg.OfficialMazeX2.HoverClaim = defaultString(cfg.OfficialMazeX2.HoverClaim, "not_evaluated")
 	cfg.OfficialMazeX2.CartographerLaunch = defaultString(cfg.OfficialMazeX2.CartographerLaunch, cfg.Official.CartographerLaunch)
 
+	defaultLanding(&cfg.Landing)
 	defaultRangefinderIMU(&cfg.RangefinderIMU)
 	defaultSlamBackend(&cfg.SlamBackend)
 	defaultFCUController(&cfg.FCUController)
@@ -51,11 +56,33 @@ func applySimulationDefaults(cfg *ProjectConfig) {
 	defaultSlamHover(&cfg.SlamHover)
 	defaultMotionGate(&cfg.MotionGate)
 	defaultExplorationGate(&cfg.ExplorationGate)
+	defaultNav2(&cfg.Nav2)
+	defaultNavigationAdapter(&cfg.NavigationAdapter)
+	defaultNavigationMission(&cfg.NavigationMission)
 	defaultScanIntegrityGate(&cfg.ScanIntegrityGate)
 	defaultScanStabilization(&cfg.ScanStabilization)
 	defaultScanStabilizationGate(&cfg.ScanStabilizationGate)
 	defaultAirframeDisturbance(&cfg.AirframeDisturbance)
 	defaultAirframeDisturbanceGate(&cfg.AirframeDisturbanceGate)
+}
+
+func defaultLanding(cfg *LandingConfig) {
+	cfg.DefaultPolicy = defaultString(cfg.DefaultPolicy, "land_in_place")
+	cfg.HoverPolicy = defaultString(cfg.HoverPolicy, cfg.DefaultPolicy)
+	cfg.ExplorationPolicy = defaultString(cfg.ExplorationPolicy, "return_home_then_land")
+	cfg.NavigationPolicy = defaultString(cfg.NavigationPolicy, cfg.ExplorationPolicy)
+	cfg.ScanRobustnessPolicy = defaultString(cfg.ScanRobustnessPolicy, cfg.DefaultPolicy)
+	cfg.LandingStatusTopic = defaultString(cfg.LandingStatusTopic, "/navlab/landing/status")
+	cfg.LandingIntentTopic = defaultString(cfg.LandingIntentTopic, "/navlab/landing/intent")
+	cfg.HomeSource = defaultString(cfg.HomeSource, "post_takeoff_hover_pose")
+	cfg.HomeRadiusM = defaultFloat(cfg.HomeRadiusM, 0.35)
+	cfg.PreLandHoldSec = defaultFloat(cfg.PreLandHoldSec, 2.0)
+	cfg.CompletionGraceSec = defaultFloat(cfg.CompletionGraceSec, 3.0)
+	cfg.MaxReturnHomeDurationSec = defaultFloat(cfg.MaxReturnHomeDurationSec, 45.0)
+	cfg.MaxLandingDurationSec = defaultFloat(cfg.MaxLandingDurationSec, 35.0)
+	cfg.MaxDescentRateMPS = defaultFloat(cfg.MaxDescentRateMPS, 0.6)
+	cfg.TouchdownAltitudeM = defaultFloat(cfg.TouchdownAltitudeM, 0.12)
+	cfg.TouchdownVerticalSpeedMPS = defaultFloat(cfg.TouchdownVerticalSpeedMPS, 0.08)
 }
 
 func defaultRangefinderIMU(cfg *RangefinderIMUConfig) {
@@ -74,16 +101,14 @@ func defaultRangefinderIMU(cfg *RangefinderIMUConfig) {
 	cfg.RangefinderModelPose = defaultString(cfg.RangefinderModelPose, "0 0 -0.02 0 1.5707963267948966 0")
 	cfg.RangefinderModelUpdateRateHz = defaultFloat(cfg.RangefinderModelUpdateRateHz, 20)
 	cfg.RangefinderModelRayCount = defaultString(cfg.RangefinderModelRayCount, "1")
-	cfg.RangefinderEndpoint = defaultString(cfg.RangefinderEndpoint, "tcp:127.0.0.1:5760")
-	cfg.RangefinderFCUProbeEndpoint = defaultString(cfg.RangefinderFCUProbeEndpoint, "udpin:0.0.0.0:14551")
-	cfg.RangefinderMAVLinkOrientation = defaultString(cfg.RangefinderMAVLinkOrientation, "MAV_SENSOR_ROTATION_PITCH_270")
-	cfg.RangefinderSourceSystem = defaultString(cfg.RangefinderSourceSystem, "1")
-	cfg.RangefinderSourceComponent = defaultString(cfg.RangefinderSourceComponent, "158")
-	cfg.RangefinderSensorID = defaultString(cfg.RangefinderSensorID, "1")
+	cfg.RangefinderVirtualSerialLink = defaultString(cfg.RangefinderVirtualSerialLink, "/tmp/navlab_benewake_tfmini")
+	if cfg.RangefinderSerialBaud == 0 {
+		cfg.RangefinderSerialBaud = 115200
+	}
+	cfg.RangefinderFCUProbeEndpoint = defaultString(cfg.RangefinderFCUProbeEndpoint, "udpin:0.0.0.0:14552")
 	cfg.RangefinderRateHz = defaultFloat(cfg.RangefinderRateHz, 20)
 	cfg.RangefinderMinDistanceM = defaultFloat(cfg.RangefinderMinDistanceM, 0.05)
 	cfg.RangefinderMaxDistanceM = defaultFloat(cfg.RangefinderMaxDistanceM, 6)
-	cfg.RangefinderCovarianceCM = defaultString(cfg.RangefinderCovarianceCM, "2")
 	cfg.IMUSourceRoute = defaultString(cfg.IMUSourceRoute, "official_gazebo_imu_bridge")
 	cfg.IMUSourceTopic = defaultString(cfg.IMUSourceTopic, "/imu")
 	cfg.IMUOutputTopic = defaultString(cfg.IMUOutputTopic, "/imu")
@@ -99,10 +124,12 @@ func defaultSlamBackend(cfg *SlamBackendConfig) {
 	cfg.Backend = defaultString(cfg.Backend, "cartographer")
 	cfg.LaunchPackage = defaultString(cfg.LaunchPackage, "navlab_slam_bringup")
 	cfg.LaunchFile = defaultString(cfg.LaunchFile, "navlab_slam_bringup.launch.py")
-	cfg.CartographerConfigurationBasename = defaultString(cfg.CartographerConfigurationBasename, "navlab_cartographer_2d.lua")
+	cfg.CartographerConfigurationBasename = defaultString(cfg.CartographerConfigurationBasename, "navlab_cartographer_2d_real.lua")
 	cfg.ScanTopic = defaultString(cfg.ScanTopic, "/scan")
 	cfg.IMUTopic = defaultString(cfg.IMUTopic, "/imu")
-	cfg.OdometryTopic = defaultString(cfg.OdometryTopic, "/odometry")
+	cfg.OdometryTopic = defaultString(cfg.OdometryTopic, "/cartographer/odometry_input")
+	cfg.CartographerTFTopic = defaultString(cfg.CartographerTFTopic, "/navlab/slam/tf")
+	cfg.OdomSourceMode = defaultString(cfg.OdomSourceMode, "slam_tf")
 	cfg.SlamOdomTopic = defaultString(cfg.SlamOdomTopic, "/slam/odom")
 	cfg.SlamStatusTopic = defaultString(cfg.SlamStatusTopic, "/navlab/slam/status")
 	cfg.ExternalNavStatusTopic = defaultString(cfg.ExternalNavStatusTopic, "/external_nav/status")
@@ -114,6 +141,7 @@ func defaultSlamBackend(cfg *SlamBackendConfig) {
 	cfg.RangefinderStatusTopic = defaultString(cfg.RangefinderStatusTopic, "/rangefinder/down/status")
 	cfg.IMUFrameID = defaultString(cfg.IMUFrameID, "imu_link")
 	cfg.LaserFrameID = defaultString(cfg.LaserFrameID, "base_scan")
+	cfg.MapFrameID = defaultString(cfg.MapFrameID, "map")
 	cfg.OdomFrameID = defaultString(cfg.OdomFrameID, "odom")
 	cfg.BaseFrameID = defaultString(cfg.BaseFrameID, "base_link")
 	cfg.MinSlamOdomRateHz = defaultFloat(cfg.MinSlamOdomRateHz, 1)
@@ -126,7 +154,7 @@ func defaultSlamBackend(cfg *SlamBackendConfig) {
 
 func defaultFCUController(cfg *FCUControllerConfig) {
 	cfg.ControlRoute = defaultString(cfg.ControlRoute, "mavlink_bootstrap_plus_dds_cmd_vel")
-	cfg.MAVLinkBootstrapEndpoint = defaultString(cfg.MAVLinkBootstrapEndpoint, "udp:127.0.0.1:14550")
+	cfg.MAVLinkBootstrapEndpoint = defaultString(cfg.MAVLinkBootstrapEndpoint, "udpin:0.0.0.0:14551")
 	cfg.MAVLinkBootstrapSourceSystem = defaultInt(cfg.MAVLinkBootstrapSourceSystem, 246)
 	cfg.MAVLinkBootstrapSourceComponent = defaultInt(cfg.MAVLinkBootstrapSourceComponent, 190)
 	cfg.OwnerName = defaultString(cfg.OwnerName, "navlab_fcu_controller")
@@ -152,6 +180,8 @@ func defaultFCUController(cfg *FCUControllerConfig) {
 	cfg.SlamStatusTopic = defaultString(cfg.SlamStatusTopic, "/navlab/slam/status")
 	cfg.GuidedMode = defaultInt(cfg.GuidedMode, 4)
 	cfg.TakeoffAltM = defaultFloat(cfg.TakeoffAltM, 0.5)
+	cfg.TakeoffMinHeightM = defaultFloat(cfg.TakeoffMinHeightM, 0.15)
+	cfg.TakeoffMinHeightRatio = defaultFloat(cfg.TakeoffMinHeightRatio, 0.35)
 	cfg.ReadinessTimeoutSec = defaultFloat(cfg.ReadinessTimeoutSec, 45)
 	cfg.HoldAfterReadySec = defaultFloat(cfg.HoldAfterReadySec, 8)
 	if !cfg.RequireSlamBackend {
@@ -325,6 +355,88 @@ func defaultExplorationGate(cfg *ExplorationGateConfig) {
 	cfg.HoverClaim = defaultString(cfg.HoverClaim, "evaluated")
 	cfg.MotionClaim = defaultString(cfg.MotionClaim, "evaluated")
 	cfg.ExplorationClaim = defaultString(cfg.ExplorationClaim, "evaluated")
+}
+
+func defaultNav2(cfg *Nav2Config) {
+	if !cfg.Enabled {
+		cfg.Enabled = true
+	}
+	cfg.Profile = defaultString(cfg.Profile, "indoor_2d")
+	cfg.GlobalFrame = defaultString(cfg.GlobalFrame, "map")
+	cfg.OdomFrame = defaultString(cfg.OdomFrame, "odom")
+	cfg.BaseFrame = defaultString(cfg.BaseFrame, "base_link")
+	cfg.ScanTopic = defaultString(cfg.ScanTopic, "/scan")
+	cfg.MapTopic = defaultString(cfg.MapTopic, "/map")
+	cfg.CmdVelTopic = defaultString(cfg.CmdVelTopic, "/cmd_vel_nav")
+	cfg.BTXML = defaultString(cfg.BTXML, "navigate_to_pose_w_replanning_and_recovery.xml")
+	cfg.PlannerPlugin = defaultString(cfg.PlannerPlugin, "GridBased")
+	cfg.ControllerPlugin = defaultString(cfg.ControllerPlugin, "FollowPath")
+	if !cfg.UseSimTime {
+		cfg.UseSimTime = true
+	}
+	defaultNav2Costmap(&cfg.Costmap)
+}
+
+func defaultNav2Costmap(cfg *Nav2CostmapConfig) {
+	cfg.GlobalCostmapTopic = defaultString(cfg.GlobalCostmapTopic, "/global_costmap/costmap")
+	cfg.LocalCostmapTopic = defaultString(cfg.LocalCostmapTopic, "/local_costmap/costmap")
+	cfg.RequiredLayers = defaultStrings(cfg.RequiredLayers, []string{"static_layer", "obstacle_layer", "inflation_layer"})
+	cfg.MaxCostmapAgeSec = defaultFloat(cfg.MaxCostmapAgeSec, 1.5)
+	cfg.MinObstacleCells = defaultInt(cfg.MinObstacleCells, 1)
+	cfg.MaxUnknownRatio = defaultFloat(cfg.MaxUnknownRatio, 0.35)
+	cfg.InflationRadiusM = defaultFloat(cfg.InflationRadiusM, 0.35)
+	cfg.FootprintRadiusM = defaultFloat(cfg.FootprintRadiusM, 0.22)
+	cfg.HealthTopic = defaultString(cfg.HealthTopic, "/navlab/navigation/costmap_health")
+	cfg.CostmapHealthClaim = defaultString(cfg.CostmapHealthClaim, "evaluated")
+}
+
+func defaultNavigationAdapter(cfg *NavigationAdapterConfig) {
+	cfg.SetpointIntentTopic = defaultString(cfg.SetpointIntentTopic, "/navlab/fcu/setpoint/intent")
+	cfg.StatusTopic = defaultString(cfg.StatusTopic, "/navlab/navigation/adapter/status")
+	cfg.MaxXYSpeedMPS = defaultFloat(cfg.MaxXYSpeedMPS, 0.25)
+	cfg.MaxYawRateDPS = defaultFloat(cfg.MaxYawRateDPS, 35)
+	cfg.MaxAccelMPS2 = defaultFloat(cfg.MaxAccelMPS2, 0.35)
+	cfg.FixedAltitudeM = defaultFloat(cfg.FixedAltitudeM, 0.8)
+	if !cfg.StopOnStaleCostmap {
+		cfg.StopOnStaleCostmap = true
+	}
+	if !cfg.StopOnStaleSlam {
+		cfg.StopOnStaleSlam = true
+	}
+	cfg.AdapterClaim = defaultString(cfg.AdapterClaim, "evaluated")
+}
+
+func defaultNavigationMission(cfg *NavigationMissionConfig) {
+	cfg.Strategy = defaultString(cfg.Strategy, "bounded_frontier")
+	cfg.CompletionPolicy = defaultString(cfg.CompletionPolicy, "land_in_place")
+	cfg.GoalFrame = defaultString(cfg.GoalFrame, "map")
+	cfg.StatusTopic = defaultString(cfg.StatusTopic, "/navlab/navigation/status")
+	cfg.EventsTopic = defaultString(cfg.EventsTopic, "/navlab/navigation/events")
+	cfg.GoalTopic = defaultString(cfg.GoalTopic, "/navlab/navigation/goal")
+	cfg.PathTopic = defaultString(cfg.PathTopic, "/navlab/navigation/path")
+	cfg.RecoveryTopic = defaultString(cfg.RecoveryTopic, "/navlab/navigation/recovery")
+	cfg.NavigationWindowSec = defaultFloat(cfg.NavigationWindowSec, 120)
+	cfg.MaxGoalRadiusM = defaultFloat(cfg.MaxGoalRadiusM, 0.45)
+	cfg.MinClearanceM = defaultFloat(cfg.MinClearanceM, 0.35)
+	cfg.MinCoverageGrowth = defaultFloat(cfg.MinCoverageGrowth, 0.50)
+	cfg.MinPathLengthM = defaultFloat(cfg.MinPathLengthM, 4.0)
+	cfg.MinAcceptedGoals = defaultInt(cfg.MinAcceptedGoals, 3)
+	cfg.MaxRecoveryCount = defaultInt(cfg.MaxRecoveryCount, 2)
+	cfg.ReturnHomePolicy = defaultString(cfg.ReturnHomePolicy, cfg.CompletionPolicy)
+	cfg.NavigationClaim = defaultString(cfg.NavigationClaim, "evaluated")
+	if cfg.ExitGoal.ID == "" {
+		cfg.ExitGoal = NavigationGoalConfig{ID: "maze_exit", XM: 1.5, YM: -0.5, YawRad: 0.0}
+	}
+	if len(cfg.BoundedGoals) == 0 {
+		cfg.BoundedGoals = []NavigationGoalConfig{
+			{ID: "p13_probe_1", XM: 1.0, YM: 0.0, YawRad: 0.0},
+			{ID: "p13_probe_2", XM: 1.5, YM: 0.5, YawRad: 0.0},
+			{ID: "p13_probe_3", XM: 1.5, YM: -0.5, YawRad: 0.0},
+		}
+	}
+	if cfg.HomeGoal.ID == "" {
+		cfg.HomeGoal = NavigationGoalConfig{ID: "home", XM: 0.0, YM: 0.0, YawRad: 0.0}
+	}
 }
 
 func defaultScanIntegrityGate(cfg *ScanIntegrityGateConfig) {

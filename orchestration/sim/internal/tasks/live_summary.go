@@ -209,12 +209,13 @@ func blockerSource(code string) string {
 
 func simSourceEvidence(project config.ProjectConfig) map[string]any {
 	return map[string]any{
-		"runtimeDomain":           "RUNTIME_DOMAIN_SIM",
-		"scanSource":              simContractScanSource(project.Sensor.ScanSource),
-		"imuSource":               fallbackString(project.RangefinderIMU.IMUSourceRoute, "official_gazebo_imu_bridge"),
-		"rangefinderSource":       fallbackString(project.RangefinderIMU.RangefinderEndpoint, "gazebo_down_rangefinder"),
-		"slamSource":              fallbackString(project.Slam.Backend, "cartographer"),
-		"usesTruthAsControlInput": false,
+		"runtimeDomain":                 "RUNTIME_DOMAIN_SIM",
+		"scanSource":                    simContractScanSource(project.Sensor.ScanSource),
+		"imuSource":                     fallbackString(project.RangefinderIMU.IMUSourceRoute, "official_gazebo_imu_bridge"),
+		"rangefinderSource":             "ardupilot_serial7_benewake_tfmini",
+		"rangefinderSimulationFidelity": "benewake_serial_emulated",
+		"slamSource":                    fallbackString(project.Slam.Backend, "cartographer"),
+		"usesTruthAsControlInput":       false,
 	}
 }
 

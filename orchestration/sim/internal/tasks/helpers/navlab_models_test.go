@@ -33,6 +33,18 @@ func TestWriteBridgeOverrideAndVendorProfile(t *testing.T) {
 	if !strings.Contains(string(bridgeData), "ros_topic_name: \"imu\"") {
 		t.Fatalf("bridge override missing imu topic:\n%s", bridgeData)
 	}
+	if strings.Contains(string(bridgeData), "ros_topic_name: \"odometry\"") {
+		t.Fatalf("bridge override must not publish Gazebo model odometry to bare /odometry:\n%s", bridgeData)
+	}
+	if !strings.Contains(string(bridgeData), "ros_topic_name: \"gazebo/model/odometry\"") {
+		t.Fatalf("bridge override missing isolated Gazebo model odometry topic:\n%s", bridgeData)
+	}
+	if strings.Contains(string(bridgeData), "ros_topic_name: \"gz/tf\"") {
+		t.Fatalf("bridge override must not publish Gazebo truth TF into legacy gz/tf namespace:\n%s", bridgeData)
+	}
+	if !strings.Contains(string(bridgeData), "ros_topic_name: \"gazebo/tf\"") {
+		t.Fatalf("bridge override missing isolated Gazebo truth TF topic:\n%s", bridgeData)
+	}
 	if !strings.Contains(string(vendorData), "port: /tmp/x2") {
 		t.Fatalf("vendor profile missing serial link:\n%s", vendorData)
 	}
@@ -58,6 +70,7 @@ func TestGazeboSensorDockerArgs(t *testing.T) {
 		"--name " + GazeboSensorContainer,
 		"NAVLAB_CONFIG=/workspace/artifacts/sensor.toml",
 		"navlab/gazebo-sensor",
+		"source /opt/ros/${ROS_DISTRO:-humble}/setup.bash",
 		"navlab.sim.gazebo_sensor.cli",
 	} {
 		if !strings.Contains(joined, want) {

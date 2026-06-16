@@ -21,21 +21,28 @@ class RuntimeConfig:
     launch_fake_odom: bool = False
     launch_cartographer_backend: bool = True
     publish_placeholder_odom: bool = False
-    cartographer_configuration_basename: str = "navlab_cartographer_2d.lua"
+    cartographer_configuration_basename: str = "navlab_cartographer_2d_real.lua"
     imu_source_mode: str = "topic"
     imu_source_topic: str = "/ap/imu/experimental/data"
     imu_source_label: str = "ardupilot_dds"
     imu_min_input_rate_hz: str = "4.0"
     require_imu_for_external_nav: bool = True
-    require_height_for_external_nav: bool = False
+    require_height_for_external_nav: bool = True
     external_nav_input_odom_topic: str = "/odom"
     scan_topic: str = "/scan"
     imu_topic: str = "/imu"
-    cartographer_odometry_topic: str = "/odometry"
+    cartographer_odometry_topic: str = "/cartographer/odometry_input"
+    cartographer_tf_topic: str = "/navlab/slam/tf"
+    publish_global_tf: bool = False
+    global_tf_topic: str = "/tf"
+    cached_odom_publish_rate_hz: str = "10.0"
+    odom_source_mode: str = "slam_tf"
     odom_topic: str = "/odom"
     slam_status_topic: str = "/navlab/slam/status"
     external_nav_status_topic: str = "/external_nav/status"
     gazebo_truth_odom_topic: str = "/gazebo/truth/odom"
+    map_frame: str = "map"
+    odom_frame: str = "odom"
     laser_frame: str = "laser_frame"
     imu_frame: str = "imu_link"
     base_frame: str = "base_link"
@@ -63,22 +70,32 @@ class RuntimeConfig:
             publish_placeholder_odom=as_bool(runtime.get("publish_placeholder_odom"), False),
             cartographer_configuration_basename=as_str(
                 runtime.get("cartographer_configuration_basename"),
-                "navlab_cartographer_2d.lua",
+                "navlab_cartographer_2d_real.lua",
             ),
             imu_source_mode=as_str(runtime.get("imu_source_mode"), "topic"),
             imu_source_topic=as_str(runtime.get("imu_source_topic"), "/ap/imu/experimental/data"),
             imu_source_label=as_str(runtime.get("imu_source_label"), "ardupilot_dds"),
             imu_min_input_rate_hz=as_str(runtime.get("imu_min_input_rate_hz"), "4.0"),
             require_imu_for_external_nav=as_bool(runtime.get("require_imu_for_external_nav"), True),
-            require_height_for_external_nav=as_bool(runtime.get("require_height_for_external_nav"), False),
+            require_height_for_external_nav=as_bool(runtime.get("require_height_for_external_nav"), True),
             external_nav_input_odom_topic=as_str(runtime.get("external_nav_input_odom_topic"), "/odom"),
             scan_topic=as_str(runtime.get("scan_topic"), "/scan"),
             imu_topic=as_str(runtime.get("imu_topic"), "/imu"),
-            cartographer_odometry_topic=as_str(runtime.get("cartographer_odometry_topic"), "/odometry"),
+            cartographer_odometry_topic=as_str(
+                runtime.get("cartographer_odometry_topic"),
+                "/cartographer/odometry_input",
+            ),
+            cartographer_tf_topic=as_str(runtime.get("cartographer_tf_topic"), "/navlab/slam/tf"),
+            publish_global_tf=as_bool(runtime.get("publish_global_tf"), False),
+            global_tf_topic=as_str(runtime.get("global_tf_topic"), "/tf"),
+            cached_odom_publish_rate_hz=as_str(runtime.get("cached_odom_publish_rate_hz"), "10.0"),
+            odom_source_mode=as_str(runtime.get("odom_source_mode"), "slam_tf"),
             odom_topic=as_str(runtime.get("odom_topic"), "/odom"),
             slam_status_topic=as_str(runtime.get("slam_status_topic"), "/navlab/slam/status"),
             external_nav_status_topic=as_str(runtime.get("external_nav_status_topic"), "/external_nav/status"),
             gazebo_truth_odom_topic=as_str(runtime.get("gazebo_truth_odom_topic"), "/gazebo/truth/odom"),
+            map_frame=as_str(runtime.get("map_frame"), as_str(runtime.get("map_frame_id"), "map")),
+            odom_frame=as_str(runtime.get("odom_frame"), as_str(runtime.get("odom_frame_id"), "odom")),
             laser_frame=as_str(runtime.get("laser_frame"), as_str(runtime.get("laser_frame_id"), "laser_frame")),
             imu_frame=as_str(runtime.get("imu_frame"), as_str(runtime.get("imu_frame_id"), "imu_link")),
             base_frame=as_str(runtime.get("base_frame"), as_str(runtime.get("base_frame_id"), "base_link")),
@@ -108,9 +125,16 @@ class RuntimeConfig:
             "scan_topic": self.scan_topic,
             "imu_topic": self.imu_topic,
             "cartographer_odometry_topic": self.cartographer_odometry_topic,
+            "cartographer_tf_topic": self.cartographer_tf_topic,
+            "publish_global_tf": self.publish_global_tf,
+            "global_tf_topic": self.global_tf_topic,
+            "cached_odom_publish_rate_hz": self.cached_odom_publish_rate_hz,
+            "odom_source_mode": self.odom_source_mode,
             "odom_topic": self.odom_topic,
             "slam_status_topic": self.slam_status_topic,
             "external_nav_status_topic": self.external_nav_status_topic,
+            "map_frame": self.map_frame,
+            "odom_frame": self.odom_frame,
             "laser_frame": self.laser_frame,
             "imu_frame": self.imu_frame,
             "base_frame": self.base_frame,

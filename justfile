@@ -60,13 +60,9 @@ navlab-real-run task *args='':
 
 # Command tools
 
-# Build a Foxglove-lite replay MCAP with the official maze overlay.
-foxglove-replay date='':
-    {{command_cmd}} foxglove build-replay {{date}}
-
-# Upload the latest raw/full P8 MCAP by default; pass --lite to upload/generate the lite MCAP.
+# Upload an existing Foxglove-lite sim MCAP. Generate it first with `navlab-sim foxglove build-replay`.
 foxglove-upload date='' *args='':
-    {{command_cmd}} foxglove upload {{date}} --force {{args}}
+    {{sim_cmd}} foxglove upload {{date}} --force {{args}}
 
 # Run the serial bridge from the scripts/command Python 3.11 project.
 serial-bridge *args='':

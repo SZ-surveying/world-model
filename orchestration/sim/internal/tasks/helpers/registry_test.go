@@ -8,7 +8,7 @@ func TestDefaultRegistryContainsNonRealHelpers(t *testing.T) {
 	if len(definitions) < 10 {
 		t.Fatalf("len(definitions) = %d, want at least 10", len(definitions))
 	}
-	for _, id := range []string{"artifacts", "sensors", "slam", "fcu-controller", "exploration-workflow", "scan-robustness-workflow"} {
+	for _, id := range []string{"artifacts", "sensors", "slam", "fcu-controller", "exploration-workflow", "nav2-navigation-workflow", "scan-robustness-workflow"} {
 		if _, err := registry.Get(id); err != nil {
 			t.Fatalf("Get(%q) error = %v", id, err)
 		}

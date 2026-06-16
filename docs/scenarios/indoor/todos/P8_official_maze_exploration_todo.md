@@ -349,3 +349,9 @@ P8 全部完成必须满足：
 - owner：`unique=true`，`set_pose_count=0`，`competing_publishers=[]`
 - rosbag：profile `ok=true`，required topics 全部非零；MCAP `artifacts/ros/navlab_companion_sitl_gazebo/20260607_144800/rosbag/rosbag_0.mcap`
 - 备注：第一次 acceptance 尝试暴露了 P8 probe 生成脚本的 newline 转义问题；修复后重新运行 acceptance 通过。
+
+### 2026-06-16 P14 rangefinder 边界更新
+
+- P8 后续 live acceptance 必须引用 `docs/scenarios/indoor/todos/P14_benewake_rangefinder_sitl_todo.md`。
+- exploration 任务不能依赖 Python 发送 MAVLink `DISTANCE_SENSOR` 作为 FCU rangefinder 输入。
+- FCU rangefinder 输入必须是 Benewake serial emulation；summary 必须记录 `rangefinder_simulation_fidelity=benewake_serial_emulated`，否则 blocked。

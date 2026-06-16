@@ -52,17 +52,17 @@ func WriteBridgeOverride(path string) error {
   ros_type_name: "sensor_msgs/msg/JointState"
   gz_type_name: "gz.msgs.Model"
   direction: GZ_TO_ROS
-- ros_topic_name: "odometry"
+- ros_topic_name: "gazebo/model/odometry"
   gz_topic_name: "/model/{{ robot_name }}/odometry"
   ros_type_name: "nav_msgs/msg/Odometry"
   gz_type_name: "gz.msgs.Odometry"
   direction: GZ_TO_ROS
-- ros_topic_name: "gz/tf"
+- ros_topic_name: "gazebo/tf"
   gz_topic_name: "/model/{{ robot_name }}/pose"
   ros_type_name: "tf2_msgs/msg/TFMessage"
   gz_type_name: "gz.msgs.Pose_V"
   direction: GZ_TO_ROS
-- ros_topic_name: "gz/tf_static"
+- ros_topic_name: "gazebo/tf_static"
   gz_topic_name: "/model/{{ robot_name }}/pose_static"
   ros_type_name: "tf2_msgs/msg/TFMessage"
   gz_type_name: "gz.msgs.Pose_V"
@@ -112,6 +112,120 @@ func WriteVendorProfile(path string, virtualSerialLink string) error {
 `, virtualSerialLink))
 }
 
+func WriteModelOverlayFromSource(path string, source string, spec SensorRuntimeSpec) error {
+	if !strings.Contains(source, "</model>") {
+		return errors.New("official iris_with_lidar model does not contain a closing </model> tag")
+	}
+	source = strings.Replace(source, "model://lidar_3d", "model://lidar_2d", 1)
+	overlay := fmt.Sprintf(`
+
+    <!-- NavLab overlay: down-facing rangefinder ray sensor.
+         The X2 vendor-driver input uses the official iris_with_lidar
+         /lidar sensor; do not add a second /lidar sensor here. -->
+    <link name="%s">
+      <pose relative_to="base_link">%s</pose>
+      <inertial>
+        <mass>0.02</mass>
+        <inertia>
+          <ixx>0.00001</ixx>
+          <iyy>0.00001</iyy>
+          <izz>0.00001</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry>
+          <box>
+            <size>0.02 0.02 0.01</size>
+          </box>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <box>
+            <size>0.02 0.02 0.01</size>
+          </box>
+        </geometry>
+      </visual>
+      <sensor name="down_rangefinder_sensor" type="gpu_lidar">
+        <gz_frame_id>%s</gz_frame_id>
+        <pose>0 0 0 0 0 0</pose>
+        <topic>%s</topic>
+        <always_on>true</always_on>
+        <update_rate>%g</update_rate>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>%d</samples>
+              <resolution>1</resolution>
+              <min_angle>-0.02</min_angle>
+              <max_angle>0.02</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>1</samples>
+              <resolution>1</resolution>
+              <min_angle>0.0</min_angle>
+              <max_angle>0.0</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>%g</min>
+            <max>%g</max>
+            <resolution>0.01</resolution>
+          </range>
+        </lidar>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+
+    <joint name="rangefinder_down_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>%s</child>
+    </joint>
+`, spec.RangefinderFrameID, spec.RangefinderModelPose, spec.RangefinderFrameID, strings.TrimPrefix(spec.RangefinderScanIdealTopic, "/"), spec.RangefinderModelUpdateHz, spec.RangefinderModelRayCount, spec.RangefinderMinDistanceM, spec.RangefinderMaxDistanceM, spec.RangefinderFrameID)
+	rendered := strings.Replace(source, "</model>", overlay+"\n  </model>", 1)
+	return writeText(path, rendered)
+}
+
+func WriteParamOverlayFromSource(path string, source string, spec SensorRuntimeSpec) error {
+	minCM := int(spec.RangefinderMinDistanceM*100 + 0.5)
+	maxCM := int(spec.RangefinderMaxDistanceM*100 + 0.5)
+	orientation := 25
+	overlay := missingParamLines(source, map[string]string{
+		"RNGFND1_TYPE":     "20",
+		"RNGFND1_ORIENT":   fmt.Sprintf("%d", orientation),
+		"RNGFND1_MIN_CM":   fmt.Sprintf("%d", minCM),
+		"RNGFND1_MAX_CM":   fmt.Sprintf("%d", maxCM),
+		"RNGFND1_GNDCLEAR": "15",
+	})
+	if overlay == "" {
+		return writeText(path, strings.TrimRight(source, "\n")+"\n")
+	}
+	return writeText(path, strings.TrimRight(source, "\n")+"\n\n# NavLab hardware-faithful down rangefinder overlay.\n"+overlay)
+}
+
+func missingParamLines(source string, defaults map[string]string) string {
+	seen := map[string]bool{}
+	for _, line := range strings.Split(source, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
+			continue
+		}
+		seen[fields[0]] = true
+	}
+	keys := []string{"RNGFND1_TYPE", "RNGFND1_ORIENT", "RNGFND1_MIN_CM", "RNGFND1_MAX_CM", "RNGFND1_GNDCLEAR"}
+	lines := []string{}
+	for _, key := range keys {
+		if seen[key] {
+			continue
+		}
+		lines = append(lines, key+" "+defaults[key])
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 func RemoveContainer(ctx context.Context, runner CommandRunner, name string) error {
 	if runner == nil {
 		runner = ExecCommandRunner{}
@@ -142,7 +256,7 @@ func GazeboSensorDockerArgs(spec GazeboSensorRunSpec) ([]string, error) {
 	if workspaceContainerPath == "" {
 		workspaceContainerPath = "/workspace"
 	}
-	command := "source /opt/ros/jazzy/setup.bash && " +
+	command := "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && " +
 		"source /opt/navlab_sensor_ws/install/setup.bash && " +
 		"exec /opt/gazebo-sensor-venv/bin/python -m navlab.sim.gazebo_sensor.cli --runtime --log-file " +
 		shellQuote(spec.RuntimeLogPath)

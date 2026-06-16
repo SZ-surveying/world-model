@@ -48,6 +48,8 @@ MINIMUM_ROSBAG_TOPICS = (
     "/rangefinder/down/status",
     "/gazebo/truth/odom",
     "/gazebo/truth/status",
+    "/gazebo/tf",
+    "/gazebo/tf_static",
     "/imu",
     "/imu/status",
     "/navlab/fcu/local_position_pose",
@@ -451,12 +453,23 @@ def write_summary(
         external_odom_status = {}
     external_nav_input_topic = str(external_odom_status.get("input_topic") or "")
     external_nav_uses_gazebo_truth = external_nav_input_topic == "/gazebo/truth/odom"
-    external_nav_uses_slam_odom = external_nav_input_topic == "/odom"
+    external_nav_uses_slam_odom = external_nav_input_topic == "/slam/odom"
     slam_truth_comparison_result = slam_truth_comparison(samples)
     mavlink_message_counts = mavlink_status.get("message_counts", {})
     rangefinder_fcu_observed = (
         int(mavlink_message_counts.get("RANGEFINDER", 0) or 0) > 0
         or int(mavlink_message_counts.get("DISTANCE_SENSOR", 0) or 0) > 0
+    )
+    legacy_mavlink_rangefinder_sender = rangefinder_down_status.get("mavlink_message") == "DISTANCE_SENSOR"
+    rangefinder_serial_ok = (
+        rangefinder_fcu_observed
+        and rangefinder_down_status.get("source") == "gazebo_down_range_projection"
+        and rangefinder_down_status.get("fcu_transport") == "serial7_uart"
+        and rangefinder_down_status.get("rangefinder_simulation_fidelity") == "benewake_serial_emulated"
+        and not legacy_mavlink_rangefinder_sender
+    )
+    rangefinder_simulation_fidelity = (
+        "benewake_serial_emulated" if rangefinder_serial_ok else "blocked_missing_benewake_serial"
     )
     scan_publisher = scan_publisher_summary(samples)
     topics = sorted(set(re.findall(r"name: (/[^\n]+)", metadata)))
@@ -531,6 +544,7 @@ def write_summary(
             and x2_status_fresh
             and x2_is_internal_to_sensor_runtime
             and pose_mirror_observation_only
+            and rangefinder_serial_ok
         ),
         "duration_sec": duration_sec,
         "mission_rc": mission_rc,
@@ -615,6 +629,9 @@ def write_summary(
         "x2_status": x2_status,
         "rangefinder_down_status": rangefinder_down_status,
         "rangefinder_fcu_observed": rangefinder_fcu_observed,
+        "rangefinder_serial_ok": rangefinder_serial_ok,
+        "rangefinder_simulation_fidelity": rangefinder_simulation_fidelity,
+        "legacy_mavlink_rangefinder_sender": legacy_mavlink_rangefinder_sender,
         "topics_recorded": topics,
         "foxglove_notes": str(artifact_dir / "foxglove_notes.md"),
     }

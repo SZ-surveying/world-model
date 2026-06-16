@@ -53,6 +53,6 @@ RUN test -f /usr/local/include/livox_lidar_api.h \
     || (echo "Livox-SDK2 headers missing after build: expected /usr/local/include/livox_lidar_api.h" >&2; exit 3)
 
 RUN set +u \
-    && source /opt/ros/jazzy/setup.bash \
+    && source /opt/ros/${ROS_DISTRO}/setup.bash \
     && set -u \
     && colcon build --symlink-install --packages-select livox_ros_driver2 fast_lio --cmake-args -DROS_EDITION=ROS2 -DDISTRO_ROS=jazzy

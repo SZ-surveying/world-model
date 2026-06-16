@@ -67,7 +67,7 @@ def _samples(
     *,
     pose_set_count: int = 0,
     pose_reason: str = "mavlink_local_position_observed",
-    external_nav_input_topic: str = "/odom",
+    external_nav_input_topic: str = "/slam/odom",
 ) -> str:
     def section(label: str, payload: dict[str, object]) -> str:
         return f"{label}\ndata: '{json.dumps(payload, separators=(',', ':'))}'\n"
@@ -112,10 +112,13 @@ def _samples(
             section(
                 "RANGEFINDER_DOWN_STATUS_SAMPLE",
                 {
-                    "state": "sending",
+                    "state": "publishing",
                     "ready": True,
-                    "source": "gazebo_down_rangefinder",
-                    "sent_count": 12,
+                    "source": "gazebo_down_range_projection",
+                    "fcu_transport": "serial7_uart",
+                    "fcu_rangefinder_source": "ardupilot_serial7_benewake_tfmini",
+                    "rangefinder_simulation_fidelity": "benewake_serial_emulated",
+                    "input_count": 12,
                     "latest_distance_m": 0.45,
                 },
             ),
@@ -143,10 +146,23 @@ def _hover_samples(*, slam_y: float = 0.05, truth_y: float = 0.04) -> str:
             section("IMU_STATUS_SAMPLE", {"state": "streaming_fcu_imu", "ready": True}),
             section("SLAM_STATUS_SAMPLE", {"ready": True, "state": "publishing_tf_backed_odom"}),
             section("GAZEBO_TRUTH_STATUS_SAMPLE", {"ready": True, "state": "publishing"}),
-            section("EXTERNAL_STATUS_SAMPLE", {"state": "healthy", "ready": True, "odom": {"input_topic": "/odom"}}),
+            section(
+                "EXTERNAL_STATUS_SAMPLE",
+                {"state": "healthy", "ready": True, "odom": {"input_topic": "/slam/odom"}},
+            ),
             section("MAVLINK_EXTERNAL_NAV_STATUS_SAMPLE", {"state": "sending"}),
             section("X2_STATUS_SAMPLE", {"latest_scan_ideal_age_sec": 0.05}),
-            section("RANGEFINDER_DOWN_STATUS_SAMPLE", {"state": "sending", "ready": True}),
+            section(
+                "RANGEFINDER_DOWN_STATUS_SAMPLE",
+                {
+                    "state": "publishing",
+                    "ready": True,
+                    "source": "gazebo_down_range_projection",
+                    "fcu_transport": "serial7_uart",
+                    "fcu_rangefinder_source": "ardupilot_serial7_benewake_tfmini",
+                    "rangefinder_simulation_fidelity": "benewake_serial_emulated",
+                },
+            ),
             _odom_sample("SLAM_ODOM_SAMPLE", x=0.05, y=slam_y, z=0.0),
             _odom_sample("GAZEBO_TRUTH_ODOM_SAMPLE", x=0.04, y=truth_y, z=0.0),
         ]
@@ -305,14 +321,16 @@ def test_write_summary_requires_x2_lidar_and_observation_mode(tmp_path: Path) ->
     assert summary["lidar_chain"]["scan_ideal_count"] == 12
     assert summary["lidar_chain"]["x2_status_count"] == 3
     assert summary["x2_status"]["source"] == "x2_serial_emulator"
-    assert summary["rangefinder_down_status"]["state"] == "sending"
+    assert summary["rangefinder_down_status"]["state"] == "publishing"
     assert summary["rangefinder_fcu_observed"] is True
+    assert summary["rangefinder_serial_ok"] is True
+    assert summary["rangefinder_simulation_fidelity"] == "benewake_serial_emulated"
     assert summary["gazebo_truth_trajectory"]["ok"] is True
     assert summary["gazebo_truth_trajectory"]["sample_count"] == 2
     assert summary["observation_mode"]["pose_mirror_observation_only"] is True
     assert summary["slam_odom_source"]["recorded"] is True
     assert summary["slam_status"]["ready"] is True
-    assert summary["external_nav_input_topic"] == "/odom"
+    assert summary["external_nav_input_topic"] == "/slam/odom"
     assert summary["external_nav_uses_slam_odom"] is True
     assert summary["external_nav_uses_gazebo_truth"] is False
     assert summary["slam_truth_comparison"]["available"] is True

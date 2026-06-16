@@ -63,6 +63,7 @@ func TestDockerBackendStartServiceUsesRunner(t *testing.T) {
 	runner := &fakeRunner{result: CommandResult{Stdout: "container-id\n", ExitCode: 0}}
 	backend := NewDockerBackend(runner)
 	backend.Now = func() time.Time { return time.Date(2026, 6, 12, 1, 2, 3, 0, time.UTC) }
+	backend.DefaultUser = "1001:1002"
 
 	handle, err := backend.StartService(ServiceSpec{
 		Name:          "gazebo_sensor",
@@ -83,6 +84,33 @@ func TestDockerBackendStartServiceUsesRunner(t *testing.T) {
 	if !reflect.DeepEqual(runner.commands[0].args, []string{"rm", "-f", "navlab-sensor"}) {
 		t.Fatalf("cleanup args = %#v", runner.commands[0].args)
 	}
+	if !argPairPresent(runner.commands[1].args, "--user", "1001:1002") {
+		t.Fatalf("start args missing default user: %#v", runner.commands[1].args)
+	}
+	for _, want := range []string{"HOME=/tmp", "ROS_LOG_DIR=/tmp/navlab-ros-logs", "XDG_CACHE_HOME=/tmp/navlab-cache"} {
+		if !argPairPresent(runner.commands[1].args, "--env", want) {
+			t.Fatalf("start args missing env %s: %#v", want, runner.commands[1].args)
+		}
+	}
+}
+
+func TestDockerBackendStartServiceKeepsExplicitUser(t *testing.T) {
+	runner := &fakeRunner{result: CommandResult{Stdout: "container-id\n", ExitCode: 0}}
+	backend := NewDockerBackend(runner)
+	backend.DefaultUser = "1001:1002"
+
+	_, err := backend.StartService(ServiceSpec{
+		Name:    "root_service",
+		Image:   "runtime:latest",
+		Command: []string{"true"},
+		User:    "0:0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !argPairPresent(runner.commands[0].args, "--user", "0:0") {
+		t.Fatalf("start args missing explicit user: %#v", runner.commands[0].args)
+	}
 }
 
 func TestDockerBackendRunProbeWritesLogAndReturnsFailure(t *testing.T) {
@@ -92,6 +120,7 @@ func TestDockerBackendRunProbeWritesLogAndReturnsFailure(t *testing.T) {
 		err:    errors.New("exit status 42"),
 	}
 	backend := NewDockerBackend(runner)
+	backend.DefaultUser = "1001:1002"
 
 	result, err := backend.RunProbe(ProbeSpec{
 		Name:    "rangefinder_probe",
@@ -111,6 +140,12 @@ func TestDockerBackendRunProbeWritesLogAndReturnsFailure(t *testing.T) {
 	}
 	if string(data) != "bad" {
 		t.Fatalf("log = %q, want bad", string(data))
+	}
+	if !argPairPresent(runner.commands[0].args, "--user", "1001:1002") {
+		t.Fatalf("probe args missing default user: %#v", runner.commands[0].args)
+	}
+	if !argPairPresent(runner.commands[0].args, "--env", "HOME=/tmp") {
+		t.Fatalf("probe args missing writable HOME: %#v", runner.commands[0].args)
 	}
 }
 
@@ -138,8 +173,39 @@ func TestRosbagServiceSpecReadsProfile(t *testing.T) {
 	if !strings.Contains(command, "/tf") || !strings.Contains(command, "/scan") {
 		t.Fatalf("command missing topics: %q", command)
 	}
+	if !strings.Contains(command, "'--compression-mode' 'file'") || !strings.Contains(command, "'--compression-format' 'zstd'") {
+		t.Fatalf("command missing rosbag compression: %q", command)
+	}
 	if !strings.Contains(command, "timeout --signal=INT 90.0") {
 		t.Fatalf("command missing timeout: %q", command)
+	}
+	if !strings.Contains(command, "metadata.yaml") || !strings.Contains(command, "exit 2") {
+		t.Fatalf("command missing metadata wait: %q", command)
+	}
+}
+
+func TestDockerBackendStartRosbagUsesDefaultUser(t *testing.T) {
+	profile := filepath.Join(t.TempDir(), "topics.txt")
+	if err := os.WriteFile(profile, []byte("/tf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{result: CommandResult{Stdout: "container-id\n", ExitCode: 0}}
+	backend := NewDockerBackend(runner)
+	backend.DefaultUser = "1001:1002"
+
+	_, err := backend.StartRosbag(RosbagSpec{
+		Name:          "hover_rosbag",
+		Image:         "runtime:latest",
+		ContainerName: "navlab-hover-rosbag",
+		TopicsProfile: profile,
+		OutputPath:    "rosbag",
+		DurationSec:   1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !argPairPresent(runner.commands[1].args, "--user", "1001:1002") {
+		t.Fatalf("rosbag args missing default user: %#v", runner.commands[1].args)
 	}
 }
 
@@ -148,4 +214,13 @@ func TestSpecValidationRejectsMissingImage(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "image is required") {
 		t.Fatalf("ValidateDocker() = %v, want image error", err)
 	}
+}
+
+func argPairPresent(args []string, key string, value string) bool {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == key && args[index+1] == value {
+			return true
+		}
+	}
+	return false
 }

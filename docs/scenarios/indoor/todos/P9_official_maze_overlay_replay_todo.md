@@ -370,3 +370,14 @@ P9 全部完成必须满足：
 - 人工 Foxglove 截图确认：`docs/images/截屏2026-06-08 08.25.06.png` 与 `docs/images/截屏2026-06-08 08.25.30.png` 中红色 scan 点贴合官方 maze 墙体，不再是 1.5m static fallback 圆。
 - 测试：`PYTHONPATH=orchestration uv run --project orchestration pytest orchestration/tests/test_config.py orchestration/tests/test_p9_foxglove_replay.py -q` -> 82 passed。
 - diff 检查：`git diff --check` -> passed。
+
+### 2026-06-14 Foxglove upload 迁入 Go sim
+
+- 变更：Foxglove upload 不再由 `scripts/command foxglove upload` 负责，迁入 `orchestration/sim` 的 Go CLI。
+- 新入口：`go run ./cmd/navlab-sim foxglove upload <run> --task <task> --force`。
+- just：`just foxglove-upload <run> --task <task> --dry-run` 现在调用 Go sim。
+- raw/full：Go sim 会按 task 选择主 MCAP，例如 P13 navigation 选择 `rosbag/navigation_rosbag/navigation_rosbag_0.mcap`。
+- lite：传 `--lite` 时只选择已经存在的 `rosbag_foxglove/rosbag_foxglove_0.mcap`；缺文件直接失败，不再自动生成。
+- 边界：Go sim upload 只认 `artifacts/sim/<task>/<run>` 和当前分层 rosbag 布局，不再兼容旧 `artifacts/ros/...` 或 `rosbag/rosbag_0.mcap`。
+- 验证：`just foxglove-upload 20260614T093531Z --task navigation --dry-run` 选择 navigation MCAP。
+- 验证：旧 `artifacts/ros/navlab_companion_sitl_gazebo/20260609_110400` 路径会被拒绝。

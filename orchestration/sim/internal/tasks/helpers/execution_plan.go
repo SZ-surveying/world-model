@@ -53,13 +53,14 @@ type ROSProbePlan struct {
 }
 
 type RosbagRecordPlan struct {
-	HelperID    string   `json:"helper_id"`
-	Name        string   `json:"name"`
-	ProfilePath string   `json:"profile_path"`
-	OutputDir   string   `json:"output_dir"`
-	Topics      []string `json:"topics"`
-	Command     string   `json:"command,omitempty"`
-	Status      string   `json:"status"`
+	HelperID       string   `json:"helper_id"`
+	Name           string   `json:"name"`
+	ProfilePath    string   `json:"profile_path"`
+	OutputDir      string   `json:"output_dir"`
+	Topics         []string `json:"topics"`
+	RequiredTopics []string `json:"required_topics,omitempty"`
+	Command        string   `json:"command,omitempty"`
+	Status         string   `json:"status"`
 }
 
 type ResultGatePlan struct {
@@ -117,14 +118,21 @@ func BuildExecutionPlan(
 	if helperSet["exploration-workflow"] {
 		addExplorationWorkflowExecution(&plan, task, durationSec, simulationProfile)
 	}
+	if helperSet["nav2-navigation-workflow"] {
+		addNav2NavigationWorkflowExecution(&plan, task, durationSec)
+	}
 	if helperSet["scan-robustness-workflow"] {
 		addScanRobustnessWorkflowExecution(&plan, task, durationSec)
 	}
 	if helperSet["landing"] {
+		inputs := []string{"summary.json", "controller_summary.json"}
+		if plan.TaskID == "hover" {
+			inputs = []string{"summary.json", "mission_summary.json"}
+		}
 		plan.ResultGates = append(plan.ResultGates, ResultGatePlan{
 			HelperID: "landing",
 			Name:     "landing_acceptance",
-			Inputs:   []string{"summary.json", "controller_summary.json"},
+			Inputs:   inputs,
 			Outputs:  []string{"landing acceptance blockers"},
 			Status:   "ported_basic",
 		})
@@ -145,7 +153,7 @@ func addSensorsExecution(plan *ExecutionPlan, task config.TaskConfig) {
 		ContainerName: GazeboSensorContainer,
 		ImageRef:      "images.gazebo_sensor",
 		Network:       "host",
-		Command:       []string{"bash", "-lc", "source /opt/ros/jazzy/setup.bash && source /opt/navlab_sensor_ws/install/setup.bash && exec /opt/gazebo-sensor-venv/bin/python -m navlab.sim.gazebo_sensor.cli --runtime --log-file artifacts/gazebo_sensor.log"},
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source /opt/navlab_sensor_ws/install/setup.bash && exec /opt/gazebo-sensor-venv/bin/python -m navlab.sim.gazebo_sensor.cli --runtime --log-file artifacts/gazebo_sensor.log"},
 		Env: map[string]string{
 			"NAVLAB_CONFIG": spec.RuntimeConfigPath,
 			"ROS_DOMAIN_ID": "from config.toml",
@@ -166,7 +174,12 @@ func addSlamExecution(plan *ExecutionPlan) {
 		HelperID: "slam",
 		Kind:     "slam_runtime_toml",
 		Path:     "slam_runtime.toml",
-		Inputs:   []string{spec.ScanTopic, spec.IMUTopic, spec.OdometryTopic},
+		Inputs:   []string{spec.ScanTopic, spec.IMUTopic, spec.MapFrameID + "->" + spec.BaseFrameID + " Cartographer TF"},
+	}, ArtifactPlan{
+		HelperID: "slam",
+		Kind:     "external_nav_bridge_params_override",
+		Path:     "external_nav_bridge_params.yaml",
+		Inputs:   []string{spec.SlamOdomTopic, spec.MapFrameID + "->" + spec.BaseFrameID},
 	})
 	plan.RuntimeServices = append(plan.RuntimeServices, RuntimeServicePlan{
 		HelperID:      "slam",
@@ -174,7 +187,8 @@ func addSlamExecution(plan *ExecutionPlan) {
 		ContainerName: SlamBackendContainer,
 		ImageRef:      "images.slam",
 		Network:       "host",
-		Command:       []string{"bash", "-lc", "python3 -m navlab.common.slam.cli launch --config artifacts/slam_runtime.toml --backend cartographer"},
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source /opt/navlab_ws/install/setup.bash && exec python3 -m navlab.common.slam.cli launch --config artifacts/slam_runtime.toml --backend cartographer > artifacts/slam_backend.runtime.log 2>&1"},
+		Env:           BaselineROSEnv(),
 		SideEffect:    true,
 		Status:        "ported_command_planning",
 	})
@@ -198,7 +212,7 @@ func addFCUExecution(plan *ExecutionPlan, task config.TaskConfig) {
 		ContainerName: FCUControllerContainer,
 		ImageRef:      "images.runtime",
 		Network:       "host",
-		Command:       []string{"bash", "-lc", "python3 artifacts/fcu_controller_runtime.py"},
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/fcu_controller_runtime.py > artifacts/fcu_controller.runtime.log 2>&1"},
 		Env:           BaselineROSEnv(),
 		SideEffect:    true,
 		Status:        "ported_script_generation",
@@ -247,23 +261,42 @@ func addSlamHoverExecution(plan *ExecutionPlan, task config.TaskConfig, duration
 	}
 	plan.GeneratedArtifacts = append(plan.GeneratedArtifacts,
 		ArtifactPlan{HelperID: "slam-hover", Kind: "slam_hover_runtime_toml", Path: "slam_hover_runtime.toml"},
+		ArtifactPlan{HelperID: "slam-hover", Kind: "hover_mission_runtime_script", Path: "hover_mission_runtime.py", Inputs: []string{"navlab.sim.companion.nodes.hover_mission"}},
 		ArtifactPlan{HelperID: "slam-hover", Kind: "hover_probe_script", Path: "slam_hover_probe.py"},
 		ArtifactPlan{HelperID: "slam-hover", Kind: "foxglove_notes", Path: "foxglove_notes.md"},
 	)
+	plan.RuntimeServices = append(plan.RuntimeServices, RuntimeServicePlan{
+		HelperID:      "slam-hover",
+		ServiceName:   "hover_mission",
+		ContainerName: "navlab-hover-mission",
+		ImageRef:      "images.runtime",
+		Network:       "host",
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/hover_mission_runtime.py > artifacts/hover_mission.runtime.log 2>&1"},
+		Env:           BaselineROSEnv(),
+		SideEffect:    true,
+		Status:        "planned_python_runtime",
+	})
 	plan.ROSProbes = append(plan.ROSProbes, ROSProbePlan{
 		HelperID:     "slam-hover",
 		Name:         "slam_hover_probe",
 		ScriptPath:   "slam_hover_probe.py",
 		OutputPath:   "slam_hover_probe.json",
-		Topics:       []string{spec.FCUPoseTopic, spec.SlamOdomTopic, spec.ControllerStatusTopic, spec.HoverStatusTopic},
+		Topics:       []string{spec.FCUPoseTopic, spec.SlamOdomTopic, spec.SlamStatusTopic, spec.ExternalNavStatusTopic, "/mavlink_external_nav/status", spec.HoverStatusTopic, "/navlab/landing/status"},
 		RuntimeImage: "images.runtime",
 		Status:       "ported_script_generation",
 	})
-	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlan("slam-hover", "hover_rosbag", "configs/rosbag/hover.yaml", durationSec, []string{spec.FCUPoseTopic, spec.SlamOdomTopic, spec.ControllerStatusTopic, spec.HoverStatusTopic}))
+	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlanWithRequired(
+		"slam-hover",
+		"hover_rosbag",
+		"configs/rosbag/hover.yaml",
+		durationSec,
+		MatureWorldSLAMReviewTopics(),
+		HoverTaskRequiredTopics(spec),
+	))
 	plan.ResultGates = append(plan.ResultGates, ResultGatePlan{
 		HelperID: "slam-hover",
 		Name:     "slam_hover_acceptance",
-		Inputs:   []string{"slam_hover_probe.json", "controller_summary.json", "rosbag_profile_summary.json"},
+		Inputs:   []string{"mission_summary.json", "slam_hover_probe.json", "rosbag_profile_summary.json"},
 		Outputs:  []string{"hover blockers", "summary.json"},
 		Status:   "ported_partial",
 	})
@@ -305,18 +338,37 @@ func addExplorationWorkflowExecution(plan *ExecutionPlan, task config.TaskConfig
 	}
 	plan.GeneratedArtifacts = append(plan.GeneratedArtifacts,
 		ArtifactPlan{HelperID: "exploration-workflow", Kind: "exploration_runtime_toml", Path: "exploration_runtime.toml"},
+		ArtifactPlan{HelperID: "exploration-workflow", Kind: "exploration_runtime_script", Path: "exploration_workflow_runtime.py"},
 		ArtifactPlan{HelperID: "exploration-workflow", Kind: "exploration_probe_script", Path: "exploration_probe.py"},
 	)
+	plan.RuntimeServices = append(plan.RuntimeServices, RuntimeServicePlan{
+		HelperID:      "exploration-workflow",
+		ServiceName:   "exploration_workflow",
+		ContainerName: "navlab-exploration-workflow",
+		ImageRef:      "images.runtime",
+		Network:       "host",
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && python3 artifacts/exploration_workflow_runtime.py > artifacts/exploration_workflow.runtime.log 2>&1"},
+		Env:           BaselineROSEnv(),
+		SideEffect:    true,
+		Status:        "planned_runtime",
+	})
 	plan.ROSProbes = append(plan.ROSProbes, ROSProbePlan{
 		HelperID:     "exploration-workflow",
 		Name:         "exploration_probe",
 		ScriptPath:   "exploration_probe.py",
 		OutputPath:   "exploration_probe.json",
-		Topics:       []string{spec.ControllerStatusTopic, spec.SetpointOutputTopic, spec.ExplorationStatusTopic, spec.SlamOdomTopic},
+		Topics:       []string{spec.ControllerStatusTopic, spec.SetpointOutputTopic, spec.ExplorationStatusTopic, spec.SlamOdomTopic, "/navlab/landing/status"},
 		RuntimeImage: "images.runtime",
 		Status:       "ported_script_generation",
 	})
-	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlan("exploration-workflow", "exploration_rosbag", "configs/rosbag/exploration.yaml", durationSec, []string{spec.ControllerStatusTopic, spec.SetpointOutputTopic, spec.SlamOdomTopic}))
+	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlanWithRequired(
+		"exploration-workflow",
+		"exploration_rosbag",
+		"configs/rosbag/exploration.yaml",
+		durationSec,
+		ExplorationTaskReviewTopics(spec),
+		ExplorationTaskRequiredTopics(spec),
+	))
 	if simulationProfile == "realistic" {
 		plan.GeneratedArtifacts = append(plan.GeneratedArtifacts, ArtifactPlan{HelperID: "exploration-workflow", Kind: "airframe_disturbance_runtime", Path: "exploration_airframe_disturbance.toml"})
 	}
@@ -325,6 +377,78 @@ func addExplorationWorkflowExecution(plan *ExecutionPlan, task config.TaskConfig
 		Name:     "exploration_acceptance",
 		Inputs:   []string{"exploration_probe.json", "controller_summary.json", "landing acceptance summary"},
 		Outputs:  []string{"exploration blockers", "summary.json"},
+		Status:   "ported_partial",
+	})
+}
+
+func addNav2NavigationWorkflowExecution(plan *ExecutionPlan, task config.TaskConfig, durationSec float64) {
+	spec := DefaultNav2NavigationSpec()
+	if value, ok := floatSectionValue(task.Sections, "navigation_mission", "navigation_window_sec"); ok {
+		spec.NavigationWindowSec = value
+	}
+	if value, ok := floatSectionValue(task.Sections, "navigation_adapter", "max_xy_speed_mps"); ok {
+		spec.MaxXYSpeedMPS = value
+	}
+	plan.GeneratedArtifacts = append(plan.GeneratedArtifacts,
+		ArtifactPlan{HelperID: "nav2-navigation-workflow", Kind: "nav2_params_yaml", Path: "nav2_params.yaml"},
+		ArtifactPlan{HelperID: "nav2-navigation-workflow", Kind: "navigation_adapter_runtime_toml", Path: "navigation_adapter_runtime.toml"},
+		ArtifactPlan{HelperID: "nav2-navigation-workflow", Kind: "navigation_adapter_runtime_script", Path: "navigation_adapter_runtime.py"},
+		ArtifactPlan{HelperID: "nav2-navigation-workflow", Kind: "navigation_mission_runtime_script", Path: "navigation_mission_runtime.py"},
+		ArtifactPlan{HelperID: "nav2-navigation-workflow", Kind: "nav2_lifecycle_probe_script", Path: "nav2_lifecycle_probe.py"},
+		ArtifactPlan{HelperID: "nav2-navigation-workflow", Kind: "costmap_health_probe_script", Path: "costmap_health_probe.py"},
+		ArtifactPlan{HelperID: "nav2-navigation-workflow", Kind: "navigation_status_probe_script", Path: "navigation_status_probe.py"},
+	)
+	plan.RuntimeServices = append(plan.RuntimeServices, RuntimeServicePlan{
+		HelperID:      "nav2-navigation-workflow",
+		ServiceName:   "nav2_navigation",
+		ContainerName: "navlab-nav2-navigation",
+		ImageRef:      "images.runtime",
+		Network:       "host",
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && ros2 launch nav2_bringup navigation_launch.py use_sim_time:=true params_file:=artifacts/nav2_params.yaml"},
+		Env:           BaselineROSEnv(),
+		SideEffect:    true,
+		Status:        "planned_runtime",
+	})
+	plan.RuntimeServices = append(plan.RuntimeServices, RuntimeServicePlan{
+		HelperID:      "nav2-navigation-workflow",
+		ServiceName:   "navigation_adapter",
+		ContainerName: "navlab-navigation-adapter",
+		ImageRef:      "images.runtime",
+		Network:       "host",
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && python3 artifacts/navigation_adapter_runtime.py > artifacts/navigation_adapter.runtime.log 2>&1"},
+		Env:           BaselineROSEnv(),
+		SideEffect:    true,
+		Status:        "planned_runtime",
+	})
+	plan.RuntimeServices = append(plan.RuntimeServices, RuntimeServicePlan{
+		HelperID:      "nav2-navigation-workflow",
+		ServiceName:   "navigation_mission",
+		ContainerName: "navlab-navigation-mission",
+		ImageRef:      "images.runtime",
+		Network:       "host",
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && python3 artifacts/navigation_mission_runtime.py > artifacts/navigation_mission.runtime.log 2>&1"},
+		Env:           BaselineROSEnv(),
+		SideEffect:    true,
+		Status:        "planned_runtime",
+	})
+	plan.ROSProbes = append(plan.ROSProbes,
+		ROSProbePlan{HelperID: "nav2-navigation-workflow", Name: "nav2_lifecycle_probe", ScriptPath: "nav2_lifecycle_probe.py", OutputPath: "nav2_lifecycle_probe.json", Topics: []string{spec.MapTopic, spec.SlamOdomTopic}, RuntimeImage: "images.runtime", Status: "ported_script_generation"},
+		ROSProbePlan{HelperID: "nav2-navigation-workflow", Name: "costmap_health_probe", ScriptPath: "costmap_health_probe.py", OutputPath: "costmap_health_probe.json", Topics: []string{spec.CostmapHealthTopic, spec.GlobalCostmapTopic, spec.LocalCostmapTopic}, RuntimeImage: "images.runtime", Status: "ported_script_generation"},
+		ROSProbePlan{HelperID: "nav2-navigation-workflow", Name: "navigation_status_probe", ScriptPath: "navigation_status_probe.py", OutputPath: "navigation_status_probe.json", Topics: []string{spec.NavigationStatusTopic, spec.AdapterStatusTopic, spec.ControllerStatusTopic, spec.LandingStatusTopic}, RuntimeImage: "images.runtime", Status: "ported_script_generation"},
+	)
+	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlanWithRequired(
+		"nav2-navigation-workflow",
+		"navigation_rosbag",
+		"configs/rosbag/navigation.yaml",
+		durationSec,
+		NavigationTaskReviewTopics(spec),
+		NavigationTaskRequiredTopics(spec),
+	))
+	plan.ResultGates = append(plan.ResultGates, ResultGatePlan{
+		HelperID: "nav2-navigation-workflow",
+		Name:     "navigation_acceptance",
+		Inputs:   []string{"navigation_status_probe.json", "costmap_health_probe.json", "controller_summary.json", "landing acceptance summary"},
+		Outputs:  []string{"navigation blockers", "summary.json"},
 		Status:   "ported_partial",
 	})
 }
@@ -358,19 +482,24 @@ func addScanRobustnessWorkflowExecution(plan *ExecutionPlan, task config.TaskCon
 }
 
 func BuildRosbagRecordPlan(helperID string, name string, profilePath string, durationSec float64, topics []string) RosbagRecordPlan {
+	return BuildRosbagRecordPlanWithRequired(helperID, name, profilePath, durationSec, topics, topics)
+}
+
+func BuildRosbagRecordPlanWithRequired(helperID string, name string, profilePath string, durationSec float64, topics []string, requiredTopics []string) RosbagRecordPlan {
 	quotedTopics := make([]string, 0, len(topics))
 	for _, topic := range topics {
 		quotedTopics = append(quotedTopics, shellQuote(topic))
 	}
 	outputDir := "rosbag/" + name
 	return RosbagRecordPlan{
-		HelperID:    helperID,
-		Name:        name,
-		ProfilePath: profilePath,
-		OutputDir:   outputDir,
-		Topics:      append([]string(nil), topics...),
-		Command:     fmt.Sprintf("timeout --signal=INT %.1f ros2 bag record -s mcap -o %s --topics %s", durationSec, outputDir, strings.Join(quotedTopics, " ")),
-		Status:      "ported_command_planning",
+		HelperID:       helperID,
+		Name:           name,
+		ProfilePath:    profilePath,
+		OutputDir:      outputDir,
+		Topics:         append([]string(nil), topics...),
+		RequiredTopics: append([]string(nil), requiredTopics...),
+		Command:        fmt.Sprintf("timeout --signal=INT %.1f ros2 bag record -s mcap -o %s --topics %s", durationSec, outputDir, strings.Join(quotedTopics, " ")),
+		Status:         "ported_command_planning",
 	}
 }
 

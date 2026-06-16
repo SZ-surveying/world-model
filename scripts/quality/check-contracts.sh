@@ -55,6 +55,7 @@ require_field() {
 
 log_step "Validating required schemaVersion fields"
 require_field "$EXAMPLES_DIR/orchestration/sim_task_request.json" "schemaVersion"
+require_field "$EXAMPLES_DIR/orchestration/sim_navigation_summary.json" "schemaVersion"
 require_field "$EXAMPLES_DIR/orchestration/real_task_result.json" "schemaVersion"
 require_field "$EXAMPLES_DIR/orchestration/doctor_result_blocked.json" "schemaVersion"
 require_field "$EXAMPLES_DIR/runtime/sim_runtime_plan.json" "schemaVersion"

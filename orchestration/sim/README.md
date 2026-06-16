@@ -12,8 +12,8 @@ This package owns:
 - Go CLI entrypoint `navlab-sim`.
 - Project config loading from `config.toml` with Viper-compatible TOML shape.
 - Task config loading from `configs/tasks/*.yaml`.
-- Built-in simulation task registry for `hover`, `exploration`, and
-  `scan-robustness`.
+- Built-in simulation task registry for `hover`, `exploration`, `navigation`,
+  and `scan-robustness`.
 - Docker runtime service/probe plans.
 - Runtime artifact generation and task result summaries.
 - TUI replay for simulation artifact directories.
@@ -68,6 +68,7 @@ Plan a task without starting Docker services:
 ```bash
 go run ./cmd/navlab-sim run hover --dry-run
 go run ./cmd/navlab-sim run exploration --dry-run
+go run ./cmd/navlab-sim run navigation --dry-run
 go run ./cmd/navlab-sim run scan-robustness --dry-run
 ```
 
@@ -76,6 +77,23 @@ Open a replay TUI for a generated artifact directory:
 ```bash
 go run ./cmd/navlab-sim tui ../../artifacts/sim/RUN_ID
 ```
+
+Build and upload a Foxglove-lite replay:
+
+```bash
+go run ./cmd/navlab-sim foxglove build-replay 20260615T082821Z --task hover
+go run ./cmd/navlab-sim foxglove upload 20260615T082821Z --task hover --dry-run
+go run ./cmd/navlab-sim foxglove upload 20260615T082821Z --task hover --force
+```
+
+`build-replay` reads the task raw MCAP, applies
+`docker/profiles/navlab-*-foxglove-lite-topics.txt`, writes
+`rosbag_foxglove/rosbag_foxglove_0.mcap`, and validates the visualization-only
+`/navlab/official_maze/map` overlay that was live-published into the raw rosbag.
+Compressed raw inputs such as `hover_rosbag_0.mcap.zstd` are stream-read without
+writing a decompressed raw copy. `upload` is lite-only: it refuses raw task MCAPs and fails if
+`foxglove_replay_summary.json` does not prove every `overlay` and `required`
+topic is present.
 
 Build simulation images through the Go entrypoint:
 
@@ -100,7 +118,8 @@ Important sections:
 - `[orchestration.runtime]`: must use simulation mode and Docker backend.
 - `[paths]`: workspace root, artifact root, and task config directory.
 - `[navlab.images]`: image tag policy and image definitions.
-- task-specific runtime sections such as `[landing]`, `[sitl]`, `[slam]`, and
+- task-specific runtime sections such as `[landing]`, `[sitl]`, `[slam]`,
+  `[nav2]`, `[navigation_adapter]`, `[navigation_mission]`, and
   `[official_baseline]`.
 
 Task configs live under `configs/tasks/*.yaml`. Each task config declares:
@@ -116,7 +135,33 @@ Current built-in tasks:
 
 - `hover`
 - `exploration`
+- `navigation`
 - `scan-robustness`
+
+### Navigation Task
+
+`navigation` is the P13 Nav2-backed indoor navigation gate. Its runtime chain is:
+
+```text
+NavigateToPose
+  -> /cmd_vel_nav
+  -> /navlab/fcu/setpoint/intent
+  -> navlab-fcu-controller
+  -> /ap/v1/cmd_vel
+```
+
+The task waits for controller, SLAM, map and costmap readiness before sending
+goals. Its timeout is a failure deadline, not a required runtime. A successful
+run finishes after the navigation gate, landing gate and artifact flush pass.
+
+The current accepted live reference is:
+
+```text
+artifacts/sim/navigation/20260614T062658Z/summary.json
+```
+
+That run passed with `TASK_STATUS_OK`, empty blockers, final landing acceptance,
+and valid rosbag profiles.
 
 ## Contracts And Artifacts
 

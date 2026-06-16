@@ -46,14 +46,19 @@ def test_runtime_config_world_markers_follow_navlab_quad_root() -> None:
     assert scan_argv[rear_flag + 1] == "180.0"
     assert config.gazebo_truth_bridge.autostart is True
     assert "dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V" in config.gazebo_truth_bridge.bridge
+    assert config.gazebo_truth_bridge.ros_topic == "/gazebo/tf"
     assert config.gazebo_truth_bridge.command() == [
         "ros2",
         "run",
         "ros_gz_bridge",
         "parameter_bridge",
         config.gazebo_truth_bridge.bridge,
+        "--ros-args",
+        "-r",
+        "/world/navlab_iq_quad_figure8/dynamic_pose/info:=/gazebo/tf",
     ]
     assert config.gazebo_truth_odom.autostart is True
+    assert config.gazebo_truth_odom.input_topic == "/gazebo/tf"
     assert config.gazebo_truth_odom.odom_topic == "/gazebo/truth/odom"
     index_flag = odom_argv.index("--transform-index")
     assert odom_argv[index_flag + 1] == "0"

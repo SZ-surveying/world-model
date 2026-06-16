@@ -16,6 +16,19 @@ Gazebo world
   -> /scan_features, /navlab/mission/status, MAVLink setpoint
 ```
 
+P13 之后，Nav2 导航链路也属于仿真主线：
+
+```text
+Gazebo/SITL + Cartographer
+  -> /map, /slam/odom, /scan, TF
+  -> Nav2 planner/controller/BT
+  -> /cmd_vel_nav
+  -> navigation adapter
+  -> /navlab/fcu/setpoint/intent
+  -> FCU controller
+  -> /ap/v1/cmd_vel
+```
+
 ## 当前服务边界
 
 ```text
@@ -46,6 +59,11 @@ navlab/
 - `/scan_features`: companion 从最终 `/scan` 提取的扇区特征。
 - `/sim/markers`: companion 发布的 UAV、路径和障碍物 marker。
 - `/navlab/mission/status`: mission controller 发布的任务阶段和 setpoint 状态。
+- `/cmd_vel_nav`: Nav2 controller 输出，不能直接接 FCU。
+- `/navlab/fcu/setpoint/intent`: navigation adapter 输出的 bounded intent。
+- `/navlab/navigation/status`: P13 mission status，记录 accepted goals、path length、coverage 和 blockers。
+- `/navlab/navigation/adapter/status`: adapter active/hold/clamp 状态。
+- `/navlab/landing/status`: completion policy 和 landing acceptance 的最终证据。
 
 下游 SLAM、mission 和 rosbag 只应消费最终 `/scan`，不能依赖 X2 协议包或虚拟串口内部细节。
 
@@ -58,10 +76,31 @@ cd orchestration/sim && go run ./cmd/navlab-sim build all
 cd orchestration/sim && go run ./cmd/navlab-sim doctor
 X2_MODE=driver-smoke X2_SMOKE_DURATION_SEC=8 X2_ARTIFACT_DIR=/artifacts/ros/x2_driver_smoke/manual docker compose --file compose/docker-compose.yaml --project-directory . --profile x2_sensor up --abort-on-container-exit --exit-code-from gazebo-sensor gazebo-sensor
 cd orchestration/sim && go run ./cmd/navlab-sim run hover --duration-sec 90
+cd orchestration/sim && NAVLAB_SIM_DISTRO=jazzy NAVLAB_SIM_IMAGE_TAG=jazzy-latest go run ./cmd/navlab-sim run navigation
+cd orchestration/sim && go run ./cmd/navlab-sim foxglove upload 20260614T093531Z --task navigation --dry-run
 ```
+
+`NAVLAB_SIM_DISTRO` and `NAVLAB_SIM_IMAGE_TAG` must describe the same ROS
+distro. For Humble images, use a Humble tag such as `humble-latest`; otherwise
+let the default tag policy resolve the tag from the selected distro.
 
 NavLab acceptance 会启动 Gazebo、SITL、MAVLink router、gazebo sensor、companion、SLAM 和 Foxglove，
 并生成 rosbag/MCAP、`summary.json`、`summary.md` 和 Foxglove 回放说明。
+
+Foxglove 上传入口属于 Go sim CLI。默认上传当前 task raw MCAP；传 `--lite`
+时只上传已经存在的 `rosbag_foxglove/rosbag_foxglove_0.mcap`。上传命令只认
+`artifacts/sim/<task>/<run>` 和当前分层 rosbag 布局，不再兼容旧
+`artifacts/ros/...` 或 `rosbag/rosbag_0.mcap` 布局。
+
+P13 navigation 的当前通过样例为：
+
+```text
+artifacts/sim/navigation/20260614T062658Z/summary.json
+```
+
+它证明 mission goal 已发送，Nav2 bounded goals 被 accepted，`/cmd_vel_nav`
+产生并进入 adapter，FCU controller 发布 `/ap/v1/cmd_vel`，最终 landing 和
+rosbag profiles 均通过。
 
 ## Foxglove 回放
 

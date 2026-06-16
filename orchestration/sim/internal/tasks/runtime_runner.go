@@ -3,7 +3,10 @@ package tasks
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	simruntime "navlab/orchestration-sim/internal/runtime"
@@ -86,10 +89,12 @@ func ExecuteRuntimeSpecs(
 		emitRuntimeEvent(options, event)
 	}
 
+	probeResults := runProbes(backend, bundle.Probes, options)
 	var probeFailures []string
-	for _, spec := range bundle.Probes {
-		emitRuntimeEvent(options, componentEvent("probe.running", "probe", spec.Name, spec.LogPath, "running probe"))
-		probe, err := backend.RunProbe(spec)
+	for _, probeResult := range probeResults {
+		spec := probeResult.Spec
+		probe := probeResult.Result
+		err := probeResult.Err
 		result.ProbeResults = append(result.ProbeResults, probe)
 		event := componentEvent("probe.finished", "probe", spec.Name, probe.LogPath, "probe finished")
 		event.Payload = map[string]any{"return_code": probe.ReturnCode, "required": spec.Required}
@@ -111,6 +116,14 @@ func ExecuteRuntimeSpecs(
 		}
 	}
 	if len(probeFailures) > 0 {
+		if options.WaitForRosbags {
+			if waitErr := waitForRosbags(backend, result.RosbagHandles, options); waitErr != nil {
+				cleanup()
+				emitRuntimeEvent(options, RuntimeEvent{Phase: "run.failed", Level: "error", Message: waitErr.Error()})
+				return result, waitErr
+			}
+		}
+		captureRuntimeHandleLogs(backend, result.ServiceHandles, "probe failure")
 		cleanup()
 		err := fmt.Errorf("required probes failed: %s", strings.Join(probeFailures, "; "))
 		emitRuntimeEvent(options, RuntimeEvent{Phase: "run.blocked", Level: "error", Message: err.Error()})
@@ -118,35 +131,91 @@ func ExecuteRuntimeSpecs(
 	}
 
 	if options.WaitForRosbags {
-		for _, handle := range result.RosbagHandles {
-			emitRuntimeEvent(options, componentEvent("rosbag.waiting", "rosbag", handle.ServiceName, handle.LogPath, "waiting for rosbag"))
-			code, err := backend.Wait(handle)
-			if err != nil {
-				cleanup()
-				emitRuntimeEvent(options, componentEvent("rosbag.failed", "rosbag", handle.ServiceName, handle.LogPath, err.Error()))
-				emitRuntimeEvent(options, RuntimeEvent{Phase: "run.failed", Level: "error", Message: err.Error()})
-				return result, fmt.Errorf("wait rosbag %s: %w", handle.ServiceName, err)
-			}
-			if code != 0 && code != 124 {
-				cleanup()
-				err := fmt.Errorf("wait rosbag %s: return code %d", handle.ServiceName, code)
-				emitRuntimeEvent(options, componentEvent("rosbag.failed", "rosbag", handle.ServiceName, handle.LogPath, err.Error()))
-				emitRuntimeEvent(options, RuntimeEvent{Phase: "run.failed", Level: "error", Message: err.Error()})
-				return result, err
-			}
-			event := componentEvent("rosbag.finished", "rosbag", handle.ServiceName, handle.LogPath, "rosbag finished")
-			event.Payload = map[string]any{"return_code": code}
-			emitRuntimeEvent(options, event)
+		if err := waitForRosbags(backend, result.RosbagHandles, options); err != nil {
+			cleanup()
+			emitRuntimeEvent(options, RuntimeEvent{Phase: "run.failed", Level: "error", Message: err.Error()})
+			return result, err
 		}
 	}
 	cleanup()
 	if len(result.StopErrors) > 0 {
-		err := fmt.Errorf("runtime cleanup failed: %s", strings.Join(result.StopErrors, "; "))
-		emitRuntimeEvent(options, RuntimeEvent{Phase: "run.failed", Level: "error", Message: err.Error()})
-		return result, err
+		message := fmt.Sprintf("runtime cleanup completed with warnings: %s", strings.Join(result.StopErrors, "; "))
+		emitRuntimeEvent(options, RuntimeEvent{Phase: "run.cleanup_warning", Level: "warn", Message: message})
+		emitRuntimeEvent(options, RuntimeEvent{Phase: "run.completed", Level: "info", Message: "runtime execution completed"})
+		return result, nil
 	}
 	emitRuntimeEvent(options, RuntimeEvent{Phase: "run.completed", Level: "info", Message: "runtime execution completed"})
 	return result, nil
+}
+
+type probeRunResult struct {
+	Spec   simruntime.ProbeSpec
+	Result simruntime.ProbeResult
+	Err    error
+}
+
+func runProbes(backend simruntime.Backend, probes []simruntime.ProbeSpec, options RuntimeExecutionOptions) []probeRunResult {
+	results := make([]probeRunResult, len(probes))
+	var wg sync.WaitGroup
+	for index, spec := range probes {
+		emitRuntimeEvent(options, componentEvent("probe.running", "probe", spec.Name, spec.LogPath, "running probe"))
+		wg.Add(1)
+		go func(index int, spec simruntime.ProbeSpec) {
+			defer wg.Done()
+			probe, err := backend.RunProbe(spec)
+			results[index] = probeRunResult{Spec: spec, Result: probe, Err: err}
+		}(index, spec)
+	}
+	wg.Wait()
+	return results
+}
+
+func waitForRosbags(backend simruntime.Backend, handles []simruntime.RuntimeHandle, options RuntimeExecutionOptions) error {
+	for _, handle := range handles {
+		emitRuntimeEvent(options, componentEvent("rosbag.waiting", "rosbag", handle.ServiceName, handle.LogPath, "waiting for rosbag"))
+		code, err := backend.Wait(handle)
+		if err != nil {
+			captureRuntimeLogs(backend, handle, "wait error")
+			emitRuntimeEvent(options, componentEvent("rosbag.failed", "rosbag", handle.ServiceName, handle.LogPath, err.Error()))
+			return fmt.Errorf("wait rosbag %s: %w", handle.ServiceName, err)
+		}
+		if code != 0 && code != 124 {
+			err := fmt.Errorf("wait rosbag %s: return code %d", handle.ServiceName, code)
+			captureRuntimeLogs(backend, handle, "wait return code "+fmt.Sprint(code))
+			emitRuntimeEvent(options, componentEvent("rosbag.failed", "rosbag", handle.ServiceName, handle.LogPath, err.Error()))
+			return err
+		}
+		event := componentEvent("rosbag.finished", "rosbag", handle.ServiceName, handle.LogPath, "rosbag finished")
+		event.Payload = map[string]any{"return_code": code}
+		emitRuntimeEvent(options, event)
+	}
+	return nil
+}
+
+func captureRuntimeLogs(backend simruntime.Backend, handle simruntime.RuntimeHandle, reason string) {
+	if strings.TrimSpace(handle.LogPath) == "" {
+		return
+	}
+	logs, err := backend.Logs(handle, 400)
+	if err != nil {
+		logs = "failed to collect docker logs: " + err.Error()
+	}
+	text := "\n--- container logs after " + reason + " ---\n" + logs
+	if err := os.MkdirAll(filepath.Dir(handle.LogPath), 0o755); err != nil {
+		return
+	}
+	file, err := os.OpenFile(handle.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer func() { _ = file.Close() }()
+	_, _ = file.WriteString(text)
+}
+
+func captureRuntimeHandleLogs(backend simruntime.Backend, handles []simruntime.RuntimeHandle, reason string) {
+	for _, handle := range handles {
+		captureRuntimeLogs(backend, handle, reason)
+	}
 }
 
 func stopRuntimeHandles(backend simruntime.Backend, handles []simruntime.RuntimeHandle, component string, result *RuntimeExecutionResult, options RuntimeExecutionOptions) {

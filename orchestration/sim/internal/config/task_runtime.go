@@ -16,6 +16,9 @@ type TaskRuntimeConfig struct {
 	SlamHover               SlamHoverConfig               `json:"slam_hover"`
 	MotionGate              MotionGateConfig              `json:"motion_gate"`
 	ExplorationGate         ExplorationGateConfig         `json:"exploration_gate"`
+	Nav2                    Nav2Config                    `json:"nav2"`
+	NavigationAdapter       NavigationAdapterConfig       `json:"navigation_adapter"`
+	NavigationMission       NavigationMissionConfig       `json:"navigation_mission"`
 	ScanIntegrityGate       ScanIntegrityGateConfig       `json:"scan_integrity_gate"`
 	ScanStabilization       ScanStabilizationConfig       `json:"scan_stabilization"`
 	ScanStabilizationGate   ScanStabilizationGateConfig   `json:"scan_stabilization_gate"`
@@ -41,6 +44,9 @@ func BuildTaskRuntimeConfig(project ProjectConfig, task TaskConfig) (TaskRuntime
 		SlamHover:               project.SlamHover,
 		MotionGate:              project.MotionGate,
 		ExplorationGate:         project.ExplorationGate,
+		Nav2:                    project.Nav2,
+		NavigationAdapter:       project.NavigationAdapter,
+		NavigationMission:       project.NavigationMission,
 		ScanIntegrityGate:       project.ScanIntegrityGate,
 		ScanStabilization:       project.ScanStabilization,
 		ScanStabilizationGate:   project.ScanStabilizationGate,
@@ -71,6 +77,15 @@ func BuildTaskRuntimeConfig(project ProjectConfig, task TaskConfig) (TaskRuntime
 		return runtimeConfig, err
 	}
 	if err := applySection(task.Sections, "exploration_gate", &runtimeConfig.ExplorationGate); err != nil {
+		return runtimeConfig, err
+	}
+	if err := applySection(task.Sections, "nav2", &runtimeConfig.Nav2); err != nil {
+		return runtimeConfig, err
+	}
+	if err := applySection(task.Sections, "navigation_adapter", &runtimeConfig.NavigationAdapter); err != nil {
+		return runtimeConfig, err
+	}
+	if err := applySection(task.Sections, "navigation_mission", &runtimeConfig.NavigationMission); err != nil {
 		return runtimeConfig, err
 	}
 	if err := applySection(task.Sections, "scan_integrity_gate", &runtimeConfig.ScanIntegrityGate); err != nil {

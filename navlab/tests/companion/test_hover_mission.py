@@ -9,6 +9,7 @@ from navlab.sim.companion.nodes.hover_mission import (
     HoverRequirements,
     command_ack_success,
     decide_hover,
+    hold_axis_or_current,
     summarize_hover_drift,
 )
 
@@ -28,6 +29,8 @@ def _inputs(**overrides) -> HoverInputs:
         "current_x": 0.0,
         "current_y": 0.0,
         "current_z_ned": -0.45,
+        "current_height_m": 0.45,
+        "target_z_ned": -0.45,
     }
     values.update(overrides)
     return HoverInputs(**values)
@@ -89,8 +92,8 @@ def test_hover_decision_waits_then_guided_arm_takeoff_hold_complete() -> None:
         takeoff_alt_m=0.45,
         hover_altitude_tolerance_m=0.18,
     )
-    takeoff_before_ack = decide_hover(
-        _inputs(takeoff_ack_ok=False),
+    airborne_without_takeoff_ack = decide_hover(
+        _inputs(takeoff_ack_ok=False, hover_elapsed_sec=19.9),
         preflight_ready_sec=5.0,
         hover_settle_sec=2.0,
         hover_hold_sec=20.0,
@@ -106,7 +109,7 @@ def test_hover_decision_waits_then_guided_arm_takeoff_hold_complete() -> None:
         hover_altitude_tolerance_m=0.18,
     )
     altitude_settle = decide_hover(
-        _inputs(current_z_ned=-0.2),
+        _inputs(current_z_ned=-0.2, current_height_m=0.2),
         preflight_ready_sec=5.0,
         hover_settle_sec=2.0,
         hover_hold_sec=20.0,
@@ -133,11 +136,38 @@ def test_hover_decision_waits_then_guided_arm_takeoff_hold_complete() -> None:
     assert guided.should_set_guided is True
     assert arm.should_arm is True
     assert takeoff.should_takeoff is True
-    assert takeoff_before_ack.should_takeoff is True
+    assert airborne_without_takeoff_ack.phase == "hover_hold"
+    assert airborne_without_takeoff_ack.should_takeoff is False
     assert settle.phase == "hover_settle"
     assert altitude_settle.reason == "settling_until_target_altitude"
     assert hold.phase == "hover_hold"
     assert complete.terminal is True
+
+
+def test_hover_decision_prefers_fcu_local_position_for_altitude_gate() -> None:
+    decision = decide_hover(
+        _inputs(current_height_m=0.46, current_z_ned=-0.8),
+        preflight_ready_sec=5.0,
+        hover_settle_sec=2.0,
+        hover_hold_sec=20.0,
+        takeoff_alt_m=0.45,
+        hover_altitude_tolerance_m=0.18,
+    )
+
+    assert decision.reason == "settling_until_target_altitude"
+
+
+def test_hover_decision_falls_back_to_rangefinder_without_local_position() -> None:
+    decision = decide_hover(
+        _inputs(current_height_m=0.46, current_z_ned=None),
+        preflight_ready_sec=5.0,
+        hover_settle_sec=2.0,
+        hover_hold_sec=20.0,
+        takeoff_alt_m=0.45,
+        hover_altitude_tolerance_m=0.18,
+    )
+
+    assert decision.terminal is True
 
 
 def test_hover_decision_can_skip_external_nav_for_rangefinder_diagnostic() -> None:
@@ -153,6 +183,12 @@ def test_hover_decision_can_skip_external_nav_for_rangefinder_diagnostic() -> No
 
     assert decision.phase == "guided"
     assert decision.should_set_guided is True
+
+
+def test_hold_axis_uses_current_position_until_hover_anchor_exists() -> None:
+    assert hold_axis_or_current(None, 12.5) == 12.5
+    assert hold_axis_or_current(-0.25, 12.5) == -0.25
+    assert hold_axis_or_current(None, None) == 0.0
 
 
 def test_hover_drift_summary_uses_span_and_endpoint_drift() -> None:

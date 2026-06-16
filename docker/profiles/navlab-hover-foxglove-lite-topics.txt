@@ -14,11 +14,11 @@ required /scan interval=0.10
 required /slam/odom interval=0.05
 required /navlab/hover/status interval=0.25
 required /navlab/landing/status interval=0.10
-required /navlab/fcu/controller/status interval=0.25
-required /navlab/fcu/setpoint/intent interval=all
-required /navlab/fcu/setpoint/output interval=0.10
 required /rangefinder/down/range interval=0.20
 
+optional /navlab/fcu/setpoint/intent interval=all
+optional /navlab/fcu/setpoint/output interval=0.10
+optional /navlab/fcu/controller/status interval=0.25
 optional /navlab/landing/intent interval=all
 optional /external_nav/status interval=0.50
 optional /external_nav/odom interval=0.05

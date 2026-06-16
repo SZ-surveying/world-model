@@ -52,4 +52,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ardupilot-gazebo-build /opt/ardupilot_gazebo /opt/ardupilot_gazebo
 
-RUN /bin/bash -lc 'source /opt/ros/jazzy/setup.bash && gz sim --help >/dev/null'
+RUN /bin/bash -lc 'source /opt/ros/${ROS_DISTRO}/setup.bash && gz sim --help >/dev/null'

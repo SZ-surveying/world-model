@@ -273,6 +273,9 @@ func ResolveImageTag(project config.ProjectConfig, image config.Image, tagOverri
 	if err := ValidateDistro(distro); err != nil {
 		return "", err
 	}
+	if err := validateTagDistroCompatibility(tagOverride, distro); err != nil {
+		return "", err
+	}
 	return resolveTag(project, image, tagOverride, distro)
 }
 
@@ -304,6 +307,19 @@ func resolveTag(project config.ProjectConfig, image config.Image, tagOverride st
 	default:
 		return "", fmt.Errorf("invalid navlab image tag_policy %q: expected distro-git-commit, distro-datetime, or distro-latest", policy)
 	}
+}
+
+func validateTagDistroCompatibility(tagOverride string, distro string) error {
+	tag := strings.TrimSpace(tagOverride)
+	if tag == "" {
+		return nil
+	}
+	for _, knownDistro := range []string{"humble", "jazzy"} {
+		if strings.HasPrefix(tag, knownDistro+"-") && knownDistro != distro {
+			return fmt.Errorf("image tag %q targets ROS distro %q but selected distro is %q", tag, knownDistro, distro)
+		}
+	}
+	return nil
 }
 
 func gitCommitTag(workspaceRoot string) (string, error) {

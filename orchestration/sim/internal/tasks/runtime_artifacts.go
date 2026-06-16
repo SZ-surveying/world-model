@@ -1,13 +1,21 @@
 package tasks
 
 import (
+	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	"navlab/orchestration-sim/internal/config"
 	"navlab/orchestration-sim/internal/tasks/helpers"
 )
+
+const officialMazeSDFRelativePath = "../ardupilot_gz/ardupilot_gz_gazebo/worlds/maze.sdf"
+const officialExternalNavParamRelativePath = "docker/profiles/navlab-sitl-external-nav.parm"
 
 type GeneratedRuntimeArtifact struct {
 	Type string `json:"type"`
@@ -24,6 +32,17 @@ func GenerateRuntimeArtifacts(
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
 		return nil, err
 	}
+	if usesOfficialBaselineTask(plan.TaskID) {
+		mazeSource, err := officialMazeSource(project)
+		if err != nil {
+			return nil, err
+		}
+		path := filepath.Join(artifactDir, "official_maze_overlay_runtime.py")
+		if err := helpers.WriteOfficialMazeOverlayRuntimeScript(path, mazeSource, helpers.DefaultOfficialMazeOverlaySpec()); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "official_maze_overlay_script", Path: path})
+	}
 	if hasHelper(plan, "navlab-models") {
 		bridge := filepath.Join(artifactDir, "bridge_override.yaml")
 		if err := helpers.WriteBridgeOverride(bridge); err != nil {
@@ -37,12 +56,36 @@ func GenerateRuntimeArtifacts(
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "vendor_profile", Path: vendor})
 	}
 	if hasHelper(plan, "sensors") {
+		spec := sensorSpec(runtimeConfig)
+		modelSource, err := officialOverlaySource(project, helpers.OfficialIrisWithLidarModel)
+		if err != nil {
+			return nil, err
+		}
+		modelOverlay := filepath.Join(artifactDir, "model_overlay.sdf")
+		if err := helpers.WriteModelOverlayFromSource(modelOverlay, modelSource, spec); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "model_overlay", Path: modelOverlay})
+		paramSource, err := officialOverlaySource(project, helpers.OfficialGazeboIrisParams)
+		if err != nil {
+			return nil, err
+		}
+		externalNavParamSource, err := officialExternalNavParamSource(project)
+		if err != nil {
+			return nil, err
+		}
+		paramSource = mergeExternalNavParamProfile(paramSource, externalNavParamSource)
+		paramOverlay := filepath.Join(artifactDir, "gazebo-iris-rangefinder.parm")
+		if err := helpers.WriteParamOverlayFromSource(paramOverlay, paramSource, spec); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "param_overlay", Path: paramOverlay})
 		sensorConfig := filepath.Join(artifactDir, "gazebo_sensor_runtime.toml")
 		vendorProfile, err := runtimeContainerPath(project, filepath.Join(artifactDir, "vendor_profile.yaml"))
 		if err != nil {
 			return nil, err
 		}
-		if err := helpers.WriteSensorRuntimeConfig(sensorConfig, vendorProfile, sensorSpec(runtimeConfig)); err != nil {
+		if err := helpers.WriteSensorRuntimeConfig(sensorConfig, vendorProfile, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "sensor_runtime_config", Path: sensorConfig})
@@ -60,22 +103,36 @@ func GenerateRuntimeArtifacts(
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "imu_probe_script", Path: filepath.Join(artifactDir, "imu_probe.py")})
 	}
 	if hasHelper(plan, "slam") {
+		spec := slamSpec(runtimeConfig)
 		path := filepath.Join(artifactDir, "slam_runtime.toml")
-		if err := helpers.WriteSlamRuntimeConfig(path, slamSpec(runtimeConfig)); err != nil {
+		if err := helpers.WriteSlamRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_runtime_config", Path: path})
+		externalNavBridgeParamsPath := filepath.Join(artifactDir, "external_nav_bridge_params.yaml")
+		if err := os.WriteFile(externalNavBridgeParamsPath, []byte(helpers.ExternalNavBridgeParamsOverride(spec)), 0o644); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "external_nav_bridge_params_override", Path: externalNavBridgeParamsPath})
 	}
 	if hasHelper(plan, "fcu-controller") {
 		path := filepath.Join(artifactDir, "fcu_controller_runtime.toml")
 		spec := fcuSpec(runtimeConfig)
 		spec.LandingPolicy = landingPolicyForTask(runtimeConfig, plan.TaskID)
+		spec.CompletionGraceSec = runtimeConfig.Landing.CompletionGraceSec
 		if hasHelper(plan, "exploration-workflow") {
 			exploration := explorationSpec(runtimeConfig)
-			spec.ExplorationStatusTopic = exploration.ExplorationStatusTopic
 			spec.MotionSpeedMPS = exploration.MotionSpeedMPS
 			spec.MinAcceptedGoals = exploration.MinAcceptedGoals
 			spec.MinPathLengthM = exploration.MinPathLengthM
+			spec.TaskCompletionStatusTopic = exploration.ExplorationStatusTopic
+		}
+		if hasHelper(plan, "nav2-navigation-workflow") {
+			navigation := nav2NavigationSpec(runtimeConfig)
+			spec.MotionSpeedMPS = navigation.MaxXYSpeedMPS
+			spec.MinAcceptedGoals = navigation.MinAcceptedGoals
+			spec.MinPathLengthM = navigation.MinPathLengthM
+			spec.TaskCompletionStatusTopic = navigation.NavigationStatusTopic
 		}
 		if hasHelper(plan, "scan-stabilization") || hasHelper(plan, "scan-robustness-workflow") {
 			spec.IMUInputTopic = runtimeConfig.AirframeDisturbance.IMUInputTopic
@@ -130,6 +187,12 @@ func GenerateRuntimeArtifacts(
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_hover_probe_script", Path: filepath.Join(artifactDir, "slam_hover_probe.py")})
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "hover_mission_runtime.py"), func() (string, error) {
+			return helpers.HoverMissionRuntimeScript(hoverMissionSpec(runtimeConfig), plan.DurationSec)
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "hover_mission_runtime_script", Path: filepath.Join(artifactDir, "hover_mission_runtime.py")})
 		notesPath := filepath.Join(artifactDir, "motion_foxglove_notes.md")
 		if err := os.WriteFile(notesPath, []byte(helpers.MotionFoxgloveNotes(helpers.DefaultMotionGateSpec())), 0o644); err != nil {
 			return nil, err
@@ -143,12 +206,66 @@ func GenerateRuntimeArtifacts(
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "exploration_runtime_config", Path: path})
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "exploration_workflow_runtime.py"), func() (string, error) {
+			return helpers.ExplorationWorkflowRuntimeScript(spec, plan.DurationSec)
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "exploration_runtime_script", Path: filepath.Join(artifactDir, "exploration_workflow_runtime.py")})
 		if err := writeGeneratedScript(filepath.Join(artifactDir, "exploration_probe.py"), func() (string, error) {
 			return helpers.ExplorationProbeScript(spec)
 		}); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "exploration_probe_script", Path: filepath.Join(artifactDir, "exploration_probe.py")})
+	}
+	if hasHelper(plan, "nav2-navigation-workflow") {
+		spec := nav2NavigationSpec(runtimeConfig)
+		paramsPath := filepath.Join(artifactDir, "nav2_params.yaml")
+		if err := helpers.WriteNav2ParamsYAML(paramsPath, spec); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "nav2_params", Path: paramsPath})
+		adapterPath := filepath.Join(artifactDir, "navigation_adapter_runtime.toml")
+		if err := helpers.WriteNavigationAdapterRuntimeConfig(adapterPath, spec); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_adapter_runtime_config", Path: adapterPath})
+		foxglovePath := filepath.Join(artifactDir, "navigation_foxglove_lite_profile.json")
+		if err := helpers.WriteNavigationFoxgloveLiteProfile(foxglovePath, spec); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_foxglove_lite_profile", Path: foxglovePath})
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "navigation_adapter_runtime.py"), func() (string, error) {
+			return helpers.NavigationAdapterRuntimeScript(spec, plan.DurationSec)
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_adapter_runtime_script", Path: filepath.Join(artifactDir, "navigation_adapter_runtime.py")})
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "navigation_mission_runtime.py"), func() (string, error) {
+			return helpers.NavigationMissionRuntimeScript(spec, plan.DurationSec)
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_mission_runtime_script", Path: filepath.Join(artifactDir, "navigation_mission_runtime.py")})
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "nav2_lifecycle_probe.py"), func() (string, error) {
+			return helpers.Nav2LifecycleProbeScript(spec)
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "nav2_lifecycle_probe_script", Path: filepath.Join(artifactDir, "nav2_lifecycle_probe.py")})
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "costmap_health_probe.py"), func() (string, error) {
+			return helpers.CostmapHealthProbeScript(spec)
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "costmap_health_probe_script", Path: filepath.Join(artifactDir, "costmap_health_probe.py")})
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "navigation_status_probe.py"), func() (string, error) {
+			return helpers.NavigationStatusProbeScript(spec)
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_status_probe_script", Path: filepath.Join(artifactDir, "navigation_status_probe.py")})
 	}
 	if hasHelper(plan, "scan-stabilization") {
 		path := filepath.Join(artifactDir, "scan_stabilization_runtime.toml")
@@ -186,6 +303,153 @@ func GenerateRuntimeArtifacts(
 	return generated, nil
 }
 
+func usesOfficialBaselineTask(taskID string) bool {
+	switch taskID {
+	case "hover", "exploration", "navigation", "scan-robustness":
+		return true
+	default:
+		return false
+	}
+}
+
+func officialMazeSource(project config.ProjectConfig) (string, error) {
+	if strings.EqualFold(os.Getenv("NAVLAB_SIM_OVERLAY_SOURCE_MODE"), "fixture") || runningGoTest() {
+		return officialMazeFixture(), nil
+	}
+	workspaceRoot := project.Paths.WorkspaceRoot
+	if workspaceRoot == "" {
+		workspaceRoot = "."
+	}
+	path := filepath.Join(workspaceRoot, officialMazeSDFRelativePath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read official maze SDF %s: %w", path, err)
+	}
+	return string(data), nil
+}
+
+func officialExternalNavParamSource(project config.ProjectConfig) (string, error) {
+	if strings.EqualFold(os.Getenv("NAVLAB_SIM_OVERLAY_SOURCE_MODE"), "fixture") || runningGoTest() {
+		return officialExternalNavParamFixture(), nil
+	}
+	workspaceRoot := project.Paths.WorkspaceRoot
+	if workspaceRoot == "" {
+		workspaceRoot = "."
+	}
+	path := filepath.Join(workspaceRoot, officialExternalNavParamRelativePath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read official ExternalNav SITL param profile %s: %w", path, err)
+	}
+	return string(data), nil
+}
+
+func mergeExternalNavParamProfile(base string, externalNav string) string {
+	owned := paramKeys(externalNav)
+	// The official Gazebo iris defaults configure a generic SITL sonar. NavLab's
+	// ExternalNav profile owns the FCU-facing rangefinder backend instead.
+	owned["SIM_SONAR_SCALE"] = true
+
+	lines := make([]string, 0, len(strings.Split(base, "\n")))
+	for _, line := range strings.Split(strings.TrimRight(base, "\n"), "\n") {
+		key, ok := paramLineKey(line)
+		if ok && (owned[key] || strings.HasPrefix(key, "RNGFND1_")) {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n\n# NavLab SITL ExternalNav profile.\n" + strings.TrimSpace(externalNav) + "\n"
+}
+
+func paramKeys(source string) map[string]bool {
+	keys := map[string]bool{}
+	for _, line := range strings.Split(source, "\n") {
+		key, ok := paramLineKey(line)
+		if ok {
+			keys[key] = true
+		}
+	}
+	return keys
+}
+
+func paramLineKey(line string) (string, bool) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
+		return "", false
+	}
+	return fields[0], true
+}
+
+func officialMazeFixture() string {
+	return `<sdf version="1.9">
+  <world name="fixture">
+    <model name="maze">
+      <link name="north_wall">
+        <pose>0 5 0 0 0 0</pose>
+        <collision name="collision">
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><box><size>10 0.2 2</size></box></geometry>
+        </collision>
+      </link>
+      <link name="west_wall">
+        <pose>-5 0 0 0 0 1.57079632679</pose>
+        <collision name="collision">
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><box><size>10 0.2 2</size></box></geometry>
+        </collision>
+      </link>
+      <link name="inner_wall">
+        <pose>0 0 0 0 0 1.57079632679</pose>
+        <collision name="collision">
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><box><size>5 0.2 2</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+  </world>
+</sdf>
+`
+}
+
+func officialExternalNavParamFixture() string {
+	return `AHRS_EKF_TYPE 3
+ARMING_CHECK 1043902
+EK3_GPS_CHECK 0
+EK3_SRC_OPTIONS 0
+GPS1_TYPE 0
+VISO_TYPE 1
+EK3_SRC1_POSXY 6
+EK3_SRC1_POSZ 2
+EK3_SRC1_VELXY 6
+EK3_SRC1_VELZ 6
+EK3_SRC1_YAW 6
+SCR_ENABLE 1
+AHRS_ORIG_ALT 584
+AHRS_ORIG_LAT -35.363262
+AHRS_ORIG_LON 149.165237
+SERIAL7_BAUD 115
+SERIAL7_OPTIONS 0
+SERIAL7_PROTOCOL 9
+EK3_RNG_USE_HGT -1
+RNGFND1_ADDR 0
+RNGFND1_FUNCTION 0
+RNGFND1_OFFSET 0
+RNGFND1_PIN -1
+RNGFND1_PWRRNG 0
+RNGFND1_RMETRIC 1
+RNGFND1_SCALING 3
+RNGFND1_STOP_PIN -1
+RNGFND1_TYPE 20
+RNGFND1_MIN_CM 10
+RNGFND1_MAX_CM 1200
+RNGFND1_GNDCLEAR 15
+RNGFND1_ORIENT 25
+RNGFND1_POS_X 0
+RNGFND1_POS_Y 0
+RNGFND1_POS_Z 0
+`
+}
+
 func runtimeContainerPath(project config.ProjectConfig, hostPath string) (string, error) {
 	workspaceRoot := project.Paths.WorkspaceRoot
 	if workspaceRoot == "" {
@@ -200,6 +464,45 @@ func runtimeContainerPath(project config.ProjectConfig, hostPath string) (string
 		containerWorkspace = "/workspace"
 	}
 	return containerPath(absoluteWorkspaceRoot, containerWorkspace, hostPath)
+}
+
+func officialOverlaySource(project config.ProjectConfig, sourcePath string) (string, error) {
+	if strings.EqualFold(os.Getenv("NAVLAB_SIM_OVERLAY_SOURCE_MODE"), "fixture") || runningGoTest() {
+		return officialOverlayFixture(sourcePath), nil
+	}
+	image, err := resolveImageRef(project, "images.official_baseline")
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "cat", image, sourcePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("read official overlay source %s from %s: %w: %s", sourcePath, image, err, strings.TrimSpace(string(output)))
+	}
+	return string(output), nil
+}
+
+func runningGoTest() bool {
+	return strings.HasSuffix(os.Args[0], ".test")
+}
+
+func officialOverlayFixture(sourcePath string) string {
+	switch sourcePath {
+	case helpers.OfficialGazeboIrisParams:
+		return "SYSID_THISMAV 1\n"
+	default:
+		return `<sdf version="1.9">
+  <model name="iris_with_lidar">
+    <link name="base_link"/>
+    <include>
+      <uri>model://lidar_3d</uri>
+    </include>
+  </model>
+</sdf>
+`
+	}
 }
 
 func writeGeneratedScript(path string, generate func() (string, error)) error {
@@ -230,8 +533,8 @@ func sensorSpec(runtimeConfig config.TaskRuntimeConfig) helpers.SensorRuntimeSpe
 	spec.RangefinderScanIdealTopic = sensor.RangefinderScanIdealTopic
 	spec.RangefinderRangeTopic = sensor.RangefinderRangeTopic
 	spec.RangefinderStatusTopic = sensor.RangefinderStatusTopic
-	spec.RangefinderEndpoint = sensor.RangefinderEndpoint
-	spec.RangefinderMAVOrientation = sensor.RangefinderMAVLinkOrientation
+	spec.RangefinderVirtualSerial = sensor.RangefinderVirtualSerialLink
+	spec.RangefinderSerialBaud = sensor.RangefinderSerialBaud
 	spec.RangefinderRateHz = sensor.RangefinderRateHz
 	spec.RangefinderMinDistanceM = sensor.RangefinderMinDistanceM
 	spec.RangefinderMaxDistanceM = sensor.RangefinderMaxDistanceM
@@ -257,9 +560,12 @@ func slamSpec(runtimeConfig config.TaskRuntimeConfig) helpers.SlamRuntimeSpec {
 	spec.ScanTopic = slam.ScanTopic
 	spec.IMUTopic = slam.IMUTopic
 	spec.OdometryTopic = slam.OdometryTopic
+	spec.CartographerTFTopic = slam.CartographerTFTopic
+	spec.OdomSourceMode = slam.OdomSourceMode
 	spec.SlamOdomTopic = slam.SlamOdomTopic
 	spec.SlamStatusTopic = slam.SlamStatusTopic
 	spec.ExternalNavStatusTopic = slam.ExternalNavStatusTopic
+	spec.MapFrameID = slam.MapFrameID
 	spec.OdomFrameID = slam.OdomFrameID
 	spec.BaseFrameID = slam.BaseFrameID
 	spec.IMUFrameID = slam.IMUFrameID
@@ -272,6 +578,8 @@ func fcuSpec(runtimeConfig config.TaskRuntimeConfig) helpers.FCUControllerSpec {
 	fcu := runtimeConfig.FCUController
 	spec.ControlRoute = fcu.ControlRoute
 	spec.MAVLinkBootstrap = fcu.MAVLinkBootstrapEndpoint
+	spec.MAVLinkBootstrapSourceSystem = fcu.MAVLinkBootstrapSourceSystem
+	spec.MAVLinkBootstrapSourceComponent = fcu.MAVLinkBootstrapSourceComponent
 	spec.OwnerName = fcu.OwnerName
 	spec.OwnerID = fcu.OwnerID
 	spec.FCUStateTopic = fcu.FCUStateTopic
@@ -293,7 +601,21 @@ func fcuSpec(runtimeConfig config.TaskRuntimeConfig) helpers.FCUControllerSpec {
 	spec.IMUTopic = fcu.IMUTopic
 	spec.SlamOdomTopic = fcu.SlamOdomTopic
 	spec.SlamStatusTopic = fcu.SlamStatusTopic
+	if runtimeConfig.FrameContract.MapFrameID != "" {
+		spec.MapFrameID = runtimeConfig.FrameContract.MapFrameID
+	}
+	if runtimeConfig.FrameContract.OdomFrameID != "" {
+		spec.OdomFrameID = runtimeConfig.FrameContract.OdomFrameID
+	}
+	if runtimeConfig.FrameContract.BaseFrameID != "" {
+		spec.BaseFrameID = runtimeConfig.FrameContract.BaseFrameID
+	}
+	if runtimeConfig.FrameContract.LaserFrameID != "" {
+		spec.LaserFrameID = runtimeConfig.FrameContract.LaserFrameID
+	}
 	spec.TakeoffAltM = fcu.TakeoffAltM
+	spec.TakeoffMinHeightM = fcu.TakeoffMinHeightM
+	spec.TakeoffMinHeightRatio = fcu.TakeoffMinHeightRatio
 	spec.ReadinessTimeoutSec = fcu.ReadinessTimeoutSec
 	spec.HoldAfterReadySec = fcu.HoldAfterReadySec
 	spec.RequireSlamBackend = fcu.RequireSlamBackend
@@ -307,6 +629,8 @@ func landingPolicyForTask(runtimeConfig config.TaskRuntimeConfig, taskID string)
 		policy = runtimeConfig.Landing.HoverPolicy
 	case "exploration":
 		policy = runtimeConfig.Landing.ExplorationPolicy
+	case "navigation":
+		policy = runtimeConfig.Landing.NavigationPolicy
 	case "scan-robustness":
 		policy = runtimeConfig.Landing.ScanRobustnessPolicy
 	}
@@ -385,6 +709,35 @@ func hoverSpec(runtimeConfig config.TaskRuntimeConfig) helpers.SlamHoverSpec {
 	return spec
 }
 
+func hoverMissionSpec(runtimeConfig config.TaskRuntimeConfig) helpers.HoverMissionRuntimeSpec {
+	spec := helpers.DefaultHoverMissionRuntimeSpec()
+	fcu := runtimeConfig.FCUController
+	hover := runtimeConfig.SlamHover
+	landing := runtimeConfig.Landing
+	spec.Endpoint = fcu.MAVLinkBootstrapEndpoint
+	spec.SourceSystem = fcu.MAVLinkBootstrapSourceSystem
+	spec.SourceComponent = fcu.MAVLinkBootstrapSourceComponent
+	spec.Mode = "GUIDED"
+	if fcu.GuidedMode != 0 {
+		spec.Mode = "GUIDED"
+	}
+	spec.TakeoffAltM = fcu.TakeoffAltM
+	spec.HoverHoldSec = hover.HoverWindowSec
+	spec.MaxHorizontalDriftM = hover.MaxHoverHorizontalDriftM
+	spec.MaxAltitudeDriftM = hover.MaxHoverAltitudeErrorM
+	spec.StatusTopic = hover.HoverStatusTopic
+	spec.LandingStatusTopic = landing.LandingStatusTopic
+	spec.LandingIntentTopic = landing.LandingIntentTopic
+	spec.ExternalNavStatusTopic = hover.ExternalNavStatusTopic
+	spec.PreLandHoldSec = landing.PreLandHoldSec
+	spec.MaxLandingDurationSec = landing.MaxLandingDurationSec
+	spec.TouchdownAltitudeM = landing.TouchdownAltitudeM
+	spec.TouchdownVerticalSpeedMPS = landing.TouchdownVerticalSpeedMPS
+	spec.RequireDisarm = landing.RequireDisarm
+	spec.RequireMotorsSafe = landing.RequireMotorsSafe
+	return spec
+}
+
 func explorationSpec(runtimeConfig config.TaskRuntimeConfig) helpers.ExplorationWorkflowSpec {
 	spec := helpers.DefaultExplorationWorkflowSpec()
 	exploration := runtimeConfig.ExplorationGate
@@ -399,6 +752,96 @@ func explorationSpec(runtimeConfig config.TaskRuntimeConfig) helpers.Exploration
 	spec.SlamOdomTopic = exploration.SlamOdomTopic
 	spec.ExplorationStatusTopic = exploration.ExplorationStatusTopic
 	return spec
+}
+
+func nav2NavigationSpec(runtimeConfig config.TaskRuntimeConfig) helpers.Nav2NavigationSpec {
+	spec := helpers.DefaultNav2NavigationSpec()
+	nav2 := runtimeConfig.Nav2
+	costmap := runtimeConfig.Nav2.Costmap
+	adapter := runtimeConfig.NavigationAdapter
+	mission := runtimeConfig.NavigationMission
+	spec.Profile = nav2.Profile
+	spec.GlobalFrame = nav2.GlobalFrame
+	spec.OdomFrame = nav2.OdomFrame
+	spec.BaseFrame = nav2.BaseFrame
+	spec.ScanTopic = nav2.ScanTopic
+	spec.MapTopic = nav2.MapTopic
+	spec.CmdVelTopic = nav2.CmdVelTopic
+	spec.BTXML = nav2.BTXML
+	spec.PlannerPlugin = nav2.PlannerPlugin
+	spec.ControllerPlugin = nav2.ControllerPlugin
+	spec.UseSimTime = nav2.UseSimTime
+	spec.GlobalCostmapTopic = costmap.GlobalCostmapTopic
+	spec.LocalCostmapTopic = costmap.LocalCostmapTopic
+	spec.RequiredCostmapLayers = append([]string(nil), costmap.RequiredLayers...)
+	spec.MaxCostmapAgeSec = costmap.MaxCostmapAgeSec
+	spec.MinObstacleCells = costmap.MinObstacleCells
+	spec.MaxUnknownRatio = costmap.MaxUnknownRatio
+	spec.InflationRadiusM = costmap.InflationRadiusM
+	spec.FootprintRadiusM = costmap.FootprintRadiusM
+	spec.CostmapHealthTopic = costmap.HealthTopic
+	spec.SetpointIntentTopic = adapter.SetpointIntentTopic
+	spec.AdapterStatusTopic = adapter.StatusTopic
+	spec.MaxXYSpeedMPS = adapter.MaxXYSpeedMPS
+	spec.MaxYawRateDPS = adapter.MaxYawRateDPS
+	spec.MaxAccelMPS2 = adapter.MaxAccelMPS2
+	spec.FixedAltitudeM = adapter.FixedAltitudeM
+	spec.StopOnStaleCostmap = adapter.StopOnStaleCostmap
+	spec.StopOnStaleSlam = adapter.StopOnStaleSlam
+	spec.NavigationStatusTopic = mission.StatusTopic
+	spec.NavigationEventsTopic = mission.EventsTopic
+	spec.NavigationGoalTopic = mission.GoalTopic
+	spec.NavigationPathTopic = mission.PathTopic
+	spec.NavigationRecoveryTopic = mission.RecoveryTopic
+	spec.Strategy = mission.Strategy
+	spec.CompletionPolicy = navigationCompletionPolicy(runtimeConfig)
+	spec.GoalFrame = mission.GoalFrame
+	spec.NavigationWindowSec = mission.NavigationWindowSec
+	spec.MaxGoalRadiusM = mission.MaxGoalRadiusM
+	spec.MinClearanceM = mission.MinClearanceM
+	spec.MinCoverageGrowth = mission.MinCoverageGrowth
+	spec.MinPathLengthM = mission.MinPathLengthM
+	spec.MinAcceptedGoals = mission.MinAcceptedGoals
+	spec.MaxRecoveryCount = mission.MaxRecoveryCount
+	spec.ReturnHomePolicy = mission.ReturnHomePolicy
+	spec.UsesGazeboTruthAsInput = mission.UsesGazeboTruthAsInput
+	spec.ExitGoal = navigationGoalSpec(mission.ExitGoal)
+	spec.BoundedGoals = navigationGoalSpecs(mission.BoundedGoals)
+	spec.HomeGoal = navigationGoalSpec(mission.HomeGoal)
+	spec.SlamOdomTopic = runtimeConfig.SlamBackend.SlamOdomTopic
+	spec.SlamStatusTopic = runtimeConfig.SlamBackend.SlamStatusTopic
+	spec.ControllerStatusTopic = runtimeConfig.FCUController.ControllerStatusTopic
+	spec.OwnerStatusTopic = runtimeConfig.FCUController.OwnerStatusTopic
+	spec.ScanStabilizationStatusTopic = runtimeConfig.ScanStabilization.StatusTopic
+	spec.LandingStatusTopic = runtimeConfig.Landing.LandingStatusTopic
+	return spec
+}
+
+func navigationGoalSpecs(goals []config.NavigationGoalConfig) []helpers.NavigationGoalSpec {
+	out := make([]helpers.NavigationGoalSpec, 0, len(goals))
+	for _, goal := range goals {
+		out = append(out, navigationGoalSpec(goal))
+	}
+	return out
+}
+
+func navigationGoalSpec(goal config.NavigationGoalConfig) helpers.NavigationGoalSpec {
+	return helpers.NavigationGoalSpec{
+		ID:     goal.ID,
+		XM:     goal.XM,
+		YM:     goal.YM,
+		YawRad: goal.YawRad,
+	}
+}
+
+func navigationCompletionPolicy(runtimeConfig config.TaskRuntimeConfig) string {
+	if runtimeConfig.NavigationMission.CompletionPolicy != "" {
+		return runtimeConfig.NavigationMission.CompletionPolicy
+	}
+	if runtimeConfig.Landing.NavigationPolicy != "" {
+		return runtimeConfig.Landing.NavigationPolicy
+	}
+	return runtimeConfig.Landing.ExplorationPolicy
 }
 
 func scanStabilizationSpec(runtimeConfig config.TaskRuntimeConfig) helpers.ScanStabilizationSpec {

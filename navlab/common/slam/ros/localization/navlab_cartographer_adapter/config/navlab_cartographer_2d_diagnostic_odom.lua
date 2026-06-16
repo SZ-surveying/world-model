@@ -1,6 +1,14 @@
 include "map_builder.lua"
 include "trajectory_builder.lua"
 
+-- Diagnostic/official-baseline profile only.
+--
+-- This file consumes Cartographer odometry input (`use_odometry = true`). In
+-- NavLab simulation, `/odometry` is Gazebo/bridge diagnostic truth and must not
+-- be used for SLAM acceptance. Runtime defaults must use
+-- navlab_cartographer_2d_real.lua unless a real odometry source is explicitly
+-- configured on a non-truth topic.
+
 options = {
   map_builder = MAP_BUILDER,
   trajectory_builder = TRAJECTORY_BUILDER,

@@ -35,6 +35,9 @@ type Plan struct {
 
 func (task ConfiguredTask) Plan(options PlanOptions, helperRegistry *helpers.Registry) (Plan, error) {
 	durationSec := task.Config.Task.DurationSec
+	if task.Config.Task.TimeoutSec > 0 {
+		durationSec = task.Config.Task.TimeoutSec
+	}
 	if options.DurationSec > 0 {
 		durationSec = options.DurationSec
 	}

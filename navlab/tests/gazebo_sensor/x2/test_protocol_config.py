@@ -71,16 +71,12 @@ def test_down_rangefinder_config_loads_defaults_from_config_toml() -> None:
     assert config.scan_ideal_topic.value == "/rangefinder/down/scan_ideal"
     assert config.range_topic.value == "/rangefinder/down/range"
     assert config.status_topic.value == "/rangefinder/down/status"
-    assert config.endpoint.value == "udpout:mavlink-router:14550"
+    assert config.virtual_serial_link.value == "/tmp/navlab_benewake_tfmini"
+    assert config.serial_baud.value == "115200"
     assert config.frame_id.value == "rangefinder_down_frame"
-    assert config.mavlink_orientation.value == "MAV_SENSOR_ROTATION_PITCH_270"
-    assert config.source_system.value == "1"
-    assert config.source_component.value == "158"
-    assert config.sensor_id.value == "1"
     assert config.rate_hz.value == 20.0
     assert config.min_distance_m.value == 0.05
     assert config.max_distance_m.value == 6.0
-    assert config.covariance_cm.value == "2"
     assert config.model_pose.value == "0 0 -0.02 0 1.5707963267948966 0"
     assert config.model_update_rate_hz.value == 20.0
     assert config.model_ray_count.value == "1"
@@ -91,9 +87,5 @@ def test_down_rangefinder_runtime_config_is_fcu_peripheral_source() -> None:
     config = DownRangefinderRuntimeConfig.load()
 
     assert config.enabled is True
-    assert config.endpoint.startswith("udpout:")
-    assert config.mavlink_orientation == "MAV_SENSOR_ROTATION_PITCH_270"
-    assert config.source_system == 1
-    assert config.source_component == 158
-    assert config.sensor_id == 1
-    assert config.covariance_cm == 2
+    assert config.virtual_serial_link == Path("/tmp/navlab_benewake_tfmini")
+    assert config.serial_baud == 115200

@@ -125,8 +125,12 @@ for project in "${TEST_PROJECTS[@]}"; do
       run_navlab_uv pytest navlab/tests -q
       ;;
     command)
-      log_step "Running command pytest"
-      run_uv "$ROOT_DIR/scripts/command" pytest scripts/command/tests -q
+      if find "$ROOT_DIR/scripts/command/tests" -name 'test_*.py' -print -quit 2>/dev/null | grep -q .; then
+        log_step "Running command pytest"
+        run_uv "$ROOT_DIR/scripts/command" pytest scripts/command/tests -q
+      else
+        log_step "No command pytest files found"
+      fi
       ;;
     *)
       fail "unknown test project: $project"

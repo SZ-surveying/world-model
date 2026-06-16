@@ -104,11 +104,11 @@ def build_down_rangefinder_bridge_command(config: X2SensorLaunchConfig) -> list[
     ]
 
 
-def build_down_rangefinder_sender_command() -> list[str]:
+def build_down_rangefinder_projection_command() -> list[str]:
     return [
         sys.executable,
         "-m",
-        "navlab.sim.gazebo_sensor.rangefinder",
+        "navlab.sim.gazebo_sensor.range_projection",
     ]
 
 
@@ -209,8 +209,8 @@ class X2SensorRuntime:
                 build_down_rangefinder_bridge_command(self._config),
             )
             self._manager.start_subprocess(
-                "down_rangefinder_sender",
-                build_down_rangefinder_sender_command(),
+                "down_rangefinder_projection",
+                build_down_rangefinder_projection_command(),
             )
         if self._config.airframe_disturbance_enabled:
             self._manager.start_subprocess(

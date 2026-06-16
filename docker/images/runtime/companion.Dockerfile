@@ -41,7 +41,7 @@ WORKDIR /opt/navlab_ws
 COPY navlab/common/interfaces/ydlidar_interfaces /opt/navlab_ws/navlab_interfaces/ydlidar_interfaces
 
 RUN bash -lc "\
-  source /opt/ros/jazzy/setup.bash && \
+  source /opt/ros/${ROS_DISTRO}/setup.bash && \
   colcon --log-base /tmp/navlab_companion-log build \
     --base-paths navlab_interfaces \
     --packages-select ydlidar_interfaces \

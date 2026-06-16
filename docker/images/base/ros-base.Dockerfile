@@ -37,6 +37,6 @@ RUN if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \
 
 SHELL ["/bin/bash", "-lc"]
 
-RUN echo 'source /opt/ros/jazzy/setup.bash' >> /root/.bashrc
+RUN echo 'source /opt/ros/${ROS_DISTRO}/setup.bash' >> /root/.bashrc
 
 WORKDIR /workspace

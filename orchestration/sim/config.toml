@@ -4,10 +4,10 @@ gazebo_world = "/workspace/worlds/navlab_iq_quad_figure8.sdf"
 rosbag_profile = "docker/profiles/navlab-rosbag-topics.txt"
 
 [router]
-image = "navlab/mavlink-router:humble-latest"
-downstream_endpoints = "127.0.0.1:14552"
+image = "navlab/mavlink-router:jazzy-latest"
+downstream_endpoints = "127.0.0.1:14551,127.0.0.1:14552,127.0.0.1:14553"
 listen = "0.0.0.0:14550"
-tcp_port = "5760"
+tcp_port = "0"
 
 [orchestration]
 family = "sim"
@@ -29,6 +29,7 @@ artifact_root = "../../artifacts/sim"
 task_config_dir = "configs/tasks"
 
 [navlab.images]
+distro = "jazzy"
 tag_policy = "distro-git-commit"
 
 [navlab.images.ros_base]
@@ -94,12 +95,14 @@ enabled = true
 default_policy = "land_in_place"
 hover_policy = "land_in_place"
 exploration_policy = "return_home_then_land"
+navigation_policy = "land_in_place"
 scan_robustness_policy = "land_in_place"
 landing_status_topic = "/navlab/landing/status"
 landing_intent_topic = "/navlab/landing/intent"
 home_source = "post_takeoff_hover_pose"
 home_radius_m = 0.35
 pre_land_hold_sec = 2.0
+completion_grace_sec = 3.0
 max_return_home_duration_sec = 45.0
 max_landing_duration_sec = 35.0
 max_descent_rate_mps = 0.6
@@ -110,7 +113,7 @@ require_motors_safe = true
 uses_gazebo_truth_as_input = false
 
 [sitl]
-image = "navlab/ardupilot-sitl:humble-latest"
+image = "navlab/ardupilot-sitl:jazzy-latest"
 model = "JSON"
 speedup = "1"
 instance = "0"
@@ -126,6 +129,93 @@ scan_source = "x2_virtual_serial"
 autostart = true
 backend = "cartographer"
 runtime_config = "/workspace/navlab/config.toml"
+
+[nav2]
+enabled = true
+profile = "indoor_2d"
+global_frame = "map"
+odom_frame = "odom"
+base_frame = "base_link"
+scan_topic = "/scan"
+map_topic = "/map"
+cmd_vel_topic = "/cmd_vel_nav"
+bt_xml = "navigate_to_pose_w_replanning_and_recovery.xml"
+planner_plugin = "GridBased"
+controller_plugin = "FollowPath"
+use_sim_time = true
+
+[nav2.costmap]
+global_costmap_topic = "/global_costmap/costmap"
+local_costmap_topic = "/local_costmap/costmap"
+required_layers = ["static_layer", "obstacle_layer", "inflation_layer"]
+max_costmap_age_sec = 1.5
+min_obstacle_cells = 1
+max_unknown_ratio = 0.35
+inflation_radius_m = 0.35
+footprint_radius_m = 0.22
+health_topic = "/navlab/navigation/costmap_health"
+uses_gazebo_truth = false
+costmap_health_claim = "evaluated"
+
+[navigation_adapter]
+setpoint_intent_topic = "/navlab/fcu/setpoint/intent"
+status_topic = "/navlab/navigation/adapter/status"
+max_xy_speed_mps = 0.25
+max_yaw_rate_dps = 35.0
+max_accel_mps2 = 0.35
+fixed_altitude_m = 0.8
+stop_on_stale_costmap = true
+stop_on_stale_slam = true
+adapter_claim = "evaluated"
+
+[navigation_mission]
+strategy = "bounded_frontier"
+completion_policy = "land_in_place"
+goal_frame = "map"
+status_topic = "/navlab/navigation/status"
+events_topic = "/navlab/navigation/events"
+goal_topic = "/navlab/navigation/goal"
+path_topic = "/navlab/navigation/path"
+recovery_topic = "/navlab/navigation/recovery"
+navigation_window_sec = 240.0
+max_goal_radius_m = 0.45
+min_clearance_m = 0.35
+min_coverage_growth = 0.50
+min_path_length_m = 4.0
+min_accepted_goals = 3
+max_recovery_count = 2
+navigation_claim = "evaluated"
+uses_gazebo_truth_as_input = false
+
+[navigation_mission.exit_goal]
+id = "maze_exit"
+x_m = 1.5
+y_m = -0.5
+yaw_rad = 0.0
+
+[[navigation_mission.bounded_goals]]
+id = "p13_probe_1"
+x_m = 1.0
+y_m = 0.0
+yaw_rad = 0.0
+
+[[navigation_mission.bounded_goals]]
+id = "p13_probe_2"
+x_m = 1.5
+y_m = 0.5
+yaw_rad = 0.0
+
+[[navigation_mission.bounded_goals]]
+id = "p13_probe_3"
+x_m = 1.5
+y_m = -0.5
+yaw_rad = 0.0
+
+[navigation_mission.home_goal]
+id = "home"
+x_m = 0.0
+y_m = 0.0
+yaw_rad = 0.0
 
 [official_baseline]
 dds_domain_id = "0"

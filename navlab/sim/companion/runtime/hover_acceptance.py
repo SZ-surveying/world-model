@@ -37,6 +37,8 @@ HOVER_DIAGNOSTIC_MINIMUM_ROSBAG_TOPICS = (
     "/rangefinder/down/status",
     "/gazebo/truth/odom",
     "/gazebo/truth/status",
+    "/gazebo/tf",
+    "/gazebo/tf_static",
     "/navlab/fcu/local_position_pose",
     "/tf",
     "/tf_static",
@@ -166,6 +168,17 @@ def write_hover_summary(
         or int(mavlink_counts.get("DISTANCE_SENSOR", 0) or 0) > 0
         or int(mission_summary.get("rangefinder_count", 0) or 0) > 0
     )
+    legacy_mavlink_rangefinder_sender = rangefinder_down_status.get("mavlink_message") == "DISTANCE_SENSOR"
+    rangefinder_serial_ok = (
+        rangefinder_fcu_observed
+        and rangefinder_down_status.get("source") == "gazebo_down_range_projection"
+        and rangefinder_down_status.get("fcu_transport") == "serial7_uart"
+        and rangefinder_down_status.get("rangefinder_simulation_fidelity") == "benewake_serial_emulated"
+        and not legacy_mavlink_rangefinder_sender
+    )
+    rangefinder_simulation_fidelity = (
+        "benewake_serial_emulated" if rangefinder_serial_ok else "blocked_missing_benewake_serial"
+    )
     local_position_count = int(mission_summary.get("local_position_count", 0) or 0)
     hover_drift = mission_summary.get("hover_drift", {})
     hover_duration_tolerance_sec = float(hover_drift.get("duration_tolerance_sec", 0.25) or 0.25)
@@ -187,7 +200,7 @@ def write_hover_summary(
         slam_status.get("ready") is True
         and external_status.get("state") == "healthy"
         and external_status.get("ready") is True
-        and external_nav_input_topic == "/odom"
+        and external_nav_input_topic == "/slam/odom"
         and mavlink_external_nav_status.get("state") == "sending"
     )
     feedback_ok = slam_external_nav_ok if require_slam_external_nav else True
@@ -200,7 +213,7 @@ def write_hover_summary(
             and mission_summary.get("armed_seen") is True
             and mission_summary.get("airborne_seen") is True
             and local_position_count > 0
-            and rangefinder_fcu_observed
+            and rangefinder_serial_ok
             and hover_ok
             and truth_hover_containment.get("ok") is True
             and slam_truth_error_ok
@@ -217,7 +230,7 @@ def write_hover_summary(
         "require_slam_external_nav": require_slam_external_nav,
         "require_imu_status": require_imu_status,
         "external_nav_input_topic": external_nav_input_topic,
-        "external_nav_uses_slam_odom": external_nav_input_topic == "/odom",
+        "external_nav_uses_slam_odom": external_nav_input_topic == "/slam/odom",
         "external_nav_uses_gazebo_truth": external_nav_input_topic == "/gazebo/truth/odom",
         "sitl_heartbeat": mavlink_status.get("heartbeat_seen") is True,
         "guided_ok": mission_summary.get("guided_seen") is True,
@@ -227,6 +240,9 @@ def write_hover_summary(
         "local_position_ok": local_position_count > 0,
         "local_position_count": local_position_count,
         "rangefinder_fcu_observed": rangefinder_fcu_observed,
+        "rangefinder_serial_ok": rangefinder_serial_ok,
+        "rangefinder_simulation_fidelity": rangefinder_simulation_fidelity,
+        "legacy_mavlink_rangefinder_sender": legacy_mavlink_rangefinder_sender,
         "rangefinder_count": mission_summary.get("rangefinder_count", 0),
         "crash_detected": mission_summary.get("crash_detected") is True,
         "hover_ok": hover_ok,

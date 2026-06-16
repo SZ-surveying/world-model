@@ -108,7 +108,7 @@ RUN --mount=type=cache,target=/root/.gradle,sharing=locked,id=official-baseline-
     ./gradlew --no-daemon assemble && \
     microxrceddsgen -help >/dev/null
 
-RUN source /opt/ros/jazzy/setup.bash && \
+RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
     colcon --log-base /tmp/navlab_official-log build \
       --base-paths \
         ardupilot/Tools/ros2 \
@@ -135,7 +135,7 @@ RUN source /opt/ros/jazzy/setup.bash && \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DPython3_EXECUTABLE=/usr/bin/python3
 
-RUN source /opt/ros/jazzy/setup.bash && \
+RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
     source ${OFFICIAL_WS}/install/setup.bash && \
     ros2 pkg prefix ardupilot_sitl && \
     ros2 pkg prefix ardupilot_gz_bringup && \

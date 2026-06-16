@@ -12,6 +12,7 @@ import (
 
 	"navlab/orchestration-sim/internal/artifacts"
 	"navlab/orchestration-sim/internal/config"
+	simfoxglove "navlab/orchestration-sim/internal/foxglove"
 	simimages "navlab/orchestration-sim/internal/images"
 	simruntime "navlab/orchestration-sim/internal/runtime"
 	"navlab/orchestration-sim/internal/tasks"
@@ -76,6 +77,7 @@ func newRootCommand() *cobra.Command {
 		newStage1MatrixCommand(ctx),
 		newTUICommand(),
 		newBuildCommand(ctx),
+		newFoxgloveCommand(ctx),
 	)
 	return root
 }
@@ -222,6 +224,71 @@ func newBuildCommand(ctx *appContext) *cobra.Command {
 	return cmd
 }
 
+func newFoxgloveCommand(ctx *appContext) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "foxglove",
+		Short: "Manage Foxglove replay and upload artifacts for sim runs",
+	}
+	cmd.AddCommand(newFoxgloveBuildReplayCommand(ctx), newFoxgloveUploadCommand(ctx))
+	return cmd
+}
+
+func newFoxgloveBuildReplayCommand(ctx *appContext) *cobra.Command {
+	var taskID string
+	var mazePath string
+	var profilePath string
+	var resolutionM float64
+	var dryRun bool
+	cmd := &cobra.Command{
+		Use:   "build-replay [run-id-or-artifact-dir]",
+		Short: "Build a Foxglove-lite replay MCAP for a sim run",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			run := ""
+			if len(args) > 0 {
+				run = args[0]
+			}
+			return foxgloveBuildReplay(ctx.loader(), ctx.artifactRoot, run, taskID, mazePath, profilePath, resolutionM, dryRun)
+		},
+	}
+	cmd.Flags().StringVar(&taskID, "task", "", "sim task id used to resolve a run id under the sim artifact root")
+	cmd.Flags().StringVar(&mazePath, "maze", "", "official maze.sdf path; defaults to ../ardupilot_gz/ardupilot_gz_gazebo/worlds/maze.sdf")
+	cmd.Flags().StringVar(&profilePath, "profile", "", "Foxglove-lite topic profile path")
+	cmd.Flags().Float64Var(&resolutionM, "resolution", 0, "official maze overlay resolution in meters")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "write only the replay summary without generating an MCAP")
+	return cmd
+}
+
+func newFoxgloveUploadCommand(ctx *appContext) *cobra.Command {
+	var taskID string
+	var dryRun bool
+	var force bool
+	var lite bool
+	var keyPrefix string
+	var apiURL string
+	var deviceName string
+	cmd := &cobra.Command{
+		Use:   "upload [run-id-or-artifact-dir]",
+		Short: "Upload a sim run MCAP and summaries to Foxglove",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			run := ""
+			if len(args) > 0 {
+				run = args[0]
+			}
+			return foxgloveUpload(ctx.loader(), ctx.artifactRoot, run, taskID, dryRun, force, lite, keyPrefix, apiURL, deviceName)
+		},
+	}
+	cmd.Flags().StringVar(&taskID, "task", "", "sim task id used to resolve a run id under the sim artifact root")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "resolve upload targets without uploading")
+	cmd.Flags().BoolVar(&force, "force", false, "perform the upload")
+	cmd.Flags().BoolVar(&lite, "lite", false, "upload an existing rosbag_foxglove/rosbag_foxglove_0.mcap instead of the raw task MCAP")
+	cmd.Flags().StringVar(&keyPrefix, "key-prefix", "", "Foxglove object key prefix")
+	cmd.Flags().StringVar(&apiURL, "api-url", "", "Foxglove API URL")
+	cmd.Flags().StringVar(&deviceName, "device-name", "", "Foxglove device name when FOXGLOVE_DEVICE_ID is not set")
+	return cmd
+}
+
 func doctor(loader config.Loader) error {
 	project, err := loader.LoadProject()
 	if err != nil {
@@ -293,6 +360,119 @@ func buildImages(loader config.Loader, kind string, image string, tag string, di
 	if !dryRun {
 		fmt.Println(ui.StatusOK("NavLab image build completed"))
 	}
+	return nil
+}
+
+func foxgloveUpload(
+	loader config.Loader,
+	artifactRootOverride string,
+	run string,
+	taskID string,
+	dryRun bool,
+	force bool,
+	lite bool,
+	keyPrefix string,
+	apiURL string,
+	deviceName string,
+) error {
+	project, err := loader.LoadProject()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	if err := resolveWorkspaceRoot(loader, &project); err != nil {
+		return fmt.Errorf("failed to resolve workspace root: %w", err)
+	}
+	artifactRootPath := project.Paths.ArtifactRoot
+	if artifactRootOverride != "" {
+		artifactRootPath = artifactRootOverride
+	}
+	artifactRoot, err := loader.ResolveProjectPath(artifactRootPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve artifact root: %w", err)
+	}
+	if !filepath.IsAbs(artifactRoot) {
+		artifactRoot, err = filepath.Abs(artifactRoot)
+		if err != nil {
+			return fmt.Errorf("failed to resolve artifact root: %w", err)
+		}
+	}
+	result, err := simfoxglove.Upload(context.Background(), simfoxglove.Options{
+		RepoRoot:     project.Paths.WorkspaceRoot,
+		ArtifactRoot: artifactRoot,
+		Run:          run,
+		Task:         taskID,
+		DryRun:       dryRun,
+		Force:        force,
+		Lite:         lite,
+		APIURL:       apiURL,
+		DeviceName:   deviceName,
+		KeyPrefix:    keyPrefix,
+		Stdout:       os.Stdout,
+		Stderr:       os.Stderr,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println(ui.Title("Foxglove Upload"))
+	fmt.Println(ui.KeyValue("state", result.State))
+	fmt.Println(ui.KeyValue("run_id", result.RunID))
+	fmt.Println(ui.KeyValue("task_id", result.TaskID))
+	fmt.Println(ui.KeyValue("lite", result.Lite))
+	fmt.Println(ui.KeyValue("files", len(result.Files)))
+	return nil
+}
+
+func foxgloveBuildReplay(
+	loader config.Loader,
+	artifactRootOverride string,
+	run string,
+	taskID string,
+	mazePath string,
+	profilePath string,
+	resolutionM float64,
+	dryRun bool,
+) error {
+	project, err := loader.LoadProject()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	if err := resolveWorkspaceRoot(loader, &project); err != nil {
+		return fmt.Errorf("failed to resolve workspace root: %w", err)
+	}
+	artifactRootPath := project.Paths.ArtifactRoot
+	if artifactRootOverride != "" {
+		artifactRootPath = artifactRootOverride
+	}
+	artifactRoot, err := loader.ResolveProjectPath(artifactRootPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve artifact root: %w", err)
+	}
+	if !filepath.IsAbs(artifactRoot) {
+		artifactRoot, err = filepath.Abs(artifactRoot)
+		if err != nil {
+			return fmt.Errorf("failed to resolve artifact root: %w", err)
+		}
+	}
+	result, err := simfoxglove.BuildReplay(simfoxglove.ReplayOptions{
+		RepoRoot:     project.Paths.WorkspaceRoot,
+		ArtifactRoot: artifactRoot,
+		Run:          run,
+		Task:         taskID,
+		MazePath:     mazePath,
+		ProfilePath:  profilePath,
+		ResolutionM:  resolutionM,
+		DryRun:       dryRun,
+		Stdout:       os.Stdout,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println(ui.Title("Foxglove Replay"))
+	fmt.Println(ui.KeyValue("status", "ok"))
+	fmt.Println(ui.KeyValue("run_id", result.RunID))
+	fmt.Println(ui.KeyValue("task_id", result.TaskID))
+	fmt.Println(ui.KeyValue("lite_mcap", result.ReplayMCAP))
+	fmt.Println(ui.KeyValue("official_maze_topic", result.Overlay.Topic))
 	return nil
 }
 

@@ -7,7 +7,7 @@ import (
 	"regexp"
 )
 
-const CartographerConfigPath = "navlab/common/slam/ros/localization/navlab_cartographer_adapter/config/navlab_cartographer_2d.lua"
+const CartographerConfigPath = "navlab/common/slam/ros/localization/navlab_cartographer_adapter/config/" + DiagnosticCartographerConfigBasename
 
 var OfficialReferences = map[string]string{
 	"ros2":          "https://ardupilot.org/dev/docs/ros2.html",

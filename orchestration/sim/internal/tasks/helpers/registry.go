@@ -139,6 +139,14 @@ func DefaultRegistry() *Registry {
 			MigrationStatus: "ported_partial",
 		},
 		{
+			ID:              "nav2-navigation-workflow",
+			Phase:           "task_workflow",
+			Role:            "Nav2 params, navigation adapter config, costmap probes, rosbag, doctor and acceptance summary",
+			ArtifactOutputs: []string{"nav2 params", "adapter runtime config", "navigation probes", "rosbag", "summary.json"},
+			RuntimeAction:   true,
+			MigrationStatus: "ported_partial",
+		},
+		{
 			ID:              "scan-robustness-workflow",
 			Phase:           "task_workflow",
 			Role:            "scan robustness airframe disturbance runtime configs, profile sweep/live replay, summary gates",

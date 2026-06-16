@@ -23,7 +23,7 @@ class NavlabExternalNavBridgeNode : public rclcpp::Node {
     height_timeout_ms_ = declare_parameter("height_timeout_ms", 500);
     require_imu_for_output_ = declare_parameter("require_imu_for_output", false);
     require_height_for_output_ =
-        declare_parameter("require_height_for_output", false);
+        declare_parameter("require_height_for_output", true);
     output_frame_id_ =
         declare_parameter<std::string>("output_frame_id", "external_nav");
     output_child_frame_id_ =
@@ -83,6 +83,8 @@ class NavlabExternalNavBridgeNode : public rclcpp::Node {
   }
 
  private:
+  using SteadyClock = std::chrono::steady_clock;
+
   struct HeightEstimate {
     double z{0.0};
     double vz{0.0};
@@ -91,9 +93,10 @@ class NavlabExternalNavBridgeNode : public rclcpp::Node {
   };
 
   void handle_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
-    const auto stamp = now();
+    const auto stamp = SteadyClock::now();
     if (last_odom_) {
-      const double delta_sec = (stamp - last_odom_time_).seconds();
+      const std::chrono::duration<double> delta = stamp - last_odom_wall_time_;
+      const double delta_sec = delta.count();
       if (delta_sec > 0.0) {
         if (odom_rate_hz_ <= 0.0) {
           odom_rate_hz_ = 1.0 / delta_sec;
@@ -103,26 +106,26 @@ class NavlabExternalNavBridgeNode : public rclcpp::Node {
       }
     }
     last_odom_ = msg;
-    last_odom_time_ = stamp;
+    last_odom_wall_time_ = stamp;
   }
 
   void handle_imu(const sensor_msgs::msg::Imu::SharedPtr msg) {
     last_imu_ = msg;
-    last_imu_time_ = now();
+    last_imu_wall_time_ = SteadyClock::now();
   }
 
   void handle_height(const std_msgs::msg::String::SharedPtr msg) {
     last_height_raw_ = msg;
-    last_height_time_ = now();
+    last_height_wall_time_ = SteadyClock::now();
     last_height_ = parse_height_estimate(msg->data);
   }
 
   void publish_status() {
-    const auto stamp = now();
-    const double odom_age_ms = age_ms(stamp, last_odom_time_, last_odom_);
-    const double imu_age_ms = age_ms(stamp, last_imu_time_, last_imu_);
+    const auto stamp = SteadyClock::now();
+    const double odom_age_ms = age_ms(stamp, last_odom_wall_time_, last_odom_);
+    const double imu_age_ms = age_ms(stamp, last_imu_wall_time_, last_imu_);
     const double height_age_ms =
-        age_ms(stamp, last_height_time_, last_height_raw_);
+        age_ms(stamp, last_height_wall_time_, last_height_raw_);
     const bool odom_fresh = last_odom_ && odom_age_ms >= 0.0 &&
                             odom_age_ms < static_cast<double>(odom_timeout_ms_);
     const bool imu_ok =
@@ -157,7 +160,7 @@ class NavlabExternalNavBridgeNode : public rclcpp::Node {
   }
 
   void publish_external_nav_odom() {
-    if (!last_odom_) {
+    if (!last_odom_ || !last_height_) {
       return;
     }
 
@@ -165,6 +168,10 @@ class NavlabExternalNavBridgeNode : public rclcpp::Node {
     out.header.stamp = now();
     out.header.frame_id = output_frame_id_;
     out.child_frame_id = output_child_frame_id_;
+    out.pose.pose.position.z = last_height_->z;
+    out.twist.twist.linear.z = last_height_->vz;
+    out.pose.covariance[14] = last_height_->covariance;
+    out.twist.covariance[14] = last_height_->covariance;
     odom_pub_->publish(out);
 
     tf2_msgs::msg::TFMessage ap_tf_msg;
@@ -180,12 +187,13 @@ class NavlabExternalNavBridgeNode : public rclcpp::Node {
     ap_tf_pub_->publish(ap_tf_msg);
   }
 
-  double age_ms(const rclcpp::Time &now_stamp, const rclcpp::Time &last_stamp,
+  double age_ms(const SteadyClock::time_point &now_stamp,
+                const SteadyClock::time_point &last_stamp,
                 const std::shared_ptr<void const> &msg) const {
     if (!msg) {
       return -1.0;
     }
-    return static_cast<double>((now_stamp - last_stamp).nanoseconds()) / 1000000.0;
+    return std::chrono::duration<double, std::milli>(now_stamp - last_stamp).count();
   }
 
   bool odom_frame_ok() const {
@@ -340,7 +348,10 @@ class NavlabExternalNavBridgeNode : public rclcpp::Node {
     oss << "\"odom_topic\":\"" << output_odom_topic_ << "\",";
     oss << "\"status_topic\":\"" << status_topic_ << "\",";
     oss << "\"ap_tf_topic\":\"" << ap_tf_topic_ << "\",";
-    oss << "\"coordinate_mode\":\"" << coordinate_mode_ << "\"}";
+    oss << "\"coordinate_mode\":\"" << coordinate_mode_ << "\",";
+    oss << "\"xy_yaw_source\":\"" << input_odom_topic_ << "\",";
+    oss << "\"z_source\":\"" << (last_height_ ? last_height_->source_type : "") << "\",";
+    oss << "\"vz_source\":\"" << (last_height_ ? last_height_->source_type : "") << "\"}";
     oss << "}";
     return oss.str();
   }
@@ -371,9 +382,9 @@ class NavlabExternalNavBridgeNode : public rclcpp::Node {
   sensor_msgs::msg::Imu::SharedPtr last_imu_;
   std_msgs::msg::String::SharedPtr last_height_raw_;
   std::optional<HeightEstimate> last_height_;
-  rclcpp::Time last_odom_time_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time last_imu_time_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time last_height_time_{0, 0, RCL_ROS_TIME};
+  SteadyClock::time_point last_odom_wall_time_{};
+  SteadyClock::time_point last_imu_wall_time_{};
+  SteadyClock::time_point last_height_wall_time_{};
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;

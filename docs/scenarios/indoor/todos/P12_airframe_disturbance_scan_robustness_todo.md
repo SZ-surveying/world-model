@@ -370,3 +370,9 @@ P12 全部完成必须满足：
 - ideal artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260608_200320/summary.json`，P12 `ok=true`、`blockers=[]`；`ideal` live `passthrough=606`、`compensated=0`、`dropped=0`、`max_observed_tilt_deg=2.991`、FCU 71/71 GUIDED。
 - realistic artifact：`artifacts/ros/navlab_companion_sitl_gazebo/20260608_195430/summary.json`，P12 `ok=true`、`blockers=[]`；historical artifact path 保留旧目录名，当前语义归并为 `realistic` live：`passthrough=550`、`compensated=40`、`dropped=20`、`max_observed_tilt_deg=5.793`、`false_wall_risk_ok=true`、FCU 73/73 GUIDED。
 - Foxglove-lite：已为 `ideal` 和 `realistic` 的最新 live replay 生成 P12 lite MCAP，`foxglove_replay_summary.json` 均为 `ok=true`。
+
+### 2026-06-16 P14 rangefinder 边界更新
+
+- P12 后续 scan-robustness live acceptance 必须引用 `docs/scenarios/indoor/todos/P14_benewake_rangefinder_sitl_todo.md`。
+- realistic 扰动下也不能回退到 Python/Gazebo sensor runtime 发送 MAVLink `DISTANCE_SENSOR`。
+- FCU rangefinder 输入必须是 Benewake serial emulation；summary 必须记录 `rangefinder_simulation_fidelity=benewake_serial_emulated`，否则 blocked。

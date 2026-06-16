@@ -16,7 +16,11 @@ Main runtime example:
 ros2 launch navlab_slam_bringup navlab_slam_bringup.launch.py \
   launch_cartographer_backend:=true \
   launch_fake_odom:=false \
-  external_nav_input_odom_topic:=/odom
+  external_nav_input_odom_topic:=/slam/odom \
+  cartographer_tf_topic:=/navlab/slam/tf
 ```
 
-The stable backend contract is `/scan + /imu + /odometry -> /odom + /navlab/slam/status`.
+The stable backend contract is `/scan + /imu + Cartographer-owned TF -> /map +
+/slam/odom + /navlab/slam/status`. In the NavLab sim acceptance profile,
+`/odometry` and global `/tf` are diagnostic-only and must not be used as
+Cartographer, ExternalNav, controller, or task success inputs.

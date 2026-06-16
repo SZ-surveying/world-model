@@ -11,12 +11,18 @@ def stamp_to_nanoseconds(stamp: object) -> int:
     return int(getattr(stamp, "sec", 0)) * 1_000_000_000 + int(getattr(stamp, "nanosec", 0))
 
 
-def monotonic_scan_stamp_ns(*, preferred_ns: int, fallback_elapsed_sec: float, previous_ns: int | None) -> int:
+def monotonic_scan_stamp_ns(
+    *,
+    preferred_ns: int,
+    fallback_elapsed_sec: float,
+    previous_ns: int | None,
+    min_increment_ns: int = 1,
+) -> int:
     fallback_ns = 1_000_000_000 + max(0, int(fallback_elapsed_sec * 1_000_000_000))
     candidate_ns = preferred_ns if preferred_ns > 0 else fallback_ns
     if previous_ns is None:
         return candidate_ns
-    return max(candidate_ns, previous_ns + 1)
+    return max(candidate_ns, previous_ns + max(1, min_increment_ns))
 
 
 def run() -> int:
@@ -64,10 +70,17 @@ def run() -> int:
                 preferred_ns = stamp_to_nanoseconds(self._latest_clock.clock)
             if preferred_ns <= 0:
                 preferred_ns = stamp_to_nanoseconds(message.header.stamp)
+            scan_duration_sec = max(
+                float(message.scan_time),
+                float(message.time_increment) * len(message.ranges),
+                0.0,
+            )
+            scan_duration_ns = int(scan_duration_sec * 1_000_000_000)
             stamp_ns = monotonic_scan_stamp_ns(
                 preferred_ns=preferred_ns,
                 fallback_elapsed_sec=time.monotonic() - self._started_at,
                 previous_ns=self._last_stamp_ns,
+                min_increment_ns=scan_duration_ns,
             )
             output.header.stamp.sec = int(stamp_ns // 1_000_000_000)
             output.header.stamp.nanosec = int(stamp_ns % 1_000_000_000)

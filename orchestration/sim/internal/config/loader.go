@@ -34,6 +34,7 @@ func (l Loader) LoadProject() (ProjectConfig, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return cfg, err
 	}
+	cfg.Sections = projectConfigSections(configPath)
 	normalizeProject(&cfg)
 	if err := validateProject(cfg); err != nil {
 		return cfg, err
@@ -169,7 +170,47 @@ func validateProject(cfg ProjectConfig) error {
 	if len(cfg.Images) == 0 {
 		return errors.New("navlab.images must define at least one image")
 	}
+	if !cfg.Sections.Nav2 {
+		return errors.New("nav2 section is required")
+	}
+	if !cfg.Sections.Nav2Costmap {
+		return errors.New("nav2.costmap section is required")
+	}
+	if !cfg.Sections.NavigationAdapter {
+		return errors.New("navigation_adapter section is required")
+	}
+	if !cfg.Sections.NavigationMission {
+		return errors.New("navigation_mission section is required")
+	}
 	return nil
+}
+
+func projectConfigSections(path string) ProjectConfigSections {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ProjectConfigSections{}
+	}
+	lines := strings.Split(string(data), "\n")
+	sections := ProjectConfigSections{}
+	for _, line := range lines {
+		section := strings.TrimSpace(line)
+		switch section {
+		case "[nav2]":
+			sections.Nav2 = true
+		case "[nav2.costmap]":
+			sections.Nav2Costmap = true
+		case "[navigation_adapter]":
+			sections.NavigationAdapter = true
+		case "[navigation_mission]":
+			sections.NavigationMission = true
+		}
+	}
+	return ProjectConfigSections{
+		Nav2:              sections.Nav2,
+		Nav2Costmap:       sections.Nav2Costmap,
+		NavigationAdapter: sections.NavigationAdapter,
+		NavigationMission: sections.NavigationMission,
+	}
 }
 
 func normalizeProject(cfg *ProjectConfig) {
@@ -213,6 +254,9 @@ func validateTask(task TaskConfig) error {
 	}
 	if task.Task.DurationSec < 0 {
 		return errors.New("task.duration_sec cannot be negative")
+	}
+	if task.Task.TimeoutSec < 0 {
+		return errors.New("task.timeout_sec cannot be negative")
 	}
 	return nil
 }

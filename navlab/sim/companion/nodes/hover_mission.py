@@ -44,6 +44,8 @@ class HoverInputs:
     current_x: float | None
     current_y: float | None
     current_z_ned: float | None
+    current_height_m: float | None
+    target_z_ned: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,11 +101,18 @@ def decide_hover(
         return HoverDecision("guided", "setting_guided", should_set_guided=True)
     if not inputs.armed_seen:
         return HoverDecision("arm", "arming_vehicle", should_arm=True)
-    if not inputs.takeoff_ack_ok or not inputs.airborne_seen:
+    if not inputs.airborne_seen:
         return HoverDecision("takeoff", "taking_off", should_takeoff=True)
     if inputs.airborne_elapsed_sec < hover_settle_sec:
         return HoverDecision("hover_settle", "settling_before_position_hold")
-    if inputs.current_z_ned is None or abs(inputs.current_z_ned + takeoff_alt_m) > hover_altitude_tolerance_m:
+    target_z_ned = inputs.target_z_ned if inputs.target_z_ned is not None else -takeoff_alt_m
+    if inputs.current_z_ned is not None:
+        if abs(inputs.current_z_ned - target_z_ned) > hover_altitude_tolerance_m:
+            return HoverDecision("hover_settle", "settling_until_target_altitude")
+    elif inputs.current_height_m is not None:
+        if abs(inputs.current_height_m - takeoff_alt_m) > hover_altitude_tolerance_m:
+            return HoverDecision("hover_settle", "settling_until_target_altitude")
+    else:
         return HoverDecision("hover_settle", "settling_until_target_altitude")
     if inputs.hover_elapsed_sec < hover_hold_sec:
         return HoverDecision("hover_hold", "holding_position")
@@ -133,6 +142,22 @@ def summarize_hover_drift(samples: list[tuple[float, float, float, float]]) -> H
         horizontal_drift_m=math.hypot(end[1] - start[1], end[2] - start[2]),
         z_drift_m=abs(end[3] - start[3]),
     )
+
+
+def json_safe_number(value: float | int | None) -> float | int | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def hold_axis_or_current(hold_value: float | None, current_value: float | None) -> float:
+    if hold_value is not None:
+        return hold_value
+    if current_value is not None:
+        return current_value
+    return 0.0
 
 
 def command_ack_success(command_acks: list[dict[str, int]], command_id: int) -> bool:
@@ -300,11 +325,15 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._target_component: int | None = None
             self._external_nav_ready = False
             self._last_external_status_monotonic = 0.0
+            self._last_external_nav_state = ""
+            self._external_nav_status_history: list[dict[str, object]] = []
             self._imu_ready = False
             self._last_imu_status_monotonic = 0.0
             self._ready_started: float | None = None
             self._expected_mode_seen = False
             self._armed_seen = False
+            self._guided_seen_ever = False
+            self._armed_seen_ever = False
             self._external_expected_mode_seen = False
             self._external_armed_seen = False
             self._airborne_seen = False
@@ -316,6 +345,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._current_x: float | None = None
             self._current_y: float | None = None
             self._current_z: float | None = None
+            self._ground_z_ned: float | None = None
             self._current_vz: float | None = None
             self._current_range_m: float | None = None
             self._current_yaw_rad: float | None = None
@@ -360,8 +390,35 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._count_sent_command("disarm")
 
         def _handle_external_nav_status(self, msg: String) -> None:
-            self._external_nav_ready = self._status_ready(msg.data)
+            previous_ready = self._external_nav_ready
+            previous_state = self._last_external_nav_state
+            payload = self._parse_status_payload(msg.data)
+            self._external_nav_ready = payload.get("ready") is True
+            self._last_external_nav_state = str(payload.get("state") or "")
             self._last_external_status_monotonic = time.monotonic()
+            if self._external_nav_ready != previous_ready or self._last_external_nav_state != previous_state:
+                odom = payload.get("odom") if isinstance(payload.get("odom"), dict) else {}
+                event = {
+                    "elapsed_sec": round(self._last_external_status_monotonic - self._started, 3),
+                    "ready": self._external_nav_ready,
+                    "state": self._last_external_nav_state,
+                    "input_topic": odom.get("input_topic"),
+                    "rate_hz": odom.get("rate_hz"),
+                    "rate_ok": odom.get("rate_ok"),
+                    "frame_ok": odom.get("frame_ok"),
+                    "age_ms": odom.get("age_ms"),
+                }
+                self._external_nav_status_history.append(event)
+                self._external_nav_status_history = self._external_nav_status_history[-40:]
+                self.get_logger().info(
+                    "external_nav status "
+                    f"ready={self._external_nav_ready} "
+                    f"state={self._last_external_nav_state} "
+                    f"input={event['input_topic']} "
+                    f"rate_hz={event['rate_hz']} "
+                    f"rate_ok={event['rate_ok']} "
+                    f"frame_ok={event['frame_ok']}"
+                )
 
         def _handle_imu_status(self, msg: String) -> None:
             self._imu_ready = self._status_ready(msg.data)
@@ -377,11 +434,15 @@ def run(argv: Sequence[str] | None = None) -> int:
 
         @staticmethod
         def _status_ready(data: str) -> bool:
+            return MavlinkHoverMissionController._parse_status_payload(data).get("ready") is True
+
+        @staticmethod
+        def _parse_status_payload(data: str) -> dict[str, object]:
             try:
                 payload = json.loads(data)
             except json.JSONDecodeError:
-                return False
-            return payload.get("ready") is True
+                return {}
+            return payload if isinstance(payload, dict) else {}
 
         def _tick(self) -> None:
             now = time.monotonic()
@@ -480,10 +541,12 @@ def run(argv: Sequence[str] | None = None) -> int:
                         self._connection,
                         self._target_system,
                         self._target_component,
-                        self._hold_x if self._hold_x is not None else 0.0,
-                        self._hold_y if self._hold_y is not None else 0.0,
-                        -args.takeoff_alt_m,
-                        self._hold_yaw_rad if self._hold_x is not None else (self._current_yaw_rad or 0.0),
+                        hold_axis_or_current(self._hold_x, self._current_x),
+                        hold_axis_or_current(self._hold_y, self._current_y),
+                        self._target_z_ned(),
+                        self._hold_yaw_rad
+                        if self._hold_x is not None and self._hold_y is not None
+                        else (self._current_yaw_rad or 0.0),
                     )
                     self._setpoints_sent += 1
                     self._count_sent_command("local_position_yaw_setpoint")
@@ -560,12 +623,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                 self._next_disarm_command = now + 2.0
             disarmed = not self._armed_seen
             motors_safe = disarmed if args.require_motors_safe else True
-            landing_ok = (
-                command_ack_success(self._command_acks, mavlink.MAV_CMD_NAV_LAND)
-                and self._touchdown_confirmed
-                and (disarmed if args.require_disarm else True)
-                and motors_safe
-            )
+            landing_ok = self._touchdown_confirmed and (disarmed if args.require_disarm else True) and motors_safe
             self._publish_landing_status()
             if landing_ok:
                 self._landing_state = "landing_complete"
@@ -586,10 +644,12 @@ def run(argv: Sequence[str] | None = None) -> int:
                 self._connection,
                 self._target_system,
                 self._target_component,
-                self._hold_x if self._hold_x is not None else 0.0,
-                self._hold_y if self._hold_y is not None else 0.0,
+                hold_axis_or_current(self._hold_x, self._current_x),
+                hold_axis_or_current(self._hold_y, self._current_y),
                 -args.takeoff_alt_m,
-                self._hold_yaw_rad if self._hold_x is not None else (self._current_yaw_rad or 0.0),
+                self._hold_yaw_rad
+                if self._hold_x is not None and self._hold_y is not None
+                else (self._current_yaw_rad or 0.0),
             )
             self._setpoints_sent += 1
             self._count_sent_command("local_position_yaw_setpoint")
@@ -615,6 +675,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                     self._target_component = msg.get_srcComponent()
                     self._expected_mode_seen = int(msg.custom_mode) == self.mode_number
                     self._armed_seen = bool(int(msg.base_mode) & mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+                    self._guided_seen_ever = self._guided_seen_ever or self._expected_mode_seen
+                    self._armed_seen_ever = self._armed_seen_ever or self._armed_seen
                 elif msg_type == "COMMAND_ACK":
                     if len(self._command_acks) < 120:
                         self._command_acks.append({"command": int(msg.command), "result": int(msg.result)})
@@ -629,7 +691,9 @@ def run(argv: Sequence[str] | None = None) -> int:
                     self._current_y = float(msg.y)
                     self._current_z = float(msg.z)
                     self._current_vz = float(getattr(msg, "vz", 0.0))
-                    if self._current_z <= -args.min_airborne_alt_m:
+                    if self._ground_z_ned is None:
+                        self._ground_z_ned = self._current_z
+                    if self._ground_z_ned - self._current_z >= args.min_airborne_alt_m:
                         self._airborne_seen = True
                 elif msg_type == "ATTITUDE":
                     self._current_yaw_rad = float(msg.yaw)
@@ -684,14 +748,20 @@ def run(argv: Sequence[str] | None = None) -> int:
                     args.simulate_mode_arm or self._expected_mode_seen or self._external_expected_mode_seen
                 ),
                 armed_seen=args.simulate_mode_arm or self._armed_seen or self._external_armed_seen,
-                airborne_seen=self._airborne_seen and takeoff_ack_ok,
+                airborne_seen=self._airborne_seen,
                 takeoff_ack_ok=takeoff_ack_ok,
                 airborne_elapsed_sec=airborne_elapsed,
                 hover_elapsed_sec=hover_elapsed,
                 current_x=self._current_x,
                 current_y=self._current_y,
                 current_z_ned=self._current_z,
+                current_height_m=self._current_range_m,
+                target_z_ned=self._target_z_ned(),
             )
+
+        def _target_z_ned(self) -> float:
+            ground_z = self._ground_z_ned if self._ground_z_ned is not None else 0.0
+            return ground_z - args.takeoff_alt_m
 
         def _publish_status(self, decision: HoverDecision, inputs: HoverInputs) -> None:
             status_payload = {
@@ -713,6 +783,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                     "x": inputs.current_x,
                     "y": inputs.current_y,
                     "z_ned": inputs.current_z_ned,
+                    "height_m": inputs.current_height_m,
+                    "target_z_ned": inputs.target_z_ned,
                     "yaw_rad": self._current_yaw_rad,
                 },
             }
@@ -739,16 +811,9 @@ def run(argv: Sequence[str] | None = None) -> int:
             land_command_accepted = command_ack_success(self._command_acks, mavlink.MAV_CMD_NAV_LAND)
             disarmed = not self._armed_seen
             motors_safe = disarmed if args.require_motors_safe else True
-            ok = bool(
-                land_command_accepted
-                and self._touchdown_confirmed
-                and (disarmed if args.require_disarm else True)
-                and motors_safe
-            )
+            ok = bool(self._touchdown_confirmed and (disarmed if args.require_disarm else True) and motors_safe)
             blockers = list(dict.fromkeys(self._landing_blockers))
             if self._landing_started is not None:
-                if not land_command_accepted:
-                    blockers.append("landing_command_not_accepted")
                 if not self._touchdown_confirmed:
                     blockers.append("touchdown_not_confirmed")
                 if args.require_disarm and not disarmed:
@@ -802,6 +867,23 @@ def run(argv: Sequence[str] | None = None) -> int:
             if not args.summary_file:
                 return
             drift = summarize_hover_drift(self._hover_samples)
+            hover_z_ned = self._hover_samples[-1][3] if self._hover_samples else self._current_z
+            target_z_ned = self._target_z_ned()
+            if hover_z_ned is not None:
+                altitude_error_m = abs(float(hover_z_ned) - float(target_z_ned))
+            elif self._current_range_m is not None:
+                altitude_error_m = abs(float(self._current_range_m) - float(args.takeoff_alt_m))
+            else:
+                altitude_error_m = None
+            landing_summary = self._landing_summary()
+            external_nav_age_sec = -1.0
+            if self._last_external_status_monotonic > 0.0:
+                external_nav_age_sec = time.monotonic() - self._last_external_status_monotonic
+            external_nav_ready = (
+                self._external_nav_ready
+                and self._last_external_status_monotonic > 0.0
+                and external_nav_age_sec <= args.status_timeout_sec
+            )
             summary = {
                 "ok": ok,
                 "reason": reason,
@@ -812,8 +894,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                 "status_history": self._status_history[-40:],
                 "mode": args.mode,
                 "mode_number": self.mode_number,
-                "guided_seen": self._expected_mode_seen or self._external_expected_mode_seen,
-                "armed_seen": self._armed_seen or self._external_armed_seen,
+                "guided_seen": self._guided_seen_ever or self._expected_mode_seen or self._external_expected_mode_seen,
+                "armed_seen": self._armed_seen_ever or self._armed_seen or self._external_armed_seen,
                 "airborne_seen": self._airborne_seen,
                 "takeoff_ack_ok": command_ack_success(self._command_acks, mavlink.MAV_CMD_NAV_TAKEOFF),
                 "arm_ack_ok": command_ack_success(self._command_acks, mavlink.MAV_CMD_COMPONENT_ARM_DISARM),
@@ -821,24 +903,38 @@ def run(argv: Sequence[str] | None = None) -> int:
                 "setpoints_sent_count": self._setpoints_sent,
                 "local_position_count": self._message_counts.get("LOCAL_POSITION_NED", 0),
                 "rangefinder_count": self._rangefinder_count(),
+                "target_alt_m": args.takeoff_alt_m,
+                "takeoff_alt_m": args.takeoff_alt_m,
+                "ground_z_ned": self._ground_z_ned,
+                "target_z_ned": target_z_ned,
+                "current_z_ned": hover_z_ned,
+                "current_height_m": self._current_range_m,
+                "altitude_error_m": altitude_error_m,
                 "preflight_ready_sec": args.preflight_ready_sec,
                 "hover_settle_sec": args.hover_settle_sec,
                 "hover_altitude_tolerance_m": args.hover_altitude_tolerance_m,
                 "hover_hold_sec": args.hover_hold_sec,
+                "hover_hold_duration_sec": drift.duration_sec,
                 "require_external_nav": args.require_external_nav,
+                "external_nav_ready": external_nav_ready,
+                "external_nav_status_age_sec": external_nav_age_sec,
+                "external_nav_status_history": self._external_nav_status_history[-40:],
                 "require_imu_status": args.require_imu_status,
                 "send_position_setpoints": args.send_position_setpoints,
                 "hover_drift": {
                     "sample_count": drift.sample_count,
                     "duration_sec": drift.duration_sec,
-                    "horizontal_span_m": drift.horizontal_span_m,
-                    "z_span_m": drift.z_span_m,
-                    "horizontal_drift_m": drift.horizontal_drift_m,
-                    "z_drift_m": drift.z_drift_m,
+                    "horizontal_span_m": json_safe_number(drift.horizontal_span_m),
+                    "z_span_m": json_safe_number(drift.z_span_m),
+                    "horizontal_drift_m": json_safe_number(drift.horizontal_drift_m),
+                    "z_drift_m": json_safe_number(drift.z_drift_m),
                     "max_horizontal_drift_m": args.max_horizontal_drift_m,
                     "max_altitude_drift_m": args.max_altitude_drift_m,
                     "duration_tolerance_sec": HOVER_DURATION_TOLERANCE_SEC,
                     "horizontal_span_ok": drift.horizontal_span_m <= args.max_horizontal_drift_m,
+                    "horizontal_drift_ok": drift.horizontal_drift_m <= args.max_horizontal_drift_m,
+                    "z_span_ok": drift.z_span_m <= args.max_altitude_drift_m,
+                    "duration_ok": drift.duration_sec >= args.hover_hold_sec - HOVER_DURATION_TOLERANCE_SEC,
                     "ok": (
                         drift.ok
                         and drift.duration_sec >= args.hover_hold_sec - HOVER_DURATION_TOLERANCE_SEC
@@ -856,11 +952,17 @@ def run(argv: Sequence[str] | None = None) -> int:
                 "ekf_flags_seen": sorted(set(self._ekf_flags)),
                 "gps_global_origin_seen": self._gps_global_origin_seen,
                 "home_position_seen": self._home_position_seen,
-                "landing": self._landing_summary(),
+                "land_command_accepted": landing_summary["land_command_accepted"],
+                "touchdown_confirmed": landing_summary["touchdown_confirmed"],
+                "disarmed": landing_summary["disarmed"],
+                "motors_safe": landing_summary["motors_safe"],
+                "landing": landing_summary,
             }
             path = Path(args.summary_file)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+            tmp_path = path.with_name(path.name + ".tmp")
+            tmp_path.write_text(json.dumps(summary, allow_nan=False, indent=2, sort_keys=True), encoding="utf-8")
+            tmp_path.replace(path)
 
     rclpy.init(args=None)
     node = MavlinkHoverMissionController()

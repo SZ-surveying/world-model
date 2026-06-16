@@ -68,7 +68,7 @@ P9 包含：
 - 定义代表性 exploration replay profile，用于生成更有解释力的 P9 输入 run。
 - 从 raw MCAP 生成 `rosbag_foxglove/rosbag_foxglove_0.mcap`。
 - Foxglove-lite MCAP 只保留可视化和诊断必要 topic。
-- 上传脚本默认上传 raw/full `rosbag`；显式传 `--lite` 时上传 `rosbag_foxglove`，如果 lite 不存在则先自动生成。
+- Go sim `foxglove build-replay` 负责生成 lite MCAP；`foxglove upload` 只允许上传已经通过 topic 校验的 lite MCAP。
 - 写出 `foxglove_replay_summary.json`，记录输入、输出、裁剪窗口、topic 和大小。
 
 P9 不包含：
@@ -244,22 +244,18 @@ Official maze source
   /home/nn/workspace/3588/ardupilot_gz/.../worlds/maze.sdf
 
 P9 postprocess
-  scripts/build_foxglove_replay_mcap.py
-    -> read raw MCAP metadata/topics
-    -> read /map bbox and odom/trajectory bbox
-    -> parse maze.sdf wall boxes
-    -> rasterize walls into OccupancyGrid
-    -> write /navlab/official_maze/map
+  navlab-sim foxglove build-replay <run_id> --task <task>
+    -> read raw MCAP metadata/topics with Foxglove's Go MCAP library
+    -> require the runtime-published /navlab/official_maze/map topic
     -> filter/downsample replay topics
     -> write rosbag_foxglove/rosbag_foxglove_0.mcap
     -> write foxglove_replay_summary.json
 
 Foxglove upload
-  scripts/upload_foxglove_mcap.py <run_id>
-    -> upload raw/full rosbag/rosbag_0.mcap by default
-  scripts/upload_foxglove_mcap.py <run_id> --lite
-    -> upload or auto-generate rosbag_foxglove/rosbag_foxglove_0.mcap
+  navlab-sim foxglove upload <run_id> --task <task> --force
+    -> upload an existing rosbag_foxglove/rosbag_foxglove_0.mcap
     -> attach summary.json and foxglove_replay_summary.json
+    -> fail if overlay + required topics are missing
 ```
 
 ## 6. Topic 设计
@@ -424,7 +420,7 @@ P9 通过必须满足：
 - `uses_official_maze_as_input == false`。
 - `uses_gazebo_truth_as_input == false`。
 - 输出 MCAP 小于 raw MCAP，或 summary 明确解释无法缩小的原因。
-- 上传脚本默认上传 raw/full MCAP；显式 `--lite` 时上传或自动生成 Foxglove-lite MCAP。
+- Go sim upload command 拒绝 raw/full MCAP；只能上传已经存在且通过 `overlay + required` topic 校验的 Foxglove-lite MCAP。
 
 P9 阻塞条件示例：
 

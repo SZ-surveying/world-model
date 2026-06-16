@@ -65,6 +65,7 @@ Gazebo 物理世界
 | P10 | 机体固连 lidar 姿态补偿与 scan integrity gate | `/scan` 变成 attitude-validated scan，坏姿态 scan 不静默进入 SLAM | IMU/FCU attitude + X2 lidar + P9 overlay | `todos/P10_body_fixed_lidar_scan_integrity_todo.md` |
 | P11 | 有界 2D lidar 姿态稳定化 | 基于 P9 representative replay，对中等倾角 scan 做有界补偿且不引入假墙 | P9 replay + P10 integrity + 2D lidar projection | `todos/P11_bounded_2d_lidar_scan_stabilization_todo.md` |
 | P12 | 机体扰动下的 scan 水平复原鲁棒性 | motor bias / ESC lag / thrust multiplier / vibration 仿真，验证 P11 水平复原仍安全 | P11 scan stabilization + airframe disturbance profiles + P9 replay | `todos/P12_airframe_disturbance_scan_robustness_todo.md` |
+| P13 | Nav2 室内导航与主动探索 | Nav2 costmap/action/adapter 在 ideal + realistic profiles 下走出 maze，并按 completion policy 原地降落或返航降落 | Navigation2 #3773 + Altair-Silent + P12 envelope | `todos/P13_nav2_indoor_navigation_todo.md` |
 
 ## 4. Phase 详细定义
 

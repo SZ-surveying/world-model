@@ -133,7 +133,7 @@ def select_transform(transforms: Sequence[object], *, child_frame_id: str, trans
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Publish Gazebo physical model pose as nav_msgs/Odometry.")
-    parser.add_argument("--input-topic", default="/world/navlab_iq_quad_figure8/dynamic_pose/info")
+    parser.add_argument("--input-topic", default="/gazebo/tf")
     parser.add_argument("--odom-topic", default="/gazebo/truth/odom")
     parser.add_argument("--status-topic", default="/gazebo/truth/status")
     parser.add_argument("--frame-id", default="odom")

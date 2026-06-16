@@ -3,7 +3,9 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path"
 	"strconv"
 	"time"
 )
@@ -34,8 +36,9 @@ func (ExecRunner) Run(ctx context.Context, command string, args ...string) (Comm
 }
 
 type DockerBackend struct {
-	Runner CommandRunner
-	Now    func() time.Time
+	Runner      CommandRunner
+	Now         func() time.Time
+	DefaultUser string
 }
 
 func NewDockerBackend(runner CommandRunner) DockerBackend {
@@ -43,8 +46,9 @@ func NewDockerBackend(runner CommandRunner) DockerBackend {
 		runner = ExecRunner{}
 	}
 	return DockerBackend{
-		Runner: runner,
-		Now:    time.Now,
+		Runner:      runner,
+		Now:         time.Now,
+		DefaultUser: CurrentUserSpec(),
 	}
 }
 
@@ -52,6 +56,7 @@ func (backend DockerBackend) StartService(spec ServiceSpec) (RuntimeHandle, erro
 	if err := spec.ValidateDocker(); err != nil {
 		return RuntimeHandle{}, err
 	}
+	spec = backend.withDefaultUser(spec)
 	args, err := DockerServiceArgs(spec)
 	if err != nil {
 		return RuntimeHandle{}, err
@@ -88,7 +93,8 @@ func (backend DockerBackend) RunProbe(spec ProbeSpec) (ProbeResult, error) {
 	if err := spec.ValidateDocker(); err != nil {
 		return ProbeResult{}, err
 	}
-	args, err := DockerProbeArgs(spec)
+	service := backend.withDefaultUser(ProbeServiceSpec(spec))
+	args, err := DockerServiceArgs(service)
 	if err != nil {
 		return ProbeResult{}, err
 	}
@@ -130,7 +136,9 @@ func (backend DockerBackend) Wait(handle RuntimeHandle) (int, error) {
 }
 
 func (backend DockerBackend) Stop(handle RuntimeHandle) error {
-	_, err := backend.runner().Run(context.Background(), "docker", "rm", "-f", handle.Identifier)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, err := backend.runner().Run(ctx, "docker", "rm", "-f", handle.Identifier)
 	if err != nil {
 		return fmt.Errorf("docker stop %s failed: %w", handle.ServiceName, err)
 	}
@@ -190,7 +198,11 @@ func DockerProbeArgs(spec ProbeSpec) ([]string, error) {
 	if err := spec.ValidateDocker(); err != nil {
 		return nil, err
 	}
-	service := ServiceSpec{
+	return DockerServiceArgs(ProbeServiceSpec(spec))
+}
+
+func ProbeServiceSpec(spec ProbeSpec) ServiceSpec {
+	return ServiceSpec{
 		Name:          spec.Name,
 		Command:       spec.Command,
 		Image:         spec.Image,
@@ -205,7 +217,49 @@ func DockerProbeArgs(spec ProbeSpec) ([]string, error) {
 		LogPath:       spec.LogPath,
 		ServiceRole:   spec.ServiceRole,
 	}
-	return DockerServiceArgs(service)
+}
+
+func CurrentUserSpec() string {
+	uid := os.Getuid()
+	gid := os.Getgid()
+	if uid == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", uid, gid)
+}
+
+func (backend DockerBackend) withDefaultUser(spec ServiceSpec) ServiceSpec {
+	if spec.User != "" {
+		return spec
+	}
+	if backend.DefaultUser == "" {
+		return spec
+	}
+	spec.User = backend.DefaultUser
+	spec.Env = withWritableRuntimeEnv(spec.Env)
+	return spec
+}
+
+func withWritableRuntimeEnv(env map[string]string) map[string]string {
+	if env == nil {
+		env = map[string]string{}
+	} else {
+		copied := make(map[string]string, len(env)+3)
+		for key, value := range env {
+			copied[key] = value
+		}
+		env = copied
+	}
+	if env["HOME"] == "" {
+		env["HOME"] = "/tmp"
+	}
+	if env["ROS_LOG_DIR"] == "" {
+		env["ROS_LOG_DIR"] = "/tmp/navlab-ros-logs"
+	}
+	if env["XDG_CACHE_HOME"] == "" {
+		env["XDG_CACHE_HOME"] = "/tmp/navlab-cache"
+	}
+	return env
 }
 
 func RosbagServiceSpec(spec RosbagSpec) (ServiceSpec, error) {
@@ -217,10 +271,19 @@ func RosbagServiceSpec(spec RosbagSpec) (ServiceSpec, error) {
 	if storage == "" {
 		storage = "mcap"
 	}
-	command := []string{"ros2", "bag", "record", "-s", storage, "-o", spec.OutputPath, "--topics"}
+	command := []string{"ros2", "bag", "record", "-s", storage, "--compression-mode", "file", "--compression-format", "zstd", "-o", spec.OutputPath, "--topics"}
 	command = append(command, topics...)
 	if spec.DurationSec > 0 {
-		shellCommand := fmt.Sprintf("timeout --signal=INT %.1f %s", spec.DurationSec, shellJoin(command))
+		outputParent := path.Dir(spec.OutputPath)
+		metadataPath := path.Join(spec.OutputPath, "metadata.yaml")
+		shellCommand := fmt.Sprintf(
+			"rm -rf %s && mkdir -p %s && set +e; timeout --signal=INT %.1f %s; rc=$?; set -e; if [ \"$rc\" != \"0\" ] && [ \"$rc\" != \"124\" ] && [ \"$rc\" != \"130\" ]; then exit \"$rc\"; fi; for i in $(seq 1 40); do [ -f %s ] && exit 0; sleep 0.25; done; exit 2",
+			shellQuote(spec.OutputPath),
+			shellQuote(outputParent),
+			spec.DurationSec,
+			shellJoin(command),
+			shellQuote(metadataPath),
+		)
 		command = []string{"bash", "-lc", shellCommand}
 	}
 	return ServiceSpec{

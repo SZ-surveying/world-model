@@ -7,7 +7,7 @@ from pathlib import Path
 from navlab.sim.gazebo_sensor.runtime import (
     X2SensorLaunchConfig,
     build_down_rangefinder_bridge_command,
-    build_down_rangefinder_sender_command,
+    build_down_rangefinder_projection_command,
     build_emulator_command,
     build_scan_ideal_bridge_command,
     build_scan_integrity_filter_command,
@@ -72,10 +72,10 @@ def test_down_rangefinder_runtime_bridges_gazebo_scan() -> None:
     assert "override_frame_id:=rangefinder_down_frame" in command
 
 
-def test_down_rangefinder_sender_runs_in_gazebo_sensor_runtime() -> None:
-    command = build_down_rangefinder_sender_command()
+def test_down_rangefinder_projection_runs_in_gazebo_sensor_runtime() -> None:
+    command = build_down_rangefinder_projection_command()
 
-    assert command == [command[0], "-m", "navlab.sim.gazebo_sensor.rangefinder"]
+    assert command == [command[0], "-m", "navlab.sim.gazebo_sensor.range_projection"]
 
 
 def test_x2_sensor_runtime_vendor_driver_uses_profile() -> None:
@@ -113,6 +113,18 @@ def test_scan_time_normalizer_uses_monotonic_fallback_for_zero_stamp() -> None:
 def test_scan_time_normalizer_keeps_preferred_stamp_when_valid() -> None:
     assert monotonic_scan_stamp_ns(preferred_ns=42, fallback_elapsed_sec=1.0, previous_ns=None) == 42
     assert monotonic_scan_stamp_ns(preferred_ns=40, fallback_elapsed_sec=1.0, previous_ns=42) == 43
+
+
+def test_scan_time_normalizer_advances_by_scan_duration_when_clock_repeats() -> None:
+    first = monotonic_scan_stamp_ns(preferred_ns=1_000_000_000, fallback_elapsed_sec=1.0, previous_ns=None)
+    second = monotonic_scan_stamp_ns(
+        preferred_ns=1_000_000_000,
+        fallback_elapsed_sec=1.0,
+        previous_ns=first,
+        min_increment_ns=142_000_000,
+    )
+
+    assert second == first + 142_000_000
 
 
 def test_x2_sensor_runtime_can_launch_scan_integrity_filter() -> None:

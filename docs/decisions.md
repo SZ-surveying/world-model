@@ -1,5 +1,178 @@
 # Decisions
 
+## 2026-06-16: SITL rangefinder must emulate the real Benewake serial boundary
+
+Decision: `docker/profiles/navlab-sitl-external-nav.parm` is a
+hardware-faithful SITL profile, not a Gazebo-specific compatibility profile.
+Keep `RNGFND1_TYPE=20` and configure the FCU serial port with
+`SERIAL7_PROTOCOL=9`, matching `docs/debug.param` and `docs/ori.param`. SITL
+must adapt by emulating the Benewake TFmini serial peripheral, or the task must
+fail closed with an explicit blocker. Do not rewrite this profile to
+`RNGFND1_TYPE=10` just because the current simulator path can inject MAVLink
+`DISTANCE_SENSOR`.
+
+Update: this profile uses `EK3_SRC1_POSZ=2` so vertical position comes from the
+down-facing rangefinder, matching the indoor low-altitude NavLab stack. It keeps
+`EK3_SRC1_VELZ=6` so vertical velocity remains ExternalNav, matching the
+ArduPilot Cartographer guidance. Do not set `VELZ` to `0` for the 2D SLAM path:
+that disables a source the official ExternalNav setup expects. The difference
+from the official example is only the vertical position source: official
+Cartographer SITL uses barometer (`POSZ=1`), while NavLab's indoor profile uses
+rangefinder (`POSZ=2`).
+
+Basis: local ArduPilot sources define `RNGFND1_TYPE=10` as MAVLink and
+`RNGFND1_TYPE=20` as `BenewakeTFmini-Serial`. `SERIAL*_PROTOCOL=9` is
+Rangefinder. ArduPilot's own SITL Benewake TFmini example starts a serial
+rangefinder backend with `--serial5=sim:benewake_tfmini`, then sets
+`SERIAL5_PROTOCOL=9` and `RNGFND1_TYPE=20`.
+
+Update: local hover live on 2026-06-16 showed the direct
+`serial7:=sim:benewake_tfmini` backend can crash ArduPilot `arducopter` inside
+the current official Gazebo/DDS bringup with a floating point exception. NavLab
+therefore uses its own PTY-backed Benewake TFmini emulator and launches
+ArduPilot with `serial7:=uart:/tmp/navlab_benewake_tfmini:115200`. The direct
+`sim:benewake_tfmini` backend is retained only as source context and audit
+evidence, not as the runtime path.
+
+Reason: realistic simulation means the FCU sees the same peripheral boundary as
+the real machine:
+
+```text
+Real: Benewake TFmini -> UART -> FCU
+SITL: Gazebo range observation -> Benewake serial emulator -> SITL serial -> FCU
+```
+
+This is the same principle already used for X2 lidar: Gazebo may produce the
+physical observation, but the downstream driver/FCU must consume the same
+protocol class it consumes on hardware. Gazebo truth remains diagnostic-only;
+missing serial rangefinder evidence must block the task instead of falling back
+to MAVLink or truth odometry.
+
+## 2026-06-16: SITL ExternalNav profile owns origin setup and fresh FCU feedback gates
+
+Decision: `docker/profiles/navlab-sitl-external-nav.parm` is the active
+realistic SITL ExternalNav profile. Its companion Lua origin script is also a
+profile input at `docker/profiles/ahrs-set-origin.lua`, and Go sim copies it to
+`sitl_work/scripts/ahrs-set-origin.lua` before launching ArduPilot so SITL can
+load it with `SCR_ENABLE=1`.
+
+Basis: ArduPilot SITL loads Lua scripts from the `scripts` directory under the
+simulator start directory. The official baseline service starts from each run's
+artifact `sitl_work`, so keeping the script only under `docs/` is not a runtime
+configuration. The Lua profile also carries the same NavLab SITL origin defaults
+as the parameter profile because SITL may process `.parm` files before a Lua
+custom parameter table exists.
+
+Reason: hover/exploration/scan-robustness must exercise the same
+ExternalNav-only path as the real machine: no GPS truth fallback, no Gazebo
+truth substitution, and no stale FCU position treated as healthy. A MAVLink
+ExternalNav sender is ready only when it is actively sending `/external_nav/odom`
+and the FCU is still publishing fresh `LOCAL_POSITION_NED`; historical
+`local_position_count > 0` is not sufficient evidence.
+
+## 2026-06-15: Go sim orchestrates Python runtime nodes during parity recovery
+
+Decision: during sim parity recovery, Go owns task loading, registry,
+execution planning, artifact generation, Docker/ROS process orchestration,
+result gates, and summary writing. Python remains the runtime language for
+NavLab sim companion nodes such as `hover_mission.py`, `obstacle_mission.py`,
+and ROS probe/runtime scripts that embody the old mission behavior. Do not
+rewrite these mission runtimes into Go as part of H0/H1.
+
+Basis: the hover false pass came from replacing the old Python
+`hover_mission.py` phase contract with a Go-generated generic FCU controller
+readiness path. That changed semantics: `controller_ready` was treated like
+`hover_hold`, and takeoff readiness was treated like hover completion.
+
+Reason: the current migration target is Go orchestration with Python runtime,
+not a full Go runtime rewrite. Preserving the Python runtime boundary lets Go
+own the control plane while keeping the mature MAVLink mission state machines
+traceable and comparable to the old orchestration baseline.
+
+Update: `fcu-controller` is not part of the hover task during parity recovery.
+It is a shared FCU/MAVLink setpoint adapter for workflow tasks such as
+exploration and navigation, where another workflow publishes setpoint intent.
+Hover is a mission-state-machine task, so only `hover_mission.py` may own the
+MAVLink GUIDED/arm/takeoff/hold/landing sequence. Recombining hover with a
+shared FCU adapter is deferred until the old Python hover/exploration/scan
+semantics have been faithfully reproduced and accepted by live evidence.
+
+Update: H2/H3 hover acceptance is now evidence-gated on the Python mission
+summary. `hover_hold` requires `LOCAL_POSITION_NED`-based `current_z_ned`,
+`altitude_error_m <= hover_altitude_tolerance_m`, positive local-position and
+setpoint counts, sufficient hover-hold duration, drift `ok=true`, and landing
+fields `land_command_accepted`, `touchdown_confirmed`, `disarmed`, and
+`motors_safe`. ACKs, `GLOBAL_POSITION_INT`, or controller readiness are not
+sufficient hover completion evidence.
+
+## 2026-06-15: Evidence-first completion claims are mandatory
+
+Decision: no orchestration task, migration slice, live run, replay artifact, or
+Foxglove upload may be described as complete, passed, parity-equivalent, or
+ready for the next stage unless the required runtime evidence exists and is
+traceable. If evidence is missing, partial, contradictory, or generated by a
+weaker path than the baseline, the status must be written as `blocked`,
+`not_verified`, `not_equivalent`, or `false_pass_found`.
+
+Basis: the Go sim migration exposed false-positive reporting in hover and
+exploration. A controller readiness status, ACK, topic count, setpoint count,
+short movement, static SLAM pose, generated script, or visible Foxglove layer
+was treated as stronger evidence than it actually was. The hover artifact
+`artifacts/sim/hover/20260615T115355Z/summary.json` was marked
+`TASK_STATUS_OK` even though the observed takeoff height was only about
+`0.19m` for a `0.5m` target. That artifact must be treated as invalid
+acceptance evidence.
+
+Reason: sim and real migration must fail closed. Reporting must follow code
+and artifact evidence, not intent, apparent UI output, or inferred progress.
+Visual replay artifacts are review aids only; they are never acceptance
+evidence by themselves. Before continuing dependent work, especially Nav2/P13
+or Python sim retirement, each prerequisite task must have a complete live
+summary and must preserve the baseline task semantics documented in
+`docs/general/sim_task_parity_differences_audit.md`.
+
+Operational rule:
+
+- Do not say "done", "completed", "passed", or "parity complete" without
+  naming the summary/artifact/test that proves it.
+- Do not use a weaker metric as a substitute for the original acceptance
+  contract.
+- Do not upload or cite Foxglove lite output as proof of task success unless
+  the task summary already passed.
+- If a previous claim is found false, mark the artifact and document as
+  invalid/false-pass before doing more feature work.
+
+## 2026-06-14: Go sim must preserve Python orchestration SLAM parity before Nav2 expansion
+
+Decision: treat `cae4288` Python orchestration as the parity baseline for
+SLAM/topic/frame/truth semantics while Go sim continues replacing the control
+plane. Add `docs/general/orchestration_sim_python_parity_audit.md` as the
+traceable migration record and align Go helper defaults with the old runtime
+contract: `base_scan`, `rangefinder_down_frame`, `/rangefinder/down/*`,
+`/ap/v1/*`, `/odometry` as diagnostic-only unless backed by a real-equivalent
+sensor source, and `/slam/odom` + `/map` as SLAM-owned canonical outputs.
+
+Basis: the P13 navigation debugging showed a migration regression risk: seed
+maps and diagnostic odometry can make Foxglove look partially populated while
+the actual Cartographer `/map` and `/slam/odom` ownership is broken. The old
+Python P3/P6/P8 helpers explicitly blocked Gazebo truth as SLAM, ExternalNav,
+planning, exploration, or control input and kept official maze overlay as a
+visualization-only layer.
+
+Reason: Nav2 work should build on the mature SLAM/FCU/rosbag/replay surface,
+not replace it. Real migration later must use the same semantic audit: truth or
+diagnostic signals may be recorded, but cannot become canonical SLAM or control
+inputs.
+
+Update: the 2026-06-14 Go sim live parity run exposed that the old
+Python/Go-migrated stack could still leak official/Gazebo bridge odometry or
+Gazebo pose TF into Cartographer/adapter paths. The accepted rule is stricter:
+Gazebo may generate realistic sensor observations, but Gazebo `/odometry`,
+Gazebo pose TF, seed maps, and official maze maps are diagnostic/review-only
+unless a real-machine equivalent input is explicitly documented. `/slam/odom`
+and `/map` must come from the SLAM backend, not from Gazebo truth or replay
+overlays.
+
 ## 2026-06-13: Sim Docker images are split into infra and runtime layers
 
 Decision: move simulation Dockerfiles into `docker/images/base/*.Dockerfile`,
@@ -1010,11 +1183,21 @@ Reason: the current phase needs a world that is tight enough to expose lidar ori
 
 ## 2026-06-04: NavLab down rangefinder is a gazebo-sensor FCU peripheral
 
-Decision: model the down-facing altitude rangefinder in `gazebo-sensor`, not in companion.
+Decision: superseded for SITL FCU input by the 2026-06-16 Benewake serial
+boundary decision. `gazebo-sensor` still publishes ROS review/height topics
+from the Gazebo down range observation, but it must not inject FCU rangefinder
+data with MAVLink `DISTANCE_SENSOR` in sim.
 
 Basis: current phase goal and real-machine mechanism.
 
-Reason: on the real drone, altitude hold can be handled by the FCU using its own rangefinder input; the companion computer should not be required just to hold height. In simulation, the equivalent mechanism is `Gazebo range sensor -> gazebo-sensor -> MAVLink DISTANCE_SENSOR -> ArduPilot rangefinder/EKF/altitude controller`. Companion may observe `/rangefinder/down/status`, FCU telemetry, and Gazebo truth for summary and rosbag, but it must not send rangefinder data or directly control throttle/pose for hover.
+Reason: on the real drone, altitude hold can be handled by the FCU using its
+own rangefinder input; the companion computer should not be required just to
+hold height. The accepted SITL equivalent is now `Gazebo range observation ->
+ArduPilot Benewake serial simulator -> SITL Serial7 -> FCU`, while
+`/rangefinder/down/range` is a ROS observation topic for height estimator,
+review, summary, and rosbag. Companion may observe `/rangefinder/down/status`,
+FCU telemetry, and Gazebo truth for summary and rosbag, but it must not send
+rangefinder data or directly control throttle/pose for hover.
 
 ## 2026-06-04: NavLab replay TF closes through navlab_world-map-odom-base_link
 
@@ -1569,3 +1752,531 @@ Reason: live TUI should be a monitor over the same runner and artifacts, not a
 second execution path. Keeping JSON artifacts canonical preserves CI/replay
 behavior, while the event sink can later map cleanly to
 `runtime.v1.ProcessEvent` when generated contract types are adopted.
+
+## 2026-06-13: P13 starts with a truthful Nav2 dry-run contract
+
+Decision: implement the first P13 Nav2 indoor navigation slice as Go sim
+configuration, task registry, execution plan, generated runtime artifacts, and
+static gate checks. Live Nav2 lifecycle, NavigateToPose action handling, and
+adapter node behavior remain explicit TODO items instead of being reported as
+complete.
+
+Basis: P13 depends on existing P10/P11/P12 scan, SLAM, FCU owner, and landing
+contracts, but it adds new Nav2/costmap/adapter boundaries. The first slice now
+loads `[nav2]`, `[nav2.costmap]`, `[navigation_adapter]`, and
+`[navigation_mission]`, registers the `navigation` task, generates
+`nav2_params.yaml`, `navigation_adapter_runtime.toml`, Nav2/costmap/navigation
+probe scripts, and a navigation rosbag profile.
+
+Reason: Nav2 should not be treated as accepted until lifecycle/action/costmap
+evidence is real. A dry-run contract lets CI and reviewers validate the
+configuration and artifact boundary now while preserving fail-closed blockers
+for the future live runtime implementation.
+
+## 2026-06-13: P13 required sections use explicit TOML section detection
+
+Decision: detect required P13 sections by scanning exact TOML section headers
+instead of using `viper.IsSet("nav2")`.
+
+Basis: `viper.IsSet("nav2")` is true when only nested keys such as
+`[nav2.costmap]` exist, so it cannot distinguish an explicitly configured
+`[nav2]` contract from nested defaults. P13 needs fail-closed behavior when the
+top-level Nav2 contract is omitted.
+
+Reason: exact section detection preserves the no-hardcode contract: defaults
+may fill individual values, but they must not silently create a missing P13
+configuration boundary.
+
+## 2026-06-13: P13 mission runtime is gated by Nav2 action readiness
+
+Decision: generate a `navigation_mission_runtime.py` script that checks
+NavigateToPose action availability before publishing any bounded goal. If the
+action server is unavailable, the script writes `nav2_action_unavailable` to the
+navigation status and exits without sending a goal.
+
+Basis: P13 requires Nav2 lifecycle/action readiness to be decoupled from FCU
+readiness, and the adapter must not receive navigation intent from a mission
+planner that has not proven Nav2 is ready.
+
+Reason: this keeps the first mission runtime slice fail-closed. It lets dry-run
+and CI validate the mission/action contract now, while real goal success remains
+a separate live acceptance item.
+
+## 2026-06-13: Go sim live runs may override runtime image tags explicitly
+
+Decision: keep `distro-git-commit` as the default image tag policy, but allow
+runtime execution to override the resolved tag with
+`NAVLAB_SIM_RUNTIME_IMAGE_TAG` or `NAVLAB_SIM_IMAGE_TAG`.
+
+Basis: P13 live validation found locally available `humble-latest` runtime
+images while the current working tree resolved to a new git-commit tag that had
+not been built yet.
+
+Reason: release and CI paths should remain reproducible by default, but local
+live acceptance needs a deliberate way to use already-built images without
+rebuilding every runtime image for each intermediate commit.
+
+## 2026-06-13: Go sim runtime sources ROS through `ROS_DISTRO`
+
+Decision: runtime service commands and Docker entrypoints source ROS from
+`/opt/ros/${ROS_DISTRO:-humble}/setup.bash` instead of a fixed Jazzy path.
+
+Basis: the sim image catalog supports Humble and Jazzy, and local live P13
+images are tagged as Humble. Hard-coded Jazzy setup paths break valid Humble
+runtime images.
+
+Reason: distro selection belongs to `config.toml` and `NAVLAB_SIM_DISTRO`, not
+individual service command strings. This preserves the two-distro contract while
+keeping Humble as the documented fallback.
+
+## 2026-06-13: P13 sim live keeps `/map` owned by SLAM
+
+Decision: keep `/map` as the mature SLAM/Cartographer map topic and prevent the
+generated P13 navigation adapter from publishing a synthetic seed occupancy
+grid on that topic. If Nav2 needs a bounded static-layer seed, publish it on
+`/navlab/navigation/seed_map` and point the Nav2 static layer at that internal
+topic. The adapter may still publish the identity `map -> odom` transform as a
+startup bridge and derives costmap health from Nav2 global/local costmap topics.
+
+Basis: P13 must extend the existing world/SLAM review surface instead of
+replacing it. Publishing a synthetic seed grid on `/map` pollutes Foxglove
+replay and hides the SLAM map that P9/P12 already used successfully.
+
+Reason: Nav2 still needs a map frame and global costmap input, but the canonical
+review artifact must show the same `/map`, `/scan`, `/slam/odom`, TF, and FCU
+topics that the mature sim tasks used. Bounded navigation goals and costmap
+health are P13 additions; they must not overwrite the baseline SLAM evidence.
+
+## 2026-06-14: P13 frontier-lite evidence is emitted by sim runtime
+
+Decision: keep P13 active exploration as a bounded frontier-lite contract in
+Go-generated sim runtime scripts. The mission node emits frontier candidates,
+accepted/rejected frontier records, unreachable-goal blacklist entries, coverage
+growth, and a no-truth flag on `/navlab/navigation/status`; probes and summary
+parsing only validate and surface that evidence.
+
+Basis: P13 should not consume Gazebo truth or official maze overlays as planning
+input, but it still needs auditable active-exploration evidence for CI and
+artifact review.
+
+Reason: putting the evidence at runtime keeps live runs, golden examples, and
+future split repos on the same summary contract, while avoiding a shared helper
+library between sim and real.
+
+## 2026-06-14: P13 `/cmd_vel_nav` live chain is accepted by evidence, not by action success alone
+
+Decision: treat P13 live navigation success as the combined evidence of
+NavigateToPose goal acceptance, `/cmd_vel_nav` adapter activity, FCU command
+publication, odom path length, coverage growth, final landing status, and
+rosbag profile health. Nav2 action result success remains recorded, but a
+timeout or non-success result for one bounded goal is not by itself a task
+failure if the configured navigation gate passes.
+
+Basis: live run `artifacts/sim/navigation/20260614T062658Z/summary.json` passed
+with `TASK_STATUS_OK`, empty blockers, `accepted_goals=3`,
+`path_length_m=4.2269`, `coverage_growth=0.75`, adapter `intent_count=2928`,
+controller `ready=true`, landing `ok=true`, and all required rosbag profiles
+`ok=true`.
+
+Reason: the debugging question was whether `/cmd_vel_nav` was missing because
+the mission goal was not sent, Nav2 goal handling was blocked, or TF/costmap
+prevented controller output. The accepted artifact proves the mission sends
+goals, Nav2 accepts bounded goals, `/cmd_vel_nav` drives the adapter, the FCU
+controller publishes `/ap/v1/cmd_vel`, and the vehicle moves. Summary evaluation
+therefore must not let early hover-probe landing blockers override the final
+navigation landing sample; landing acceptance owns landing blockers, while
+navigation probes own navigation/adapter/controller readiness.
+
+## 2026-06-14: P13 official maze overlay is live-published for review only
+
+Decision: publish `/navlab/official_maze/map` during sim runtime with a
+dedicated ROS2 node and record it in the raw rosbag as a standard
+`nav_msgs/OccupancyGrid`. P13 navigation uses the Go sim raw MCAP at
+`rosbag/navigation_rosbag/navigation_rosbag_0.mcap`, then the replay builder
+creates `rosbag_foxglove/rosbag_foxglove_0.mcap` by filtering/downsampling
+existing MCAP messages with Foxglove's Go MCAP library.
+
+Basis: live navigation must not use the official maze as planning input, but
+Foxglove review needs a stable visual reference layer. The raw MCAP must now
+contain `/navlab/official_maze/map`; if it is missing, `navlab-sim foxglove
+build-replay` fails instead of inventing the topic later.
+
+Reason: this separates acceptance evidence from review presentation without
+hand-written ROS2 serialization in Go. Raw artifacts stay faithful to live
+runtime topics, while `--lite` uploads carry the official maze overlay plus a
+smaller P13 topic set for inspection.
+
+Update: do not scale the official maze overlay to the observed `/map` bbox. The
+P9 replay path already rasterized official SDF wall coordinates directly and
+then overlaid the mature SLAM `/map`, `/scan`, and `/slam/odom` topics. P13
+must preserve that identity overlay behavior first, then add Nav2 visual layers
+after the baseline SLAM/scan/maze alignment is stable. The navigation adapter
+also no longer publishes a synthetic seed occupancy grid on `/map`; its seed
+map is isolated on `/navlab/navigation/seed_map`, while `/map` belongs to SLAM.
+
+## 2026-06-15: Go Foxglove upload is lite-only
+
+Decision: move the Foxglove-lite replay contract into Go sim and make upload
+lite-only. `navlab-sim foxglove build-replay` generates
+`rosbag_foxglove/rosbag_foxglove_0.mcap` and `foxglove_replay_summary.json`.
+`navlab-sim foxglove upload` refuses raw MCAPs and validates
+`docker/profiles/navlab-*-foxglove-lite-topics.txt` before upload.
+
+Basis: the old Python path did more than upload: it built the lite MCAP,
+filtered/downsampled topics, validated `/navlab/official_maze/map`, and wrote a
+summary. Migrating only the upload shell allowed raw MCAPs to bypass the topic
+contract.
+
+Reason: Foxglove artifacts are review artifacts, not runtime acceptance inputs.
+Missing `/navlab/official_maze/map` or any profile `required` topic must fail
+closed instead of uploading a misleading recording. Raw task MCAPs remain local
+acceptance evidence and are not uploaded by the Go Foxglove uploader.
+
+Update: raw rosbag files may stay compressed as `*.mcap.zstd`. The Go replay
+builder must stream-decompress compressed raw MCAPs through Foxglove's Go MCAP
+reader and write only `rosbag_foxglove/rosbag_foxglove_0.mcap`. It must not
+persist a large decompressed raw copy, and upload must still target only the
+lite MCAP plus summary attachments.
+
+## 2026-06-14: Hover and exploration block Nav2 until SLAM parity is stable
+
+Decision: stop P13/Nav2 feature work until Go sim hover and exploration pass
+with Cartographer-owned `/map` and `/slam/odom`. Gazebo/official `/odometry`,
+Gazebo `/gazebo/tf`, seed maps, and `/navlab/official_maze/map` remain diagnostic or
+review-only and must not become hover/exploration success inputs.
+
+Basis: hover live run `artifacts/sim/hover/20260614T211212Z/summary.json`
+passed with SLAM-owned `/map`, `/slam/odom`, controller output, hover status,
+and landing status. Exploration live run
+`artifacts/sim/exploration/20260614T223900Z/summary.json` reached the workflow
+and accepted goals, but `/slam/odom` stayed static with `path_length_m=0`.
+
+Reason: Nav2 depends on the same SLAM pose chain. If hover/exploration do not
+move on SLAM-owned odometry, Nav2 debugging will mask the wrong layer.
+
+## 2026-06-14: Cartographer dynamic TF is isolated on `/navlab/slam/tf`
+
+Decision: remap Cartographer's dynamic `/tf` output to `/navlab/slam/tf`, and
+configure `navlab_cartographer_adapter` to read that topic when generating
+`/slam/odom`. Keep Gazebo diagnostic pose TF isolated from global `/tf`.
+
+Basis: exploration runs showed `base_link` TF conflicts and stale TF warnings
+when Cartographer `map -> base_link` and bridge `odom -> base_link` shared
+global `/tf`.
+
+Reason: `/slam/odom` must be SLAM-owned while preserving diagnostic TF for
+review. Isolating Cartographer TF avoids mixing Gazebo/bridge pose into SLAM
+acceptance and gives real migration a clear contract.
+
+## 2026-06-15: FCU takeoff readiness is configurable MAVLink evidence
+
+Decision: make FCU controller bootstrap use task-configured MAVLink takeoff
+readiness thresholds instead of a hard-coded runtime-script expression. The
+default threshold is `max(takeoff_min_height_m=0.15,
+takeoff_alt_m*takeoff_min_height_ratio=0.35)` and is satisfied only by
+`LOCAL_POSITION_NED` or `GLOBAL_POSITION_INT` evidence.
+
+Basis: hover live run `artifacts/sim/hover/20260615T005618Z/summary.json`
+passed with `pose_source=slam_odom`, `bootstrap_ready=true`, and landing
+`ok=true`. Exploration live run
+`artifacts/sim/exploration/20260615T010250Z/summary.json` had SLAM movement
+(`path_length_m=0.737`) and no Gazebo truth input, but FCU bootstrap stayed
+blocked because `takeoff.ok=false`.
+
+Reason: this keeps the Gazebo truth boundary intact while avoiding a brittle
+magic number in the generated Python controller. The takeoff readiness gate
+only permits controller operation; hover/exploration success still requires the
+task-specific SLAM/path/goal/landing evidence.
+
+## 2026-06-15: Go sim FCU motion uses MAVLink local-position setpoints
+
+Decision: keep `/ap/v1/cmd_vel` as the FCU controller output/recording surface,
+but drive SITL motion through MAVLink `SET_POSITION_TARGET_LOCAL_NED` lookahead
+setpoints derived from `/navlab/fcu/setpoint/intent` and current
+`LOCAL_POSITION_NED`. Do not use Gazebo `/odometry`, Gazebo TF, seed maps, or
+official maze overlay as control inputs.
+
+Basis: Go exploration initially reached controller ready and published hundreds
+of DDS cmd_vel messages, but `path_length_m` stayed near zero. The old Python
+P8 mission moved SITL by sending MAVLink local-position targets ahead of the
+current FCU local position. After porting that semantic route, exploration live
+passed in `artifacts/sim/exploration/20260615T024623Z/summary.json` with
+`accepted_goals=3`, `path_length_m=0.8409`,
+`mavlink_setpoint_count=443`, `mavlink_local_position_count=40`, and
+`usesTruthAsControlInput=false`. Hover smoke also passed in
+`artifacts/sim/hover/20260615T024140Z/summary.json`.
+
+Reason: ArduPilot/SITL is the FCU boundary in simulation just as MAVLink is the
+FCU boundary in real. DDS cmd_vel alone is a useful ROS trace surface but is not
+sufficient evidence that ArduPilot executed horizontal movement. The lookahead
+MAVLink setpoint path preserves the no-Gazebo-truth rule while restoring the
+old Python movement behavior.
+
+Follow-up: Cartographer remains the stability risk. The run
+`artifacts/sim/exploration/20260615T023414Z/summary.json` satisfied exploration
+and landing gates but showed late Cartographer rejected TF / dropped point
+warnings and a `std::length_error`; adapter rejection kept this from becoming
+accepted `/slam/odom`, but future SLAM metrics should expose reject counts and
+max odom step directly in summary.
+
+## 2026-06-15: `/odometry` is diagnostic truth, not Cartographer input
+
+Decision: remove `/odometry` from all default Cartographer odometry-input
+settings. The explicit Cartographer odometry input placeholder is now
+`/cartographer/odometry_input`, and FCU controller generated runtime defaults
+leave the Cartographer odometry relay disabled. The old
+`navlab_cartographer_2d.lua` profile was renamed to
+`navlab_cartographer_2d_diagnostic_odom.lua` so `use_odometry=true` cannot be
+selected by the old default-looking filename.
+
+Basis: code review found that `/odometry` had two identities: Gazebo/bridge
+truth for diagnostics and Cartographer odometry input when a `use_odometry=true`
+Lua profile is selected. The current `_real.lua` profile disables odometry, but
+one future filename or config change could silently reconnect Cartographer to
+Gazebo truth.
+
+Reason: `/odometry` remains useful in review rosbags for drift comparison, but
+it must not be a SLAM, ExternalNav, Nav2, or controller input. Requiring a
+non-truth topic name for odometry input makes any real odometry source an
+explicit operator/config decision instead of an accidental fallback.
+
+## 2026-06-15: Gazebo truth TF is isolated from global `/tf`
+
+Decision: remap Gazebo pose bridge TF to `/gazebo/tf` and `/gazebo/tf_static`.
+`gazebo_truth_odom` may subscribe to `/gazebo/tf` to derive diagnostic
+`/gazebo/truth/odom`, but Gazebo truth TF must not be published into global
+`/tf`.
+
+Basis: Gazebo physics can publish an `odom -> base_link` pose bridge that looks
+like a normal runtime transform in Foxglove or rosbag replay. Even when the
+algorithm chain does not consume it, mixing it with Cartographer/runtime TF in
+the same namespace makes review ambiguous and can hide accidental truth usage.
+
+Reason: `/tf` remains the runtime transform surface for real-equivalent robot
+state. Gazebo pose is diagnostic ground truth, so its topic name must advertise
+that boundary just like `/gazebo/truth/odom`.
+
+## 2026-06-15: Gazebo model odometry uses an explicit diagnostic namespace
+
+Decision: publish Gazebo model bridge odometry as `/gazebo/model/odometry`
+instead of bare `/odometry`. Navigation rosbags may record both `/odometry` and
+`/gazebo/model/odometry` as review topics, but neither can be required for task
+acceptance.
+
+Basis: `/odometry` had already been demoted to diagnostic-only, but the bridge
+override still used `ros_topic_name: "odometry"`. That name looks like a
+generic robot odometry source and is easy to confuse with a real-equivalent
+SLAM/Nav2 input.
+
+Reason: Gazebo model odometry is a dead-end diagnostic signal. Its topic name
+must make that provenance obvious and must not become a Cartographer,
+ExternalNav, Nav2, or controller dependency.
+
+## 2026-06-15: SLAM stability metrics are summary evidence before blockers
+
+Decision: surface Cartographer/adapter stability in live summaries without
+immediately turning every warning into a task blocker. `/navlab/slam/status`
+now carries TF rejection ratio and max accepted/rejected/observed jump metrics,
+and Go summary parsing records `slam_backend.runtime.log` counts for dropped
+points, rejected odom TF log lines, `std::length_error`, fatal, error, and
+warning lines.
+
+Basis: hover/exploration can satisfy task and landing gates while Cartographer
+later reports rejected TF, dropped points, or process instability. Treating that
+as missing Go task migration would hide the real issue: SLAM backend stability.
+
+Reason: metrics must be visible and comparable across runs before choosing
+thresholds. Once the distribution is known, a later gate can promote severe
+signals such as `std::length_error` or excessive rejection ratio into blockers.
+
+## 2026-06-15: Sim tasks fail closed instead of using Gazebo truth fallback
+
+Decision: when SLAM, Nav2, ExternalNav, FCU controller, landing, or workflow
+evidence is missing or unstable, the task records blockers and artifacts and
+fails/blocks. It must not substitute Gazebo truth, Gazebo model odometry,
+Gazebo TF, seed maps, official overlays, or SDF geometry for canonical runtime
+outputs such as `/slam/odom`, `/map`, navigation success, landing success, or
+controller inputs.
+
+Basis: the sim migration is intended to exercise the same sensor-processing and
+control path as real hardware. Gazebo truth is useful for diagnosing drift and
+runtime defects, but using it as fallback would make the sim result easier than
+real operation and would hide the failure that needs fixing.
+
+Reason: a blocked run with clear evidence is more valuable than a false pass.
+Diagnostic-only topics can explain failures; they cannot repair acceptance.
+
+## 2026-06-15: Go sim MAVLink bootstrap listens to MAVProxy output (superseded)
+
+Decision: superseded. Earlier H5 work set the Go sim FCU bootstrap endpoint default to
+`udpin:0.0.0.0:14550`. ArduPilot's official MAVProxy launch emits FCU traffic
+with `--out 127.0.0.1:14550`; the controller must listen on that port instead
+of opening a peer-style `udp:127.0.0.1:14550` connection.
+
+Basis: `scan-robustness` live run
+`artifacts/sim/scan-robustness/20260615T062053Z/summary.json` blocked with
+`heartbeat_timeout`, `bootstrap_ready=false`, and zero `/ap/v1/cmd_vel`
+messages even though SITL and SLAM were running. After switching to
+`udpin:0.0.0.0:14550`, live run
+`artifacts/sim/scan-robustness/20260615T063115Z/summary.json` passed with
+`mavlink_bootstrap.ok=true`, target system `1`, GUIDED mode, arm/takeoff ACKs,
+153 MAVLink setpoints, hover evaluation, and landing completion.
+
+Reason: MAVLink bootstrap is real-equivalent FCU evidence. A timeout must block
+the task rather than falling back to Gazebo truth, but the listener endpoint
+must match the official MAVProxy output contract so the controller can observe
+real FCU heartbeat and ACKs.
+
+Superseding note: this fixed a single-listener scan-robustness path but is not
+the correct shared runtime topology for hover parity. Hover runs both a mission
+MAVLink controller and a down-rangefinder MAVLink sender. Letting both bind the
+same UDP listener recreates a hidden single-port race.
+
+## 2026-06-15: Sim rangefinder uses the same MAVProxy UDP surface as Python parity (superseded)
+
+Decision: superseded. Earlier H5 work set the Go sim down-rangefinder MAVLink endpoint default to
+`udpin:0.0.0.0:14550`, matching the old Python orchestration's now-retired
+rangefinder MAVLink endpoint key. That superseded runtime listened to the
+official MAVProxy/ArduPilot UDP stream, observed heartbeat, and sent
+`DISTANCE_SENSOR` back on that channel.
+
+Basis: H5 hover live run
+`artifacts/sim/hover/20260615T144150Z/summary.json` blocked before takeoff:
+`mission_summary.json` showed `arm_ack_ok=false`, `takeoff_ack_ok=false`, and
+STATUSTEXT `Arm: Rangefinder 1: No Data`. The rangefinder ROS topic existed,
+but `/rangefinder/down/status` reported `mavlink_peer_observed=false` and
+`sent_count=0` because the Go default had drifted to `tcp:127.0.0.1:5760`.
+Old Python `orchestration/config.toml` used `udpin:0.0.0.0:14550`.
+
+Reason: rangefinder acceptance is FCU evidence, not a ROS topic-count check.
+If the MAVLink peer is absent, the task must block; the endpoint default must
+match the official FCU stream used by the previous working Python path.
+
+Superseding note: the old Python runtime also had a `mavlink-router` service in
+the base compose stack. The correct parity point is the router topology, not the
+single retired rangefinder MAVLink endpoint string in isolation. This whole
+decision is further superseded by P14: down rangefinder FCU input is now
+Benewake serial over Serial7, configured by `rangefinder_virtual_serial_link`
+and `rangefinder_serial_baud`, not by a MAVLink sender endpoint.
+
+## 2026-06-15: Go sim hover restores the Python MAVLink router topology (superseded)
+
+Decision: superseded. Earlier H5 work tried to start `mavlink_router` before
+the official baseline whenever the task needed the SITL/Gazebo stack.
+Hover/exploration/navigation/scan runtime clients would use router endpoints
+instead of competing for the same `udpin:0.0.0.0:14550` listener. The default
+FCU bootstrap endpoint was `tcp:127.0.0.1:5760`; the simulated down rangefinder
+sent `DISTANCE_SENSOR` via `udpout:127.0.0.1:14550`.
+
+Basis: baseline commit `a3e0f7a` used `NAVLAB_SERVICES=("gazebo",
+"gazebo-sensor", "mavlink-router", "sitl")`. Its `navlab/config.toml`
+configured companion MAVLink readers through router TCP endpoints and the down
+rangefinder through `udpout:mavlink-router:14550`. H5 Go hover runs that used
+two direct `udpin:0.0.0.0:14550` consumers showed `/rangefinder/down/range`
+ROS samples but no FCU `DISTANCE_SENSOR`, and ArduPilot blocked arming with
+`Arm: Rangefinder 1: No Data`.
+
+Reason: the rangefinder, mission controller, ExternalNav sender, and telemetry
+mirrors are separate clients of the same FCU stream. A router is the stable
+boundary that lets simulation mirror real multi-client MAVLink wiring. If the
+router or a client endpoint fails, the task must block with evidence; it must
+not force-arm or substitute Gazebo truth.
+
+Superseding note: this copied the old compose topology into the new official
+baseline incorrectly. The official Gazebo bringup already owns SITL master
+`tcp:127.0.0.1:5760` and MAVProxy output `127.0.0.1:14550`. Adding a separate
+router that also listened on `5760` stole the official master surface and made
+hover runs receive rangefinder traffic but no FCU heartbeat or DDS pose.
+
+## 2026-06-15: Go official-baseline MAVLink router is UDP fan-out only
+
+Decision: Go sim may start `mavlink_router` for official-baseline tasks, but
+only as a UDP fan-out for the official MAVProxy output. The router listens on
+`0.0.0.0:14550`, disables TCP listening with `ROUTER_TCP_PORT=0`, and forwards
+FCU traffic to internal clients on `127.0.0.1:14551` and `127.0.0.1:14552`.
+Hover mission/runtime listens on `udpin:0.0.0.0:14551`. The down rangefinder
+listens on `udpin:0.0.0.0:14552`, observes FCU heartbeat through the router,
+and sends `DISTANCE_SENSOR` back over the learned peer. It must fail closed if
+that MAVLink peer is absent.
+
+Basis: the official launch in
+`ardupilot_gz/ardupilot_gz_bringup/launch/robots/robot.launch.py` derives
+`master_port = 5760 + offset` and `mavlink_out = 14550 + offset`. H5 Go runs
+`artifacts/sim/hover/20260615T153951Z`,
+`artifacts/sim/hover/20260615T154958Z`, and
+`artifacts/sim/hover/20260615T155940Z` started a router that opened the
+conflicting TCP `5760` server and then blocked in `wait_ready`: no FCU
+heartbeat/local-position evidence reached the hover mission and
+`/ap/v1/pose/filtered` was missing. A later no-router test
+`artifacts/sim/hover/20260615T162735Z` restored mission heartbeat/local-position
+but left the down rangefinder with `mavlink_peer_observed=false`, proving that
+the missing piece is multi-client UDP fan-out, not a TCP master replacement.
+
+Reason: the old Python compose stack and the new official baseline are
+different runtime topologies. The invariant is not "always run a TCP router on
+5760"; the invariant is that every control input must come through
+real-equivalent MAVLink or ROS algorithm outputs, and any missing
+FCU/rangefinder evidence blocks the task instead of using Gazebo truth,
+force-arm, or topic-count substitutes.
+
+## 2026-06-15: Hover airborne evidence outranks NAV_TAKEOFF ACK
+
+Decision: Go sim hover must not require a successful `MAV_CMD_NAV_TAKEOFF` ACK
+after the vehicle is already proven airborne by MAVLink position evidence.
+`takeoff_ack_ok` remains in the mission summary as diagnostic evidence, but the
+state machine may enter hover-settle/hold when `LOCAL_POSITION_NED` or
+`GLOBAL_POSITION_INT` confirms the configured airborne threshold.
+
+Basis: H5 live run `artifacts/sim/hover/20260615T164659Z` had
+`rangefinder_count=2651`, `armed_seen=true`, `airborne_seen=true`, and
+`current_z_ned=-0.69`, but `NAV_TAKEOFF` returned FAILED and the migrated hover
+state machine stayed in `takeoff` with zero setpoints. The baseline Python
+obstacle mission gates on `airborne_seen`, not `takeoff_ack_ok`.
+
+Reason: acceptance must prove real motion, not a particular ACK path. A failed
+takeoff ACK with no airborne evidence still blocks; a failed ACK with clear
+airborne evidence is recorded for diagnostics while hover/landing continue.
+
+## 2026-06-15: Hover landing accepts touchdown/disarm evidence over LAND ACK
+
+Decision: Go sim hover landing acceptance is based on real MAVLink state
+evidence: touchdown confirmed, disarm confirmed when required, and motors safe.
+`MAV_CMD_NAV_LAND` ACK remains in the summary as diagnostic evidence but is not
+required when the vehicle has already landed and disarmed.
+
+Basis: H5 live run `artifacts/sim/hover/20260615T170341Z` completed the hover
+body with `hover_body_ok=true`, `target_z_ned=-0.69`, `altitude_error_m=0.01`,
+and `hover_hold_duration_sec=17.95`. Landing then reached
+`touchdown_confirmed=true`, `disarmed=true`, and `motors_safe=true`, but
+`land_command_accepted=false`; requiring the ACK alone incorrectly blocked a
+physically completed landing.
+
+Reason: the sim acceptance target is real-equivalent behavior, not a specific
+ACK bookkeeping path. Missing touchdown/disarm/motor-safe evidence still
+blocks; a missing LAND ACK with those signals present is recorded, not used to
+override the observed landing.
+
+## 2026-06-15: Hover rosbag required topics follow lite replay evidence
+
+Decision: Go sim hover rosbag required topics are limited to the replay and
+task-state evidence that must be present in the lite artifact: `/tf`,
+`/tf_static`, `/map`, `/scan`, `/slam/odom`, `/navlab/hover/status`,
+`/navlab/landing/status`, and `/rangefinder/down/range`. IMU samples, FCU
+status, and rangefinder status remain required runtime evidence through probes
+or `mission_summary.json`, but they are not required to be recorded in the
+hover replay MCAP.
+
+Basis: H5 live run `artifacts/sim/hover/20260615T171440Z` completed the
+mission with `mission_summary.ok=true`, `airborne_seen=true`,
+`hover_body_ok=true`, `landing_ok=true`, `disarmed=true`, `motors_safe=true`,
+and `altitude_error_m=0`. The only remaining blocker was
+`rosbag_profile_failed:hover_rosbag` because the Go rosbag required set still
+expected `/ap/v1/status`, `/imu`, and `/rangefinder/down/status`, while the
+lite profile intentionally drops or makes those topics optional to keep replay
+artifacts small.
+
+Reason: task acceptance must fail closed on missing behavior evidence, not on
+whether high-frequency or diagnostic topics were retained in a review artifact.
+This keeps hover from passing on topic counts alone while also preventing a
+successful flight/landing from being marked failed only because lite replay
+filtering omitted nonessential diagnostics.

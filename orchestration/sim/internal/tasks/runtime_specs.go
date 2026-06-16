@@ -42,6 +42,14 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 	}
 
 	if usesOfficialBaseline(plan) {
+		routerSpec, err := mavlinkRouterServiceSpec(project, workspaceMount, containerWorkspace, artifactDir)
+		if err != nil {
+			return RuntimeSpecBundle{}, err
+		}
+		if err := routerSpec.ValidateDocker(); err != nil {
+			return RuntimeSpecBundle{}, err
+		}
+		bundle.Services = append(bundle.Services, routerSpec)
 		spec, err := officialBaselineServiceSpec(project, workspaceMount, containerWorkspace, containerArtifactDir, artifactDir)
 		if err != nil {
 			return RuntimeSpecBundle{}, err
@@ -50,6 +58,16 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 			return RuntimeSpecBundle{}, err
 		}
 		bundle.Services = append(bundle.Services, spec)
+		overlaySpec, ok, err := officialMazeOverlayServiceSpec(project, workspaceMount, containerWorkspace, containerArtifactDir, artifactDir)
+		if err != nil {
+			return RuntimeSpecBundle{}, err
+		}
+		if ok {
+			if err := overlaySpec.ValidateDocker(); err != nil {
+				return RuntimeSpecBundle{}, err
+			}
+			bundle.Services = append(bundle.Services, overlaySpec)
+		}
 	}
 
 	for _, service := range plan.RuntimeServices {
@@ -59,6 +77,13 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 		}
 		command := rewriteArtifactReferences(service.Command, containerArtifactDir)
 		env := rewriteArtifactEnv(resolveEnv(project, service.Env), containerArtifactDir)
+		volumes := []simruntime.VolumeMount{workspaceMount}
+		if service.ServiceName == "slam_backend" {
+			volumes, err = appendArtifactVolumeIfPresent(volumes, artifactDir, "external_nav_bridge_params.yaml", helpers.OfficialExternalNavBridgeParams)
+			if err != nil {
+				return RuntimeSpecBundle{}, err
+			}
+		}
 		spec := simruntime.ServiceSpec{
 			Name:          service.ServiceName,
 			Image:         image,
@@ -66,7 +91,7 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 			Command:       command,
 			Env:           env,
 			CWD:           containerWorkspace,
-			Volumes:       []simruntime.VolumeMount{workspaceMount},
+			Volumes:       volumes,
 			Networks:      networks(service.Network),
 			Detach:        true,
 			Required:      true,
@@ -77,6 +102,24 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 			return RuntimeSpecBundle{}, err
 		}
 		bundle.Services = append(bundle.Services, spec)
+	}
+	if usesOfficialBaseline(plan) {
+		spec, err := mavlinkExternalNavSenderServiceSpec(project, workspaceMount, containerWorkspace, containerArtifactDir, artifactDir)
+		if err != nil {
+			return RuntimeSpecBundle{}, err
+		}
+		if err := spec.ValidateDocker(); err != nil {
+			return RuntimeSpecBundle{}, err
+		}
+		bundle.Services = append(bundle.Services, spec)
+		heightSpec, err := heightEstimatorServiceSpec(project, workspaceMount, containerWorkspace, containerArtifactDir, artifactDir)
+		if err != nil {
+			return RuntimeSpecBundle{}, err
+		}
+		if err := heightSpec.ValidateDocker(); err != nil {
+			return RuntimeSpecBundle{}, err
+		}
+		bundle.Services = append(bundle.Services, heightSpec)
 	}
 
 	for _, probe := range plan.ROSProbes {
@@ -105,7 +148,7 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 			Networks: []string{
 				"host",
 			},
-			TimeoutSec:  30,
+			TimeoutSec:  probeTimeoutSec(probe.Name, plan.DurationSec),
 			LogPath:     filepath.Join(artifactDir, probe.Name+".log"),
 			Required:    true,
 			ServiceRole: probe.HelperID,
@@ -153,6 +196,25 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 	return bundle, nil
 }
 
+func probeTimeoutSec(name string, durationSec float64) float64 {
+	if name == "navigation_status_probe" {
+		if durationSec > 90 {
+			return durationSec
+		}
+		return 90
+	}
+	if name == "exploration_probe" {
+		return 90
+	}
+	if name == "slam_hover_probe" {
+		if durationSec+30 > 120 {
+			return durationSec + 30
+		}
+		return 120
+	}
+	return 30
+}
+
 func resolveImageRef(project config.ProjectConfig, ref string) (string, error) {
 	key := strings.TrimPrefix(strings.TrimSpace(ref), "images.")
 	if key == "" {
@@ -169,11 +231,21 @@ func resolveImageRef(project config.ProjectConfig, ref string) (string, error) {
 	if strings.Contains(repository, ":") {
 		return repository, nil
 	}
-	tag, err := simimages.ResolveImageTag(project, image, "", "")
+	tag, err := simimages.ResolveImageTag(project, image, runtimeImageTagOverride(), "")
 	if err != nil {
 		return "", err
 	}
 	return repository + ":" + tag, nil
+}
+
+func runtimeImageTagOverride() string {
+	if tag := strings.TrimSpace(os.Getenv("NAVLAB_SIM_RUNTIME_IMAGE_TAG")); tag != "" {
+		return tag
+	}
+	if tag := strings.TrimSpace(os.Getenv("NAVLAB_SIM_IMAGE_TAG")); tag != "" {
+		return tag
+	}
+	return ""
 }
 
 func resolveEnv(project config.ProjectConfig, values map[string]string) map[string]string {
@@ -184,6 +256,8 @@ func resolveEnv(project config.ProjectConfig, values map[string]string) map[stri
 			switch key {
 			case "ROS_DOMAIN_ID", "DDS_DOMAIN_ID":
 				resolved[key] = runtimeRosDomain(project)
+			case "ROS_DISTRO":
+				resolved[key] = runtimeRosDistro(project)
 			case "RMW_IMPLEMENTATION":
 				resolved[key] = "rmw_cyclonedds_cpp"
 			case "DDS_ENABLE":
@@ -203,6 +277,7 @@ func baselineEnv(project config.ProjectConfig) map[string]string {
 		"DDS_ENABLE":         "1",
 		"DDS_DOMAIN_ID":      runtimeRosDomain(project),
 		"ROS_DOMAIN_ID":      runtimeRosDomain(project),
+		"ROS_DISTRO":         runtimeRosDistro(project),
 		"RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
 	}
 }
@@ -214,13 +289,159 @@ func runtimeRosDomain(project config.ProjectConfig) string {
 	return project.RosDomainID
 }
 
+func runtimeRosDistro(project config.ProjectConfig) string {
+	if envDistro := strings.TrimSpace(os.Getenv("NAVLAB_SIM_DISTRO")); envDistro != "" {
+		return envDistro
+	}
+	if distro := strings.TrimSpace(project.Navlab.Images.Distro); distro != "" {
+		return distro
+	}
+	return "humble"
+}
+
 func usesOfficialBaseline(plan helpers.ExecutionPlan) bool {
 	switch plan.TaskID {
-	case "hover", "exploration", "scan-robustness":
+	case "hover", "exploration", "navigation", "scan-robustness":
 		return true
 	default:
 		return false
 	}
+}
+
+func mavlinkRouterServiceSpec(
+	project config.ProjectConfig,
+	workspaceMount simruntime.VolumeMount,
+	containerWorkspace string,
+	artifactDir string,
+) (simruntime.ServiceSpec, error) {
+	image, err := resolveImageRef(project, "images.mavlink_router")
+	if err != nil {
+		return simruntime.ServiceSpec{}, err
+	}
+	sessionID := strings.TrimSpace(project.SessionID)
+	if sessionID == "" {
+		sessionID = "navlab_companion_sitl_gazebo"
+	}
+	env := map[string]string{
+		"ARTIFACT_ROOT":               containerWorkspace + "/artifacts/sim",
+		"ROUTER_DOWNSTREAM_ENDPOINTS": project.Router.DownstreamEndpoints,
+		"ROUTER_LISTEN":               project.Router.Listen,
+		"ROUTER_TCP_PORT":             project.Router.TCPPort,
+		"SESSION_ID":                  sessionID,
+	}
+	if strings.TrimSpace(env["ROUTER_DOWNSTREAM_ENDPOINTS"]) == "" {
+		env["ROUTER_DOWNSTREAM_ENDPOINTS"] = "127.0.0.1:14551,127.0.0.1:14552,127.0.0.1:14553"
+	}
+	if strings.TrimSpace(env["ROUTER_LISTEN"]) == "" {
+		env["ROUTER_LISTEN"] = "0.0.0.0:14550"
+	}
+	if strings.TrimSpace(env["ROUTER_TCP_PORT"]) == "" {
+		env["ROUTER_TCP_PORT"] = "0"
+	}
+	return simruntime.ServiceSpec{
+		Name:          "mavlink_router",
+		Image:         image,
+		ContainerName: "navlab-mavlink-router",
+		Command:       []string{"bash", "-lc", "exec /workspace/docker/entrypoints/start-mavlink-router.sh"},
+		Env:           env,
+		CWD:           containerWorkspace,
+		Volumes:       []simruntime.VolumeMount{workspaceMount},
+		Networks:      []string{"host"},
+		Detach:        true,
+		Required:      true,
+		LogPath:       filepath.Join(artifactDir, "mavlink_router.start.log"),
+		ServiceRole:   "mavlink-router",
+	}, nil
+}
+
+func mavlinkExternalNavSenderServiceSpec(
+	project config.ProjectConfig,
+	workspaceMount simruntime.VolumeMount,
+	containerWorkspace string,
+	containerArtifactDir string,
+	artifactDir string,
+) (simruntime.ServiceSpec, error) {
+	image, err := resolveImageRef(project, "images.runtime")
+	if err != nil {
+		return simruntime.ServiceSpec{}, err
+	}
+	launchCommand := strings.Join([]string{
+		"exec python3 -m navlab.real.companion.nodes.external_nav",
+		"--endpoint udpin:0.0.0.0:14553",
+		"--odom-topic /external_nav/odom",
+		"--status-topic /mavlink_external_nav/status",
+		"--rate-hz 20",
+		"--quality 100",
+		"--source-system 191",
+		"--use-fcu-roll-pitch",
+		"--align-yaw-to-fcu",
+		"--local-position-pose-topic /navlab/fcu/local_position_pose",
+		"--max-local-position-age-ms 1000",
+		"> " + shellQuote(containerArtifactDir+"/mavlink_external_nav.runtime.log") + " 2>&1",
+	}, " ")
+	command := strings.Join([]string{
+		"source /opt/ros/${ROS_DISTRO:-" + runtimeRosDistro(project) + "}/setup.bash",
+		"source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash",
+		launchCommand,
+	}, " && ")
+	env := baselineEnv(project)
+	env["PYTHONPATH"] = containerWorkspace
+	return simruntime.ServiceSpec{
+		Name:          "mavlink_external_nav",
+		Image:         image,
+		ContainerName: helpers.MAVLinkExternalNavContainer,
+		Command:       []string{"bash", "-lc", command},
+		Env:           env,
+		CWD:           containerWorkspace,
+		Volumes:       []simruntime.VolumeMount{workspaceMount},
+		Networks:      []string{"host"},
+		Detach:        true,
+		Required:      true,
+		LogPath:       filepath.Join(artifactDir, "mavlink_external_nav.start.log"),
+		ServiceRole:   "mavlink-external-nav",
+	}, nil
+}
+
+func heightEstimatorServiceSpec(
+	project config.ProjectConfig,
+	workspaceMount simruntime.VolumeMount,
+	containerWorkspace string,
+	containerArtifactDir string,
+	artifactDir string,
+) (simruntime.ServiceSpec, error) {
+	image, err := resolveImageRef(project, "images.runtime")
+	if err != nil {
+		return simruntime.ServiceSpec{}, err
+	}
+	launchCommand := strings.Join([]string{
+		"exec python3 -m navlab.real.companion.nodes.height_estimator",
+		"--range-topic /rangefinder/down/range",
+		"--height-topic /height/estimate",
+		"--status-topic /height/status",
+		"--source-type rangefinder_down_relative",
+		"> " + shellQuote(containerArtifactDir+"/height_estimator.runtime.log") + " 2>&1",
+	}, " ")
+	command := strings.Join([]string{
+		"source /opt/ros/${ROS_DISTRO:-" + runtimeRosDistro(project) + "}/setup.bash",
+		"source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash",
+		launchCommand,
+	}, " && ")
+	env := baselineEnv(project)
+	env["PYTHONPATH"] = containerWorkspace
+	return simruntime.ServiceSpec{
+		Name:          "height_estimator",
+		Image:         image,
+		ContainerName: "navlab-height-estimator",
+		Command:       []string{"bash", "-lc", command},
+		Env:           env,
+		CWD:           containerWorkspace,
+		Volumes:       []simruntime.VolumeMount{workspaceMount},
+		Networks:      []string{"host"},
+		Detach:        true,
+		Required:      true,
+		LogPath:       filepath.Join(artifactDir, "height_estimator.start.log"),
+		ServiceRole:   "height-estimator",
+	}, nil
 }
 
 func officialBaselineServiceSpec(
@@ -238,17 +459,36 @@ func officialBaselineServiceSpec(
 	if launch == "" {
 		launch = "ros2 launch ardupilot_gz_bringup iris_maze.launch.py"
 	}
+	launch = ensureBenewakeSerialLaunchArg(launch)
+	benewakeSerialLink := "/tmp/navlab_benewake_tfmini"
 	command := strings.Join([]string{
-		"source /opt/ros/jazzy/setup.bash",
+		"set -eo pipefail",
+		"source /opt/ros/${ROS_DISTRO:-" + runtimeRosDistro(project) + "}/setup.bash",
 		"source /opt/navlab_official_ws/install/setup.bash",
+		"export PYTHONPATH=" + shellQuote(containerWorkspace) + ":${PYTHONPATH:-}",
 		"export NAVLAB_OFFICIAL_SDF_ROOTS=/opt/navlab_official_ws/install/ardupilot_gazebo/share:/opt/navlab_official_ws/install/ardupilot_gz_description/share",
 		"export SDF_PATH=${NAVLAB_OFFICIAL_SDF_ROOTS}:${SDF_PATH:-}",
 		"export GZ_SIM_RESOURCE_PATH=${NAVLAB_OFFICIAL_SDF_ROOTS}:${GZ_SIM_RESOURCE_PATH:-}",
-		"mkdir -p " + shellQuote(containerArtifactDir+"/sitl_work"),
+		"mkdir -p " + shellQuote(containerArtifactDir+"/sitl_work/scripts"),
+		"cp " + shellQuote(containerWorkspace+"/docker/profiles/ahrs-set-origin.lua") + " " + shellQuote(containerArtifactDir+"/sitl_work/scripts/ahrs-set-origin.lua"),
+		"test -s " + shellQuote(containerArtifactDir+"/sitl_work/scripts/ahrs-set-origin.lua"),
 		"cd " + shellQuote(containerArtifactDir+"/sitl_work"),
-		"exec " + launch + " use_gz_sim_gui:=false rviz:=false use_dds_agent:=true use_gz_sim_server:=true spawn_robot:=true",
-	}, " && ")
+		"python3 -m navlab.sim.gazebo_sensor.benewake_tfmini_serial --virtual-serial-link " + shellQuote(benewakeSerialLink) + " --log-file " + shellQuote(containerArtifactDir+"/benewake_tfmini_serial.runtime.log") + " &",
+		"benewake_pid=$!",
+		"trap 'kill ${benewake_pid:-} 2>/dev/null || true' EXIT",
+		"for _ in $(seq 1 200); do [ -e " + shellQuote(benewakeSerialLink) + " ] && break; sleep 0.05; done",
+		"test -e " + shellQuote(benewakeSerialLink),
+		launch + " use_gz_sim_gui:=false rviz:=false use_dds_agent:=true use_gz_sim_server:=true spawn_robot:=true",
+	}, "\n")
 	volumes := []simruntime.VolumeMount{workspaceMount}
+	volumes, err = appendArtifactVolumeIfPresent(volumes, artifactDir, "model_overlay.sdf", helpers.OfficialIrisWithLidarModel)
+	if err != nil {
+		return simruntime.ServiceSpec{}, err
+	}
+	volumes, err = appendArtifactVolumeIfPresent(volumes, artifactDir, "gazebo-iris-rangefinder.parm", helpers.OfficialGazeboIrisParams)
+	if err != nil {
+		return simruntime.ServiceSpec{}, err
+	}
 	scanRobustnessBridgeOverride := filepath.Join(artifactDir, "scan_robustness_bridge_override.yaml")
 	if _, err := os.Stat(scanRobustnessBridgeOverride); err == nil {
 		absoluteScanRobustnessBridgeOverride, err := filepath.Abs(scanRobustnessBridgeOverride)
@@ -281,6 +521,7 @@ func officialBaselineServiceSpec(
 			"SESSION_ID":         project.SessionID,
 			"ROS_DOMAIN_ID":      runtimeRosDomain(project),
 			"DDS_DOMAIN_ID":      runtimeRosDomain(project),
+			"ROS_DISTRO":         runtimeRosDistro(project),
 			"DDS_ENABLE":         "1",
 			"RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
 			"PYTHONPATH":         containerWorkspace,
@@ -293,6 +534,67 @@ func officialBaselineServiceSpec(
 		LogPath:     filepath.Join(artifactDir, "official_baseline.start.log"),
 		ServiceRole: "official-baseline",
 	}, nil
+}
+
+func ensureBenewakeSerialLaunchArg(launch string) string {
+	if strings.Contains(launch, "serial7:=") || strings.Contains(launch, "--serial7") {
+		return launch
+	}
+	return strings.TrimSpace(launch) + " serial7:=uart:/tmp/navlab_benewake_tfmini:115200"
+}
+
+func officialMazeOverlayServiceSpec(
+	project config.ProjectConfig,
+	workspaceMount simruntime.VolumeMount,
+	containerWorkspace string,
+	containerArtifactDir string,
+	artifactDir string,
+) (simruntime.ServiceSpec, bool, error) {
+	script := filepath.Join(artifactDir, "official_maze_overlay_runtime.py")
+	if _, err := os.Stat(script); err != nil {
+		if os.IsNotExist(err) {
+			return simruntime.ServiceSpec{}, false, nil
+		}
+		return simruntime.ServiceSpec{}, false, err
+	}
+	image, err := resolveImageRef(project, "images.runtime")
+	if err != nil {
+		return simruntime.ServiceSpec{}, false, err
+	}
+	command := strings.Join([]string{
+		"source /opt/ros/${ROS_DISTRO:-" + runtimeRosDistro(project) + "}/setup.bash",
+		"exec python3 " + shellQuote(containerArtifactDir+"/official_maze_overlay_runtime.py") + " > " + shellQuote(containerArtifactDir+"/official_maze_overlay.runtime.log") + " 2>&1",
+	}, " && ")
+	return simruntime.ServiceSpec{
+		Name:          "official_maze_overlay",
+		Image:         image,
+		ContainerName: "navlab-official-maze-overlay",
+		Command:       []string{"bash", "-lc", command},
+		Env:           baselineEnv(project),
+		CWD:           containerWorkspace,
+		Volumes:       []simruntime.VolumeMount{workspaceMount},
+		Networks:      []string{"host"},
+		Detach:        true,
+		Required:      true,
+		LogPath:       filepath.Join(artifactDir, "official_maze_overlay.start.log"),
+		ServiceRole:   "foxglove-official-maze-overlay",
+	}, true, nil
+}
+
+func appendArtifactVolumeIfPresent(volumes []simruntime.VolumeMount, artifactDir string, name string, target string) ([]simruntime.VolumeMount, error) {
+	path := filepath.Join(artifactDir, name)
+	if _, err := os.Stat(path); err != nil {
+		return volumes, nil
+	}
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	return append(volumes, simruntime.VolumeMount{
+		Source: absolutePath,
+		Target: target,
+		Mode:   "ro",
+	}), nil
 }
 
 func networks(network string) []string {

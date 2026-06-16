@@ -36,6 +36,8 @@ def test_navlab_minimum_rosbag_topics_cover_replay_and_feedback() -> None:
     assert "/rangefinder/down/status" in topics
     assert "/gazebo/truth/odom" in topics
     assert "/gazebo/truth/status" in topics
+    assert "/gazebo/tf" in topics
+    assert "/gazebo/tf_static" in topics
     assert "/imu" in topics
     assert "/odom" in topics
     assert "/navlab/slam/status" in topics
@@ -52,6 +54,7 @@ def test_hover_diagnostic_minimum_rosbag_topics_exclude_slam_feedback() -> None:
 
     assert "/rangefinder/down/range" in topics
     assert "/gazebo/truth/odom" in topics
+    assert "/gazebo/tf" in topics
     assert "/navlab/mavlink/status" in topics
     assert "/imu/data" not in topics
     assert "/imu/status" not in topics

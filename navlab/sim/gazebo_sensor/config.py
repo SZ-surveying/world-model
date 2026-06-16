@@ -39,16 +39,12 @@ DEFAULT_DOWN_RANGEFINDER_ENABLED = True
 DEFAULT_DOWN_RANGEFINDER_SCAN_IDEAL_TOPIC = "/rangefinder/down/scan_ideal"
 DEFAULT_DOWN_RANGEFINDER_RANGE_TOPIC = "/rangefinder/down/range"
 DEFAULT_DOWN_RANGEFINDER_STATUS_TOPIC = "/rangefinder/down/status"
-DEFAULT_DOWN_RANGEFINDER_ENDPOINT = "udpout:mavlink-router:14550"
+DEFAULT_DOWN_RANGEFINDER_VIRTUAL_SERIAL_LINK = "/tmp/navlab_benewake_tfmini"
+DEFAULT_DOWN_RANGEFINDER_SERIAL_BAUD = "115200"
 DEFAULT_DOWN_RANGEFINDER_FRAME_ID = "rangefinder_down_frame"
-DEFAULT_DOWN_RANGEFINDER_MAVLINK_ORIENTATION = "MAV_SENSOR_ROTATION_PITCH_270"
-DEFAULT_DOWN_RANGEFINDER_SOURCE_SYSTEM = 1
-DEFAULT_DOWN_RANGEFINDER_SOURCE_COMPONENT = 158
-DEFAULT_DOWN_RANGEFINDER_SENSOR_ID = 1
 DEFAULT_DOWN_RANGEFINDER_RATE_HZ = 20.0
 DEFAULT_DOWN_RANGEFINDER_MIN_M = 0.05
 DEFAULT_DOWN_RANGEFINDER_MAX_M = 6.0
-DEFAULT_DOWN_RANGEFINDER_COVARIANCE_CM = 2
 DEFAULT_SCAN_INTEGRITY_ENABLED = False
 DEFAULT_SCAN_INTEGRITY_INPUT_SCAN_TOPIC = "/navlab/x2/scan_normalized"
 DEFAULT_SCAN_INTEGRITY_OUTPUT_SCAN_TOPIC = "/scan"
@@ -214,16 +210,12 @@ class DownRangefinderConfig:
     scan_ideal_topic: ValueWithSource
     range_topic: ValueWithSource
     status_topic: ValueWithSource
-    endpoint: ValueWithSource
+    virtual_serial_link: ValueWithSource
+    serial_baud: ValueWithSource
     frame_id: ValueWithSource
-    mavlink_orientation: ValueWithSource
-    source_system: ValueWithSource
-    source_component: ValueWithSource
-    sensor_id: ValueWithSource
     rate_hz: FloatWithSource
     min_distance_m: FloatWithSource
     max_distance_m: FloatWithSource
-    covariance_cm: ValueWithSource
     model_pose: ValueWithSource
     model_update_rate_hz: FloatWithSource
     model_ray_count: ValueWithSource
@@ -236,16 +228,12 @@ class DownRangefinderRuntimeConfig:
     scan_ideal_topic: str
     range_topic: str
     status_topic: str
-    endpoint: str
+    virtual_serial_link: Path
+    serial_baud: int
     frame_id: str
-    mavlink_orientation: str
-    source_system: int
-    source_component: int
-    sensor_id: int
     rate_hz: float
     min_distance_m: float
     max_distance_m: float
-    covariance_cm: int
 
     @classmethod
     def load(cls) -> DownRangefinderRuntimeConfig:
@@ -255,16 +243,12 @@ class DownRangefinderRuntimeConfig:
             scan_ideal_topic=config.scan_ideal_topic.value,
             range_topic=config.range_topic.value,
             status_topic=config.status_topic.value,
-            endpoint=config.endpoint.value,
+            virtual_serial_link=Path(config.virtual_serial_link.value),
+            serial_baud=_required_int(config.serial_baud.value, key="serial_baud"),
             frame_id=config.frame_id.value,
-            mavlink_orientation=config.mavlink_orientation.value,
-            source_system=_required_int(config.source_system.value, key="source_system"),
-            source_component=_required_int(config.source_component.value, key="source_component"),
-            sensor_id=_required_int(config.sensor_id.value, key="sensor_id"),
             rate_hz=config.rate_hz.value,
             min_distance_m=config.min_distance_m.value,
             max_distance_m=config.max_distance_m.value,
-            covariance_cm=_required_int(config.covariance_cm.value, key="covariance_cm"),
         )
 
 
@@ -603,24 +587,17 @@ def load_down_rangefinder_config(path: str | Path | None = None) -> DownRangefin
         ),
         range_topic=resolve_str_value(raw_rangefinder, "range_topic", DEFAULT_DOWN_RANGEFINDER_RANGE_TOPIC),
         status_topic=resolve_str_value(raw_rangefinder, "status_topic", DEFAULT_DOWN_RANGEFINDER_STATUS_TOPIC),
-        endpoint=resolve_str_value(raw_rangefinder, "endpoint", DEFAULT_DOWN_RANGEFINDER_ENDPOINT),
+        virtual_serial_link=resolve_str_value(
+            raw_rangefinder,
+            "virtual_serial_link",
+            DEFAULT_DOWN_RANGEFINDER_VIRTUAL_SERIAL_LINK,
+        ),
+        serial_baud=resolve_str_value(
+            raw_rangefinder,
+            "serial_baud",
+            DEFAULT_DOWN_RANGEFINDER_SERIAL_BAUD,
+        ),
         frame_id=resolve_str_value(raw_rangefinder, "frame_id", DEFAULT_DOWN_RANGEFINDER_FRAME_ID),
-        mavlink_orientation=resolve_str_value(
-            raw_rangefinder,
-            "mavlink_orientation",
-            DEFAULT_DOWN_RANGEFINDER_MAVLINK_ORIENTATION,
-        ),
-        source_system=resolve_str_value(
-            raw_rangefinder,
-            "source_system",
-            str(DEFAULT_DOWN_RANGEFINDER_SOURCE_SYSTEM),
-        ),
-        source_component=resolve_str_value(
-            raw_rangefinder,
-            "source_component",
-            str(DEFAULT_DOWN_RANGEFINDER_SOURCE_COMPONENT),
-        ),
-        sensor_id=resolve_str_value(raw_rangefinder, "sensor_id", str(DEFAULT_DOWN_RANGEFINDER_SENSOR_ID)),
         rate_hz=resolve_float_value(raw_rangefinder, "rate_hz", DEFAULT_DOWN_RANGEFINDER_RATE_HZ),
         min_distance_m=resolve_float_value(
             raw_rangefinder,
@@ -631,11 +608,6 @@ def load_down_rangefinder_config(path: str | Path | None = None) -> DownRangefin
             raw_rangefinder,
             "max_distance_m",
             DEFAULT_DOWN_RANGEFINDER_MAX_M,
-        ),
-        covariance_cm=resolve_str_value(
-            raw_rangefinder,
-            "covariance_cm",
-            str(DEFAULT_DOWN_RANGEFINDER_COVARIANCE_CM),
         ),
         model_pose=resolve_str_value(raw_rangefinder, "model_pose", "0 0 -0.02 0 1.5707963267948966 0"),
         model_update_rate_hz=resolve_float_value(raw_rangefinder, "model_update_rate_hz", 20.0),

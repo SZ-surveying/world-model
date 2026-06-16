@@ -48,7 +48,7 @@ RUN bash -lc "\
   cmake -S YDLidar-SDK -B /tmp/ydlidar_sdk-build -DCMAKE_INSTALL_PREFIX=/usr/local && \
   cmake --build /tmp/ydlidar_sdk-build --target install -j\$(nproc) && \
   ldconfig && \
-  source /opt/ros/jazzy/setup.bash && \
+  source /opt/ros/${ROS_DISTRO}/setup.bash && \
   colcon --log-base /tmp/navlab_sensor-log build \
     --base-paths src \
     --packages-select ydlidar_ros2_driver \
