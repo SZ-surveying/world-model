@@ -2280,3 +2280,49 @@ whether high-frequency or diagnostic topics were retained in a review artifact.
 This keeps hover from passing on topic counts alone while also preventing a
 successful flight/landing from being marked failed only because lite replay
 filtering omitted nonessential diagnostics.
+
+## 2026-06-16: Hover altitude evidence requires source cross-check
+
+Decision: Go sim hover acceptance must fail closed unless the hover hold window
+contains consistent altitude evidence from FCU local position, merged
+ExternalNav height, and rangefinder-derived height. `takeoff_ack_ok=false` can
+only be tolerated when the same cross-check proves the vehicle is airborne and
+at the configured target height. The summary must record FCU local `z`,
+ExternalNav `z`, rangefinder height, pairwise differences, tolerance status, and
+drift quality.
+
+Basis: Earlier hover runs could pass the task body with `takeoff_ack_ok=false`
+or with only FCU local-position altitude evidence. That was too loose for the
+ExternalNav chain because `/slam/odom` supplies horizontal pose while
+rangefinder/height estimation must supply the vertical component. A stale or
+missing height path must block instead of being hidden by local-position count
+or a broad drift pass.
+
+Reason: hover is the base task for exploration and navigation. If hover does
+not prove that FCU local altitude, `/external_nav/odom` height, and
+`/rangefinder/down/range` agree during the hold phase, later tasks can inherit a
+bad estimator while still looking superficially healthy. Drift is therefore
+graded as `tight`, `nominal`, `marginal`, or failing quality, and a pass with
+centimeter-level drift is not automatically labeled GPS-like.
+
+## 2026-06-16: Hover loses navigation evidence fail closed after takeoff
+
+Decision: once hover has observed the vehicle airborne, loss of GUIDED mode,
+ExternalNav, MAVLink ExternalNav sender readiness, or fresh FCU local-position
+feedback is a terminal abort that starts landing. The state machine must not
+fall back to a preflight `wait_ready` or mode-setting phase while armed and
+airborne, and hold setpoints may only be sent in `hover_settle` or
+`hover_hold`. A task duration timeout after arming/airborne must also start
+landing before writing the final failed summary.
+
+Basis: live run `artifacts/sim/hover/20260616T155015Z` showed the migrated
+hover task entering hover phases and then ending with `phase=wait_ready`,
+`setpoints_sent_count=262`, stale ExternalNav/height evidence, unstable drift,
+and no landing evaluation. That path let a post-takeoff estimator loss keep
+driving position setpoints instead of treating it as a flight-safety failure.
+
+Reason: fail-closed behavior must be explicit. Before takeoff, missing
+navigation evidence means wait; after takeoff, missing navigation evidence
+means stop the task body, record the reason, and hand control to landing. This
+keeps hover from masking estimator dropouts as a timeout or a generic unstable
+hold.

@@ -16,6 +16,7 @@ import (
 
 const officialMazeSDFRelativePath = "../ardupilot_gz/ardupilot_gz_gazebo/worlds/maze.sdf"
 const officialExternalNavParamRelativePath = "docker/profiles/navlab-sitl-external-nav.parm"
+const cartographerConfigRelativePath = "navlab/common/slam/ros/localization/navlab_cartographer_adapter/config"
 
 type GeneratedRuntimeArtifact struct {
 	Type string `json:"type"`
@@ -32,13 +33,17 @@ func GenerateRuntimeArtifacts(
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
 		return nil, err
 	}
-	if usesOfficialBaselineTask(plan.TaskID) {
+	if publishesOfficialMazeOverlayTask(plan.TaskID) {
 		mazeSource, err := officialMazeSource(project)
 		if err != nil {
 			return nil, err
 		}
 		path := filepath.Join(artifactDir, "official_maze_overlay_runtime.py")
-		if err := helpers.WriteOfficialMazeOverlayRuntimeScript(path, mazeSource, helpers.DefaultOfficialMazeOverlaySpec()); err != nil {
+		mazeOverlaySpec := helpers.DefaultOfficialMazeOverlaySpec()
+		if plan.TaskID == "hover" {
+			mazeOverlaySpec.AliasTopics = []string{"/map"}
+		}
+		if err := helpers.WriteOfficialMazeOverlayRuntimeScript(path, mazeSource, mazeOverlaySpec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "official_maze_overlay_script", Path: path})
@@ -104,13 +109,46 @@ func GenerateRuntimeArtifacts(
 	}
 	if hasHelper(plan, "slam") {
 		spec := slamSpec(runtimeConfig)
+		if isHoverSlamRuntimeTask(plan.TaskID) {
+			spec.CartographerConfigurationBasename = helpers.HoverCartographerConfigBasename
+			spec.CartographerTFTopic = helpers.DefaultSlamRuntimeSpec().CartographerTFTopic
+			spec.ExternalNavInputOdomTopic = helpers.DefaultExternalNavSourceSelectorSpec().OutputOdomTopic
+			spec.IMUSourceTopic = "/imu"
+			spec.IMUTopic = "/navlab/slam/imu"
+			spec.PublishGlobalTF = false
+			spec.RequireIMUForQuality = true
+			spec.RequireScanForQuality = true
+			spec.LowObservabilityMode = true
+			configDir, err := runtimeContainerPath(project, filepath.Join(project.Paths.WorkspaceRoot, cartographerConfigRelativePath))
+			if err != nil {
+				return nil, err
+			}
+			spec.CartographerConfigurationDirectory = configDir
+			source, err := resolveWorkspaceSource(project, filepath.Join(cartographerConfigRelativePath, helpers.HoverCartographerConfigBasename))
+			if err != nil {
+				return nil, err
+			}
+			content, err := os.ReadFile(source)
+			if err != nil {
+				return nil, err
+			}
+			hoverConfigPath := filepath.Join(artifactDir, helpers.HoverCartographerConfigBasename)
+			if err := os.WriteFile(hoverConfigPath, content, 0o644); err != nil {
+				return nil, err
+			}
+			generated = append(generated, GeneratedRuntimeArtifact{Type: "hover_cartographer_config", Path: hoverConfigPath})
+		}
 		path := filepath.Join(artifactDir, "slam_runtime.toml")
 		if err := helpers.WriteSlamRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_runtime_config", Path: path})
 		externalNavBridgeParamsPath := filepath.Join(artifactDir, "external_nav_bridge_params.yaml")
-		if err := os.WriteFile(externalNavBridgeParamsPath, []byte(helpers.ExternalNavBridgeParamsOverride(spec)), 0o644); err != nil {
+		externalNavSpec := spec
+		if isHoverSlamRuntimeTask(plan.TaskID) {
+			externalNavSpec.ExternalNavInputOdomTopic = helpers.DefaultExternalNavSourceSelectorSpec().OutputOdomTopic
+		}
+		if err := os.WriteFile(externalNavBridgeParamsPath, []byte(helpers.ExternalNavBridgeParamsOverride(externalNavSpec)), 0o644); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "external_nav_bridge_params_override", Path: externalNavBridgeParamsPath})
@@ -187,6 +225,30 @@ func GenerateRuntimeArtifacts(
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_hover_probe_script", Path: filepath.Join(artifactDir, "slam_hover_probe.py")})
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "scan_reference_drift_runtime.py"), func() (string, error) {
+			return helpers.ScanReferenceDriftRuntimeScript(helpers.DefaultScanReferenceDriftSpec())
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_reference_drift_runtime_script", Path: filepath.Join(artifactDir, "scan_reference_drift_runtime.py")})
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "scan_reference_cartographer_odom_runtime.py"), func() (string, error) {
+			return helpers.ScanReferenceDriftRuntimeScript(helpers.DefaultCartographerScanReferenceOdometrySpec())
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_reference_cartographer_odom_runtime_script", Path: filepath.Join(artifactDir, "scan_reference_cartographer_odom_runtime.py")})
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "scan_reference_correction_runtime.py"), func() (string, error) {
+			return helpers.ScanReferenceCorrectionRuntimeScript(helpers.DefaultScanReferenceCorrectionSpec())
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_reference_correction_runtime_script", Path: filepath.Join(artifactDir, "scan_reference_correction_runtime.py")})
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "external_nav_source_selector_runtime.py"), func() (string, error) {
+			return helpers.ExternalNavSourceSelectorRuntimeScript(helpers.DefaultExternalNavSourceSelectorSpec())
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "external_nav_source_selector_runtime_script", Path: filepath.Join(artifactDir, "external_nav_source_selector_runtime.py")})
 		if err := writeGeneratedScript(filepath.Join(artifactDir, "hover_mission_runtime.py"), func() (string, error) {
 			return helpers.HoverMissionRuntimeScript(hoverMissionSpec(runtimeConfig), plan.DurationSec)
 		}); err != nil {
@@ -198,6 +260,14 @@ func GenerateRuntimeArtifacts(
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "foxglove_notes", Path: notesPath})
+	}
+	if hasHelper(plan, "slam-only") {
+		if err := writeGeneratedScript(filepath.Join(artifactDir, "slam_only_probe.py"), func() (string, error) {
+			return helpers.SlamOnlyProbeScript(helpers.DefaultSlamOnlySpec(), plan.DurationSec)
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_only_probe_script", Path: filepath.Join(artifactDir, "slam_only_probe.py")})
 	}
 	if hasHelper(plan, "exploration-workflow") {
 		path := filepath.Join(artifactDir, "exploration_runtime.toml")
@@ -303,13 +373,17 @@ func GenerateRuntimeArtifacts(
 	return generated, nil
 }
 
-func usesOfficialBaselineTask(taskID string) bool {
+func publishesOfficialMazeOverlayTask(taskID string) bool {
 	switch taskID {
 	case "hover", "exploration", "navigation", "scan-robustness":
 		return true
 	default:
 		return false
 	}
+}
+
+func isHoverSlamRuntimeTask(taskID string) bool {
+	return taskID == "hover" || taskID == "hover-slam-only"
 }
 
 func officialMazeSource(project config.ProjectConfig) (string, error) {
@@ -417,12 +491,17 @@ ARMING_CHECK 1043902
 EK3_GPS_CHECK 0
 EK3_SRC_OPTIONS 0
 GPS1_TYPE 0
+SIM_GPS1_ENABLE 0
+SIM_GPS1_TYPE 0
+SIM_GPS2_ENABLE 0
+SIM_GPS3_ENABLE 0
+SIM_GPS4_ENABLE 0
 VISO_TYPE 1
 EK3_SRC1_POSXY 6
 EK3_SRC1_POSZ 2
-EK3_SRC1_VELXY 6
-EK3_SRC1_VELZ 6
-EK3_SRC1_YAW 6
+EK3_SRC1_VELXY 0
+EK3_SRC1_VELZ 0
+EK3_SRC1_YAW 1
 SCR_ENABLE 1
 AHRS_ORIG_ALT 584
 AHRS_ORIG_LAT -35.363262
@@ -495,8 +574,10 @@ func officialOverlayFixture(sourcePath string) string {
 	default:
 		return `<sdf version="1.9">
   <model name="iris_with_lidar">
-    <link name="base_link"/>
-    <include>
+    <include merge="true">
+      <uri>model://iris_with_standoffs</uri>
+    </include>
+    <include merge="true">
       <uri>model://lidar_3d</uri>
     </include>
   </model>
@@ -520,6 +601,29 @@ func hasHelper(plan Plan, id string) bool {
 		}
 	}
 	return false
+}
+
+func resolveWorkspaceSource(project config.ProjectConfig, relativePath string) (string, error) {
+	candidates := []string{}
+	if project.Paths.WorkspaceRoot != "" {
+		candidates = append(candidates, filepath.Join(project.Paths.WorkspaceRoot, relativePath))
+	}
+	candidates = append(candidates, relativePath)
+	if cwd, err := os.Getwd(); err == nil {
+		for dir := cwd; ; dir = filepath.Dir(dir) {
+			candidates = append(candidates, filepath.Join(dir, relativePath))
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+		}
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("workspace source %q not found", relativePath)
 }
 
 func sensorSpec(runtimeConfig config.TaskRuntimeConfig) helpers.SensorRuntimeSpec {
@@ -722,15 +826,26 @@ func hoverMissionSpec(runtimeConfig config.TaskRuntimeConfig) helpers.HoverMissi
 		spec.Mode = "GUIDED"
 	}
 	spec.TakeoffAltM = fcu.TakeoffAltM
+	spec.HoverSettleSec = hover.SettleWindowSec
 	spec.HoverHoldSec = hover.HoverWindowSec
 	spec.MaxHorizontalDriftM = hover.MaxHoverHorizontalDriftM
 	spec.MaxAltitudeDriftM = hover.MaxHoverAltitudeErrorM
 	spec.StatusTopic = hover.HoverStatusTopic
 	spec.LandingStatusTopic = landing.LandingStatusTopic
 	spec.LandingIntentTopic = landing.LandingIntentTopic
+	spec.LandingPolicy = landingPolicyForTask(runtimeConfig, "hover")
 	spec.ExternalNavStatusTopic = hover.ExternalNavStatusTopic
 	spec.PreLandHoldSec = landing.PreLandHoldSec
+	if landing.CompletionGraceSec > 0 {
+		spec.ForceDisarmGraceSec = landing.CompletionGraceSec
+	}
 	spec.MaxLandingDurationSec = landing.MaxLandingDurationSec
+	if landing.SetpointLookaheadSec > 0 {
+		spec.LandingSetpointLookaheadSec = landing.SetpointLookaheadSec
+	}
+	if landing.MaxDescentRateMPS > 0 {
+		spec.MaxLandingDescentRateMPS = landing.MaxDescentRateMPS
+	}
 	spec.TouchdownAltitudeM = landing.TouchdownAltitudeM
 	spec.TouchdownVerticalSpeedMPS = landing.TouchdownVerticalSpeedMPS
 	spec.RequireDisarm = landing.RequireDisarm

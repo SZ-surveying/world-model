@@ -85,12 +85,14 @@ var liteProfileFilenameByTask = map[string]string{
 }
 
 type liteTopicProfile struct {
-	Path     string
-	Overlay  []string
-	Required []string
-	Optional []string
-	Drop     []string
-	Interval map[string]float64
+	Path         string
+	Overlay      []string
+	Required     []string
+	Optional     []string
+	Drop         []string
+	DerivedScans []derivedScanProfile
+	DerivedTFs   []derivedTFProfile
+	Interval     map[string]float64
 }
 
 type Options struct {
@@ -448,6 +450,54 @@ func readLiteTopicProfile(path string) (liteTopicProfile, error) {
 			profile.Interval[topic] = interval
 		case "drop":
 			profile.Drop = append(profile.Drop, topic)
+		case "derive_scan":
+			spec := derivedScanProfile{Topic: topic}
+			for _, field := range fields[2:] {
+				key, value, ok := strings.Cut(field, "=")
+				if !ok || value == "" {
+					return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: derive_scan fields must be key=value", index+1, path)
+				}
+				switch key {
+				case "source":
+					spec.Source = value
+				case "frame":
+					spec.FrameID = value
+				case "fixed_frame":
+					spec.FixedFrame = value
+				case "points_topic":
+					spec.PointsTopic = value
+				case "role":
+					spec.Role = value
+				default:
+					return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: unknown derive_scan field %q", index+1, path, key)
+				}
+			}
+			profile.DerivedScans = append(profile.DerivedScans, normalizeDerivedScanProfile(spec))
+		case "derive_display_tf":
+			spec := derivedTFProfile{Topic: topic}
+			for _, field := range fields[2:] {
+				key, value, ok := strings.Cut(field, "=")
+				if !ok || value == "" {
+					return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: derive_display_tf fields must be key=value", index+1, path)
+				}
+				switch key {
+				case "source":
+					spec.Source = value
+				case "parent":
+					spec.Parent = value
+				case "child":
+					spec.Child = value
+				case "mode":
+					spec.Mode = value
+				case "coordinate_mode":
+					spec.CoordinateMode = value
+				case "role":
+					spec.Role = value
+				default:
+					return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: unknown derive_display_tf field %q", index+1, path, key)
+				}
+			}
+			profile.DerivedTFs = append(profile.DerivedTFs, normalizeDerivedTFProfile(spec))
 		default:
 			return liteTopicProfile{}, fmt.Errorf("unknown lite topic profile directive %q on line %d in %s", fields[0], index+1, path)
 		}

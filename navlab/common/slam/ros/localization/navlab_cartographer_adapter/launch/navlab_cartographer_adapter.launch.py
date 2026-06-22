@@ -24,6 +24,11 @@ def generate_launch_description():
                 description="Fallback placeholder odometry for smoke tests only",
             ),
             DeclareLaunchArgument(
+                "configuration_directory",
+                default_value=config_dir,
+                description="Cartographer Lua configuration directory",
+            ),
+            DeclareLaunchArgument(
                 "configuration_basename",
                 default_value="navlab_cartographer_2d_real.lua",
                 description="Cartographer Lua configuration file",
@@ -206,7 +211,7 @@ def generate_launch_description():
                 output="screen",
                 arguments=[
                     "-configuration_directory",
-                    config_dir,
+                    LaunchConfiguration("configuration_directory"),
                     "-configuration_basename",
                     LaunchConfiguration("configuration_basename"),
                 ],

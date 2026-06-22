@@ -112,6 +112,14 @@ def build_down_rangefinder_projection_command() -> list[str]:
     ]
 
 
+def build_cloud_scan_projection_command() -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "navlab.sim.gazebo_sensor.cloud_scan_projection",
+    ]
+
+
 def build_emulator_command(config: X2SensorLaunchConfig) -> list[str]:
     _ = config
     return [
@@ -220,6 +228,7 @@ class X2SensorRuntime:
         if self._config.scan_source != "x2_virtual_serial":
             logger.info("scan_source={} starts only the ideal scan bridge", self._config.scan_source)
             return
+        self._manager.start_subprocess("cloud_scan_projection", build_cloud_scan_projection_command())
         self._manager.start_subprocess("x2_serial_emulator", build_emulator_command(self._config))
         wait_for_virtual_serial_link(self._config.virtual_serial_link)
         self._manager.start_subprocess("x2_scan_time_normalizer", build_scan_time_normalizer_command())

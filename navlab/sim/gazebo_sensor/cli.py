@@ -11,7 +11,6 @@ from navlab.sim.gazebo_sensor.config import X2SensorRuntimeConfig
 from navlab.sim.gazebo_sensor.x2.emulator import (
     X2SerialEmulator,
     X2SerialEmulatorConfig,
-    build_static_scan_samples,
     samples_per_scan,
 )
 from navlab.sim.gazebo_sensor.x2.scan_source import IdealLaserScan, resample_ideal_scan_to_x2_samples
@@ -69,7 +68,6 @@ def run(argv: list[str] | None = None) -> int:
         sample_rate_hz=config.sample_rate_hz,
         scan_frequency_hz=config.scan_frequency_hz,
     )
-    fallback_samples = build_static_scan_samples(sample_count=sample_count, range_m=config.static_range_m)
     emulator = X2SerialEmulator(
         X2SerialEmulatorConfig(
             virtual_serial_link=config.virtual_serial_link,
@@ -85,7 +83,7 @@ def run(argv: list[str] | None = None) -> int:
         def __init__(self) -> None:
             super().__init__("x2_serial_emulator")
             self._publisher = self.create_publisher(String, config.status_topic, 10)
-            self._latest_samples = fallback_samples
+            self._latest_samples = ()
             self._latest_scan_ideal_monotonic_sec: float | None = None
             self._started_at = time.monotonic()
             emulator.open()
@@ -140,7 +138,9 @@ def run(argv: list[str] | None = None) -> int:
         def _publish_status(self) -> None:
             message = String()
             status = emulator.status_dict()
-            status["scan_source"] = "gazebo_ideal" if self._latest_scan_ideal_monotonic_sec else "static_fallback"
+            status["scan_source"] = (
+                "gazebo_ideal" if self._latest_scan_ideal_monotonic_sec else "waiting_for_gazebo_ideal"
+            )
             status["scan_ideal_topic"] = config.scan_ideal_topic
             status["range_noise_stddev_m"] = config.range_noise_stddev_m
             status["range_noise_stddev_per_m"] = config.range_noise_stddev_per_m

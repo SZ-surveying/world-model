@@ -39,6 +39,12 @@ func TestWriteBridgeOverrideAndVendorProfile(t *testing.T) {
 	if !strings.Contains(string(bridgeData), "ros_topic_name: \"gazebo/model/odometry\"") {
 		t.Fatalf("bridge override missing isolated Gazebo model odometry topic:\n%s", bridgeData)
 	}
+	if !strings.Contains(string(bridgeData), "ros_topic_name: \"rangefinder/down/scan_ideal\"") ||
+		!strings.Contains(string(bridgeData), "gz_topic_name: \"/rangefinder/down/scan_ideal\"") ||
+		!strings.Contains(string(bridgeData), "ros_type_name: \"sensor_msgs/msg/LaserScan\"") ||
+		!strings.Contains(string(bridgeData), "gz_type_name: \"gz.msgs.LaserScan\"") {
+		t.Fatalf("bridge override missing down rangefinder LaserScan bridge:\n%s", bridgeData)
+	}
 	if strings.Contains(string(bridgeData), "ros_topic_name: \"gz/tf\"") {
 		t.Fatalf("bridge override must not publish Gazebo truth TF into legacy gz/tf namespace:\n%s", bridgeData)
 	}

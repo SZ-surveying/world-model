@@ -246,7 +246,7 @@ func defaultSlamHover(cfg *SlamHoverConfig) {
 	cfg.SettleWindowSec = defaultFloat(cfg.SettleWindowSec, 8)
 	cfg.HoverWindowSec = defaultFloat(cfg.HoverWindowSec, 18)
 	cfg.FinalHoldWindowSec = defaultFloat(cfg.FinalHoldWindowSec, 5)
-	cfg.MaxHoverHorizontalDriftM = defaultFloat(cfg.MaxHoverHorizontalDriftM, 0.35)
+	cfg.MaxHoverHorizontalDriftM = defaultFloat(cfg.MaxHoverHorizontalDriftM, 0.10)
 	cfg.MaxHoverAltitudeErrorM = defaultFloat(cfg.MaxHoverAltitudeErrorM, 0.30)
 	cfg.MaxHoverYawDriftRad = defaultFloat(cfg.MaxHoverYawDriftRad, 0.45)
 	cfg.MaxStopDriftM = defaultFloat(cfg.MaxStopDriftM, 0.25)

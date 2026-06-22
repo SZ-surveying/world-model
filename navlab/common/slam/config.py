@@ -21,6 +21,7 @@ class RuntimeConfig:
     launch_fake_odom: bool = False
     launch_cartographer_backend: bool = True
     publish_placeholder_odom: bool = False
+    cartographer_configuration_directory: str = ""
     cartographer_configuration_basename: str = "navlab_cartographer_2d_real.lua"
     imu_source_mode: str = "topic"
     imu_source_topic: str = "/ap/imu/experimental/data"
@@ -68,6 +69,7 @@ class RuntimeConfig:
             launch_fake_odom=as_bool(runtime.get("launch_fake_odom"), False),
             launch_cartographer_backend=as_bool(runtime.get("launch_cartographer_backend"), True),
             publish_placeholder_odom=as_bool(runtime.get("publish_placeholder_odom"), False),
+            cartographer_configuration_directory=as_str(runtime.get("cartographer_configuration_directory"), ""),
             cartographer_configuration_basename=as_str(
                 runtime.get("cartographer_configuration_basename"),
                 "navlab_cartographer_2d_real.lua",
@@ -121,6 +123,7 @@ class RuntimeConfig:
             "publish_placeholder_odom": self.publish_placeholder_odom,
             "launch_fake_odom": self.launch_fake_odom,
             "launch_cartographer_backend": self.launch_cartographer_backend,
+            "cartographer_configuration_directory": self.cartographer_configuration_directory,
             "cartographer_configuration_basename": self.cartographer_configuration_basename,
             "scan_topic": self.scan_topic,
             "imu_topic": self.imu_topic,

@@ -47,6 +47,59 @@ type SensorRuntimeSpec struct {
 	SyntheticFallbackEnabled  bool
 }
 
+type SlamOnlySpec struct {
+	ScanTopic              string
+	IMUTopic               string
+	SlamOdomTopic          string
+	SlamStatusTopic        string
+	ExternalNavStatusTopic string
+	TFTopic                string
+	TFStaticTopic          string
+	MinOdomRateHz          float64
+	MaxOdomStaleSec        float64
+	MaxPositionJumpM       float64
+	ProbeDurationSec       float64
+	MinProbeDurationSec    float64
+}
+
+func DefaultSlamOnlySpec() SlamOnlySpec {
+	slam := DefaultSlamRuntimeSpec()
+	return SlamOnlySpec{
+		ScanTopic:              slam.ScanTopic,
+		IMUTopic:               "/navlab/slam/imu",
+		SlamOdomTopic:          slam.SlamOdomTopic,
+		SlamStatusTopic:        slam.SlamStatusTopic,
+		ExternalNavStatusTopic: slam.ExternalNavStatusTopic,
+		TFTopic:                "/tf",
+		TFStaticTopic:          "/tf_static",
+		MinOdomRateHz:          4.0,
+		MaxOdomStaleSec:        1.0,
+		MaxPositionJumpM:       1.0,
+		ProbeDurationSec:       25.0,
+		MinProbeDurationSec:    8.0,
+	}
+}
+
+func (spec SlamOnlySpec) RequiredTopics() []string {
+	return []string{spec.ScanTopic, spec.IMUTopic, spec.SlamOdomTopic, spec.SlamStatusTopic}
+}
+
+func (spec SlamOnlySpec) RosbagTopics() []string {
+	return appendUniqueTopics([]string{
+		spec.TFTopic,
+		spec.TFStaticTopic,
+		spec.ScanTopic,
+		"/lidar",
+		"/imu",
+		spec.IMUTopic,
+		spec.SlamOdomTopic,
+		spec.SlamStatusTopic,
+		spec.ExternalNavStatusTopic,
+		"/map",
+		"/sim/x2/status",
+	}, spec.RequiredTopics()...)
+}
+
 func DefaultSensorRuntimeSpec() SensorRuntimeSpec {
 	return SensorRuntimeSpec{
 		RuntimeConfigPath:         "artifacts/gazebo_sensor_runtime.toml",
@@ -415,97 +468,246 @@ func FrameContractProbeScript(spec FrameContractSpec) (string, error) {
 }
 
 type SlamHoverSpec struct {
-	SlamOdomTopic           string
-	SlamStatusTopic         string
-	ExternalNavStatusTopic  string
-	FCUPoseTopic            string
-	FCUTwistTopic           string
-	FCUStatusTopic          string
-	CmdVelTopic             string
-	RangefinderRangeTopic   string
-	RangefinderStatusTopic  string
-	IMUTopic                string
-	TruthDiagnosticTopic    string
-	ControllerStatusTopic   string
-	SetpointIntentTopic     string
-	SetpointOutputTopic     string
-	OwnerStatusTopic        string
-	HoverStatusTopic        string
-	VehicleMarkerTopic      string
-	VehicleMarkerPoseTopic  string
-	VehicleMarkerFrameID    string
-	VehicleMarkerRateHz     float64
-	SettleWindowSec         float64
-	HoverWindowSec          float64
-	FinalHoldWindowSec      float64
-	MaxHoverHorizontalDrift float64
-	MaxHoverAltitudeError   float64
-	MaxHoverYawDriftRad     float64
-	MaxStopDriftM           float64
-	ProbeTimeoutSec         float64
+	SlamOdomTopic            string
+	SlamStatusTopic          string
+	ExternalNavStatusTopic   string
+	ScanReferenceOdomTopic   string
+	ScanReferenceStatusTopic string
+	FCUPoseTopic             string
+	FCUTwistTopic            string
+	FCUStatusTopic           string
+	CmdVelTopic              string
+	RangefinderRangeTopic    string
+	RangefinderStatusTopic   string
+	IMUTopic                 string
+	TruthDiagnosticTopic     string
+	ControllerStatusTopic    string
+	SetpointIntentTopic      string
+	SetpointOutputTopic      string
+	OwnerStatusTopic         string
+	HoverStatusTopic         string
+	VehicleMarkerTopic       string
+	VehicleMarkerPoseTopic   string
+	VehicleMarkerFrameID     string
+	VehicleMarkerRateHz      float64
+	SettleWindowSec          float64
+	HoverWindowSec           float64
+	FinalHoldWindowSec       float64
+	MaxHoverHorizontalDrift  float64
+	MaxHoverAltitudeError    float64
+	MaxHoverYawDriftRad      float64
+	MaxStopDriftM            float64
+	ProbeTimeoutSec          float64
+}
+
+type ScanReferenceDriftSpec struct {
+	ScanTopic                                    string
+	HoverStatusTopic                             string
+	OdomTopic                                    string
+	StatusTopic                                  string
+	FrameID                                      string
+	ChildFrameID                                 string
+	MinValidBeams                                int
+	MaxResidualRMSM                              float64
+	MaxRangeDeltaM                               float64
+	MaxHorizontalDriftM                          float64
+	MaxInlierResidualM                           float64
+	MinInlierRatio                               float64
+	RobustIterations                             int
+	YawSearchWindowRad                           float64
+	YawSearchSteps                               int
+	EligibilityWindowSamples                     int
+	MinStableSamples                             int
+	MinAxisDriftM                                float64
+	AxisDeadbandM                                float64
+	MaxAxisSignFlips                             int
+	MaxVelocityMPS                               float64
+	MinDirectionCosine                           float64
+	MaxPhase4BSaturationRatio                    float64
+	MinCorrectionIntentConsecutiveAllowedSamples int
+	MaxCorrectionIntentM                         float64
+	CorrectionIntentGain                         float64
+	ResetOnHoverHold                             bool
+}
+
+type ScanReferenceCorrectionSpec struct {
+	SlamOdomTopic                string
+	ScanReferenceStatusTopic     string
+	HoverStatusTopic             string
+	OutputOdomTopic              string
+	StatusTopic                  string
+	ExpectedFrameID              string
+	ExpectedChildFrameID         string
+	MaxStatusAgeMS               float64
+	MaxCorrectionM               float64
+	MaxMeasurementDeltaM         float64
+	MaxCorrectionStepM           float64
+	MinRuntimeConsistencySamples int
+	MinDirectionCosine           float64
+	MaxAxisSignFlips             int
+	MaxSaturationRatio           float64
+	HistorySamples               int
+	EnableCorrection             bool
+}
+
+type ExternalNavSourceSelectorSpec struct {
+	SlamOdomTopic             string
+	ScanReferenceOdomTopic    string
+	ScanReferenceStatusTopic  string
+	HoverStatusTopic          string
+	OutputOdomTopic           string
+	StatusTopic               string
+	MaxStatusAgeMS            float64
+	CartographerDisagreementM float64
 }
 
 type HoverMissionRuntimeSpec struct {
-	Endpoint                  string
-	SourceSystem              int
-	SourceComponent           int
-	Mode                      string
-	TakeoffAltM               float64
-	MinAirborneAltM           float64
-	PreflightReadySec         float64
-	HoverSettleSec            float64
-	HoverAltitudeToleranceM   float64
-	HoverHoldSec              float64
-	MaxHorizontalDriftM       float64
-	MaxAltitudeDriftM         float64
-	StatusTopic               string
-	LandingStatusTopic        string
-	LandingIntentTopic        string
-	ExternalNavStatusTopic    string
-	IMUStatusTopic            string
-	MAVLinkStatusTopic        string
-	PreLandHoldSec            float64
-	MaxLandingDurationSec     float64
-	TouchdownAltitudeM        float64
-	TouchdownVerticalSpeedMPS float64
-	RequireDisarm             bool
-	RequireMotorsSafe         bool
-	RequireExternalNav        bool
-	RequireIMUStatus          bool
-	DisableArmingChecks       bool
-	ForceArm                  bool
+	Endpoint                      string
+	SourceSystem                  int
+	SourceComponent               int
+	Mode                          string
+	TakeoffAltM                   float64
+	MinAirborneAltM               float64
+	PreflightReadySec             float64
+	MaxWaitReadySec               float64
+	HoverSettleSec                float64
+	HoverAltitudeToleranceM       float64
+	HoverHoldSec                  float64
+	MaxHorizontalDriftM           float64
+	MaxAltitudeDriftM             float64
+	StatusTopic                   string
+	LandingStatusTopic            string
+	LandingIntentTopic            string
+	ExternalNavStatusTopic        string
+	MAVLinkExternalNavStatusTopic string
+	IMUStatusTopic                string
+	MAVLinkStatusTopic            string
+	PreLandHoldSec                float64
+	LandingPolicy                 string
+	MaxLandingDurationSec         float64
+	LandingDescentRateMPS         float64
+	LandingLandCommandAltitudeM   float64
+	LandingSetpointLookaheadSec   float64
+	MaxLandingDescentRateMPS      float64
+	TouchdownAltitudeM            float64
+	TouchdownVerticalSpeedMPS     float64
+	ForceDisarmGraceSec           float64
+	RequireDisarm                 bool
+	RequireMotorsSafe             bool
+	RequireExternalNav            bool
+	RequireIMUStatus              bool
+	DisableArmingChecks           bool
+	ForceArm                      bool
 }
 
 func DefaultSlamHoverSpec() SlamHoverSpec {
 	return SlamHoverSpec{
-		SlamOdomTopic:           "/slam/odom",
-		SlamStatusTopic:         "/navlab/slam/status",
-		ExternalNavStatusTopic:  "/external_nav/status",
-		FCUPoseTopic:            "/ap/v1/pose/filtered",
-		FCUTwistTopic:           "/ap/v1/twist/filtered",
-		FCUStatusTopic:          "/ap/v1/status",
-		CmdVelTopic:             "/ap/v1/cmd_vel",
-		RangefinderRangeTopic:   "/rangefinder/down/range",
-		RangefinderStatusTopic:  "/rangefinder/down/status",
-		IMUTopic:                "/imu",
-		TruthDiagnosticTopic:    "/odometry",
-		ControllerStatusTopic:   "/navlab/fcu/controller/status",
-		SetpointIntentTopic:     "/navlab/fcu/setpoint/intent",
-		SetpointOutputTopic:     "/navlab/fcu/setpoint/output",
-		OwnerStatusTopic:        "/navlab/fcu/owner/status",
-		HoverStatusTopic:        "/navlab/hover/status",
-		VehicleMarkerTopic:      "/navlab/vehicle_marker",
-		VehicleMarkerPoseTopic:  "/navlab/vehicle_marker/pose",
-		VehicleMarkerFrameID:    "base_link",
-		VehicleMarkerRateHz:     5.0,
-		SettleWindowSec:         8.0,
-		HoverWindowSec:          18.0,
-		FinalHoldWindowSec:      5.0,
-		MaxHoverHorizontalDrift: 0.35,
-		MaxHoverAltitudeError:   0.30,
-		MaxHoverYawDriftRad:     0.35,
-		MaxStopDriftM:           0.20,
-		ProbeTimeoutSec:         120.0,
+		SlamOdomTopic:            "/slam/odom",
+		SlamStatusTopic:          "/navlab/slam/status",
+		ExternalNavStatusTopic:   "/external_nav/status",
+		ScanReferenceOdomTopic:   "/navlab/scan_reference_drift/odom",
+		ScanReferenceStatusTopic: "/navlab/scan_reference_drift/status",
+		FCUPoseTopic:             "/ap/v1/pose/filtered",
+		FCUTwistTopic:            "/ap/v1/twist/filtered",
+		FCUStatusTopic:           "/ap/v1/status",
+		CmdVelTopic:              "/ap/v1/cmd_vel",
+		RangefinderRangeTopic:    "/rangefinder/down/range",
+		RangefinderStatusTopic:   "/rangefinder/down/status",
+		IMUTopic:                 "/navlab/slam/imu",
+		TruthDiagnosticTopic:     "/odometry",
+		ControllerStatusTopic:    "/navlab/fcu/controller/status",
+		SetpointIntentTopic:      "/navlab/fcu/setpoint/intent",
+		SetpointOutputTopic:      "/navlab/fcu/setpoint/output",
+		OwnerStatusTopic:         "/navlab/fcu/owner/status",
+		HoverStatusTopic:         "/navlab/hover/status",
+		VehicleMarkerTopic:       "/navlab/vehicle_marker",
+		VehicleMarkerPoseTopic:   "/navlab/vehicle_marker/pose",
+		VehicleMarkerFrameID:     "base_link",
+		VehicleMarkerRateHz:      5.0,
+		SettleWindowSec:          8.0,
+		HoverWindowSec:           18.0,
+		FinalHoldWindowSec:       5.0,
+		MaxHoverHorizontalDrift:  0.10,
+		MaxHoverAltitudeError:    0.30,
+		MaxHoverYawDriftRad:      0.35,
+		MaxStopDriftM:            0.20,
+		ProbeTimeoutSec:          120.0,
+	}
+}
+
+func DefaultScanReferenceDriftSpec() ScanReferenceDriftSpec {
+	return ScanReferenceDriftSpec{
+		ScanTopic:                 "/scan",
+		HoverStatusTopic:          "/navlab/hover/status",
+		OdomTopic:                 "/navlab/scan_reference_drift/odom",
+		StatusTopic:               "/navlab/scan_reference_drift/status",
+		FrameID:                   "scan_reference",
+		ChildFrameID:              "base_link",
+		MinValidBeams:             80,
+		MaxResidualRMSM:           0.30,
+		MaxRangeDeltaM:            3.0,
+		MaxHorizontalDriftM:       5.0,
+		MaxInlierResidualM:        0.35,
+		MinInlierRatio:            0.45,
+		RobustIterations:          3,
+		YawSearchWindowRad:        0.12,
+		YawSearchSteps:            13,
+		EligibilityWindowSamples:  8,
+		MinStableSamples:          5,
+		MinAxisDriftM:             0.03,
+		AxisDeadbandM:             0.03,
+		MaxAxisSignFlips:          0,
+		MaxVelocityMPS:            0.75,
+		MinDirectionCosine:        0.70,
+		MaxPhase4BSaturationRatio: 0.95,
+		MinCorrectionIntentConsecutiveAllowedSamples: 8,
+		MaxCorrectionIntentM:                         0.25,
+		CorrectionIntentGain:                         1.0,
+		ResetOnHoverHold:                             true,
+	}
+}
+
+func DefaultCartographerScanReferenceOdometrySpec() ScanReferenceDriftSpec {
+	spec := DefaultScanReferenceDriftSpec()
+	spec.OdomTopic = CartographerOdometryInputTopic
+	spec.StatusTopic = "/navlab/scan_reference_cartographer_odom/status"
+	spec.FrameID = "odom"
+	spec.ResetOnHoverHold = false
+	return spec
+}
+
+func DefaultScanReferenceCorrectionSpec() ScanReferenceCorrectionSpec {
+	return ScanReferenceCorrectionSpec{
+		SlamOdomTopic:                "/slam/odom",
+		ScanReferenceStatusTopic:     "/navlab/scan_reference_drift/status",
+		HoverStatusTopic:             "/navlab/hover/status",
+		OutputOdomTopic:              "/slam/odom_corrected",
+		StatusTopic:                  "/navlab/scan_reference_correction/status",
+		ExpectedFrameID:              "map",
+		ExpectedChildFrameID:         "base_link",
+		MaxStatusAgeMS:               400.0,
+		MaxCorrectionM:               0.25,
+		MaxMeasurementDeltaM:         1.25,
+		MaxCorrectionStepM:           0.03,
+		MinRuntimeConsistencySamples: 5,
+		MinDirectionCosine:           0.70,
+		MaxAxisSignFlips:             0,
+		MaxSaturationRatio:           0.95,
+		HistorySamples:               8,
+		EnableCorrection:             true,
+	}
+}
+
+func DefaultExternalNavSourceSelectorSpec() ExternalNavSourceSelectorSpec {
+	return ExternalNavSourceSelectorSpec{
+		SlamOdomTopic:             "/slam/odom",
+		ScanReferenceOdomTopic:    "/navlab/scan_reference_drift/odom",
+		ScanReferenceStatusTopic:  "/navlab/scan_reference_drift/status",
+		HoverStatusTopic:          "/navlab/hover/status",
+		OutputOdomTopic:           "/external_nav/odom_candidate",
+		StatusTopic:               "/external_nav/source_selector/status",
+		MaxStatusAgeMS:            400.0,
+		CartographerDisagreementM: 0.15,
 	}
 }
 
@@ -513,34 +715,42 @@ func DefaultHoverMissionRuntimeSpec() HoverMissionRuntimeSpec {
 	fcu := DefaultFCUControllerSpec()
 	hover := DefaultSlamHoverSpec()
 	return HoverMissionRuntimeSpec{
-		Endpoint:                  fcu.MAVLinkBootstrap,
-		SourceSystem:              fcu.MAVLinkBootstrapSourceSystem,
-		SourceComponent:           fcu.MAVLinkBootstrapSourceComponent,
-		Mode:                      fcu.GuidedMode,
-		TakeoffAltM:               fcu.TakeoffAltM,
-		MinAirborneAltM:           0.10,
-		PreflightReadySec:         5.0,
-		HoverSettleSec:            2.0,
-		HoverAltitudeToleranceM:   0.18,
-		HoverHoldSec:              hover.HoverWindowSec,
-		MaxHorizontalDriftM:       hover.MaxHoverHorizontalDrift,
-		MaxAltitudeDriftM:         hover.MaxHoverAltitudeError,
-		StatusTopic:               hover.HoverStatusTopic,
-		LandingStatusTopic:        "/navlab/landing/status",
-		LandingIntentTopic:        "/navlab/landing/intent",
-		ExternalNavStatusTopic:    hover.ExternalNavStatusTopic,
-		IMUStatusTopic:            "/imu/status",
-		MAVLinkStatusTopic:        "/navlab/mavlink/status",
-		PreLandHoldSec:            2.0,
-		MaxLandingDurationSec:     35.0,
-		TouchdownAltitudeM:        0.12,
-		TouchdownVerticalSpeedMPS: 0.08,
-		RequireDisarm:             true,
-		RequireMotorsSafe:         true,
-		RequireExternalNav:        true,
-		RequireIMUStatus:          true,
-		DisableArmingChecks:       true,
-		ForceArm:                  false,
+		Endpoint:                      fcu.MAVLinkBootstrap,
+		SourceSystem:                  fcu.MAVLinkBootstrapSourceSystem,
+		SourceComponent:               fcu.MAVLinkBootstrapSourceComponent,
+		Mode:                          fcu.GuidedMode,
+		TakeoffAltM:                   fcu.TakeoffAltM,
+		MinAirborneAltM:               0.10,
+		PreflightReadySec:             5.0,
+		MaxWaitReadySec:               35.0,
+		HoverSettleSec:                2.0,
+		HoverAltitudeToleranceM:       0.18,
+		HoverHoldSec:                  hover.HoverWindowSec,
+		MaxHorizontalDriftM:           hover.MaxHoverHorizontalDrift,
+		MaxAltitudeDriftM:             hover.MaxHoverAltitudeError,
+		StatusTopic:                   hover.HoverStatusTopic,
+		LandingStatusTopic:            "/navlab/landing/status",
+		LandingIntentTopic:            "/navlab/landing/intent",
+		ExternalNavStatusTopic:        hover.ExternalNavStatusTopic,
+		MAVLinkExternalNavStatusTopic: "/mavlink_external_nav/status",
+		IMUStatusTopic:                "/imu/status",
+		MAVLinkStatusTopic:            "/navlab/mavlink/status",
+		PreLandHoldSec:                2.0,
+		LandingPolicy:                 PolicyAPLandModeAfterHover,
+		MaxLandingDurationSec:         35.0,
+		LandingDescentRateMPS:         0.09,
+		LandingLandCommandAltitudeM:   0.18,
+		LandingSetpointLookaheadSec:   0.5,
+		MaxLandingDescentRateMPS:      0.25,
+		TouchdownAltitudeM:            0.12,
+		TouchdownVerticalSpeedMPS:     0.08,
+		ForceDisarmGraceSec:           3.0,
+		RequireDisarm:                 true,
+		RequireMotorsSafe:             true,
+		RequireExternalNav:            true,
+		RequireIMUStatus:              true,
+		DisableArmingChecks:           true,
+		ForceArm:                      false,
 	}
 }
 
@@ -555,11 +765,218 @@ func HoverProbeScript(spec SlamHoverSpec) (string, error) {
 	if spec.SlamOdomTopic == "" {
 		spec = DefaultSlamHoverSpec()
 	}
+	sourceSelector := DefaultExternalNavSourceSelectorSpec()
 	return rosProbeScript(
 		"navlab_slam_hover_probe",
-		[]string{spec.FCUPoseTopic, spec.SlamOdomTopic, spec.SlamStatusTopic, spec.ExternalNavStatusTopic, "/mavlink_external_nav/status", spec.HoverStatusTopic, "/navlab/landing/status"},
+		[]string{spec.FCUPoseTopic, spec.SlamOdomTopic, spec.SlamStatusTopic, spec.ExternalNavStatusTopic, sourceSelector.OutputOdomTopic, sourceSelector.StatusTopic, spec.ScanReferenceOdomTopic, spec.ScanReferenceStatusTopic, "/mavlink_external_nav/status", "/sim/x2/status", spec.HoverStatusTopic, "/navlab/landing/status"},
 		spec,
 	)
+}
+
+func ScanReferenceDriftRuntimeScript(spec ScanReferenceDriftSpec) (string, error) {
+	if spec.ScanTopic == "" {
+		spec = DefaultScanReferenceDriftSpec()
+	}
+	payload, err := json.Marshal(map[string]any{
+		"scan_topic":                   spec.ScanTopic,
+		"hover_status_topic":           spec.HoverStatusTopic,
+		"odom_topic":                   spec.OdomTopic,
+		"status_topic":                 spec.StatusTopic,
+		"frame_id":                     spec.FrameID,
+		"child_frame_id":               spec.ChildFrameID,
+		"min_valid_beams":              spec.MinValidBeams,
+		"max_residual_rms_m":           spec.MaxResidualRMSM,
+		"max_range_delta_m":            spec.MaxRangeDeltaM,
+		"max_horizontal_drift_m":       spec.MaxHorizontalDriftM,
+		"max_inlier_residual_m":        spec.MaxInlierResidualM,
+		"min_inlier_ratio":             spec.MinInlierRatio,
+		"robust_iterations":            spec.RobustIterations,
+		"yaw_search_window_rad":        spec.YawSearchWindowRad,
+		"yaw_search_steps":             spec.YawSearchSteps,
+		"eligibility_window_samples":   spec.EligibilityWindowSamples,
+		"min_stable_samples":           spec.MinStableSamples,
+		"min_axis_drift_m":             spec.MinAxisDriftM,
+		"axis_deadband_m":              spec.AxisDeadbandM,
+		"max_axis_sign_flips":          spec.MaxAxisSignFlips,
+		"max_velocity_mps":             spec.MaxVelocityMPS,
+		"min_direction_cosine":         spec.MinDirectionCosine,
+		"max_phase4b_saturation_ratio": spec.MaxPhase4BSaturationRatio,
+		"min_correction_intent_consecutive_allowed_samples": spec.MinCorrectionIntentConsecutiveAllowedSamples,
+		"max_correction_intent_m":                           spec.MaxCorrectionIntentM,
+		"correction_intent_gain":                            spec.CorrectionIntentGain,
+		"reset_on_hover_hold":                               spec.ResetOnHoverHold,
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(`from __future__ import annotations
+
+import json
+
+SPEC = json.loads(%q)
+
+def bool_flag(name: str, value: bool) -> str:
+    return "--" + name if value else "--no-" + name
+
+def add_arg(argv: list[str], name: str, value) -> None:
+    argv.extend(["--" + name, str(value)])
+
+def main() -> int:
+    from navlab.sim.companion.nodes.scan_reference_drift import run
+
+    argv: list[str] = []
+    for name in [
+        "scan-topic",
+        "hover-status-topic",
+        "odom-topic",
+        "status-topic",
+        "frame-id",
+        "child-frame-id",
+        "min-valid-beams",
+        "max-residual-rms-m",
+        "max-range-delta-m",
+        "max-horizontal-drift-m",
+        "max-inlier-residual-m",
+        "min-inlier-ratio",
+        "robust-iterations",
+        "yaw-search-window-rad",
+        "yaw-search-steps",
+        "eligibility-window-samples",
+        "min-stable-samples",
+        "min-axis-drift-m",
+        "axis-deadband-m",
+        "max-axis-sign-flips",
+        "max-velocity-mps",
+        "min-direction-cosine",
+        "max-phase4b-saturation-ratio",
+        "min-correction-intent-consecutive-allowed-samples",
+        "max-correction-intent-m",
+        "correction-intent-gain",
+    ]:
+        add_arg(argv, name, SPEC[name.replace("-", "_")])
+    argv.append(bool_flag("reset-on-hover-hold", bool(SPEC["reset_on_hover_hold"])))
+    return int(run(argv) or 0)
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+`, string(payload)), nil
+}
+
+func ScanReferenceCorrectionRuntimeScript(spec ScanReferenceCorrectionSpec) (string, error) {
+	if spec.OutputOdomTopic == "" {
+		spec = DefaultScanReferenceCorrectionSpec()
+	}
+	payload, err := json.Marshal(map[string]any{
+		"slam_odom_topic":                 spec.SlamOdomTopic,
+		"scan_reference_status_topic":     spec.ScanReferenceStatusTopic,
+		"hover_status_topic":              spec.HoverStatusTopic,
+		"output_odom_topic":               spec.OutputOdomTopic,
+		"status_topic":                    spec.StatusTopic,
+		"expected_frame_id":               spec.ExpectedFrameID,
+		"expected_child_frame_id":         spec.ExpectedChildFrameID,
+		"max_status_age_ms":               spec.MaxStatusAgeMS,
+		"max_correction_m":                spec.MaxCorrectionM,
+		"max_measurement_delta_m":         spec.MaxMeasurementDeltaM,
+		"max_correction_step_m":           spec.MaxCorrectionStepM,
+		"min_runtime_consistency_samples": spec.MinRuntimeConsistencySamples,
+		"min_direction_cosine":            spec.MinDirectionCosine,
+		"max_axis_sign_flips":             spec.MaxAxisSignFlips,
+		"max_saturation_ratio":            spec.MaxSaturationRatio,
+		"history_samples":                 spec.HistorySamples,
+		"enable_correction":               spec.EnableCorrection,
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(`from __future__ import annotations
+
+import json
+
+SPEC = json.loads(%q)
+
+def bool_flag(name: str, value: bool) -> str:
+    return "--" + name if value else "--disable-correction"
+
+def add_arg(argv: list[str], name: str, value) -> None:
+    argv.extend(["--" + name, str(value)])
+
+def main() -> int:
+    from navlab.sim.companion.nodes.scan_reference_correction import run
+
+    argv: list[str] = []
+    for name in [
+        "slam-odom-topic",
+        "scan-reference-status-topic",
+        "hover-status-topic",
+        "output-odom-topic",
+        "status-topic",
+        "expected-frame-id",
+        "expected-child-frame-id",
+		"max-status-age-ms",
+		"max-correction-m",
+		"max-measurement-delta-m",
+		"max-correction-step-m",
+        "min-runtime-consistency-samples",
+        "min-direction-cosine",
+        "max-axis-sign-flips",
+        "max-saturation-ratio",
+        "history-samples",
+    ]:
+        add_arg(argv, name, SPEC[name.replace("-", "_")])
+    argv.append(bool_flag("enable-correction", bool(SPEC["enable_correction"])))
+    return int(run(argv) or 0)
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+`, string(payload)), nil
+}
+
+func ExternalNavSourceSelectorRuntimeScript(spec ExternalNavSourceSelectorSpec) (string, error) {
+	if spec.OutputOdomTopic == "" {
+		spec = DefaultExternalNavSourceSelectorSpec()
+	}
+	payload, err := json.Marshal(map[string]any{
+		"slam_odom_topic":             spec.SlamOdomTopic,
+		"scan_reference_odom_topic":   spec.ScanReferenceOdomTopic,
+		"scan_reference_status_topic": spec.ScanReferenceStatusTopic,
+		"hover_status_topic":          spec.HoverStatusTopic,
+		"output_odom_topic":           spec.OutputOdomTopic,
+		"status_topic":                spec.StatusTopic,
+		"max_status_age_ms":           spec.MaxStatusAgeMS,
+		"cartographer_disagreement_m": spec.CartographerDisagreementM,
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(`from __future__ import annotations
+
+import json
+
+SPEC = json.loads(%q)
+
+def add_arg(argv: list[str], name: str, value) -> None:
+    argv.extend(["--" + name, str(value)])
+
+def main() -> int:
+    from navlab.sim.companion.nodes.external_nav_source_selector import run
+
+    argv: list[str] = []
+    for name in [
+        "slam-odom-topic",
+        "scan-reference-odom-topic",
+        "scan-reference-status-topic",
+        "hover-status-topic",
+        "output-odom-topic",
+        "status-topic",
+        "max-status-age-ms",
+        "cartographer-disagreement-m",
+    ]:
+        add_arg(argv, name, SPEC[name.replace("-", "_")])
+    return int(run(argv) or 0)
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+`, string(payload)), nil
 }
 
 func HoverMissionRuntimeScript(spec HoverMissionRuntimeSpec, durationSec float64) (string, error) {
@@ -567,35 +984,43 @@ func HoverMissionRuntimeScript(spec HoverMissionRuntimeSpec, durationSec float64
 		spec = DefaultHoverMissionRuntimeSpec()
 	}
 	payload, err := json.Marshal(map[string]any{
-		"duration_sec":                 durationSec,
-		"endpoint":                     spec.Endpoint,
-		"source_system":                spec.SourceSystem,
-		"source_component":             spec.SourceComponent,
-		"mode":                         spec.Mode,
-		"takeoff_alt_m":                spec.TakeoffAltM,
-		"min_airborne_alt_m":           spec.MinAirborneAltM,
-		"preflight_ready_sec":          spec.PreflightReadySec,
-		"hover_settle_sec":             spec.HoverSettleSec,
-		"hover_altitude_tolerance_m":   spec.HoverAltitudeToleranceM,
-		"hover_hold_sec":               spec.HoverHoldSec,
-		"max_horizontal_drift_m":       spec.MaxHorizontalDriftM,
-		"max_altitude_drift_m":         spec.MaxAltitudeDriftM,
-		"status_topic":                 spec.StatusTopic,
-		"landing_status_topic":         spec.LandingStatusTopic,
-		"landing_intent_topic":         spec.LandingIntentTopic,
-		"external_nav_status_topic":    spec.ExternalNavStatusTopic,
-		"imu_status_topic":             spec.IMUStatusTopic,
-		"mavlink_status_topic":         spec.MAVLinkStatusTopic,
-		"pre_land_hold_sec":            spec.PreLandHoldSec,
-		"max_landing_duration_sec":     spec.MaxLandingDurationSec,
-		"touchdown_altitude_m":         spec.TouchdownAltitudeM,
-		"touchdown_vertical_speed_mps": spec.TouchdownVerticalSpeedMPS,
-		"require_disarm":               spec.RequireDisarm,
-		"require_motors_safe":          spec.RequireMotorsSafe,
-		"require_external_nav":         spec.RequireExternalNav,
-		"require_imu_status":           spec.RequireIMUStatus,
-		"disable_arming_checks":        spec.DisableArmingChecks,
-		"force_arm":                    spec.ForceArm,
+		"duration_sec":                      durationSec,
+		"endpoint":                          spec.Endpoint,
+		"source_system":                     spec.SourceSystem,
+		"source_component":                  spec.SourceComponent,
+		"mode":                              spec.Mode,
+		"takeoff_alt_m":                     spec.TakeoffAltM,
+		"min_airborne_alt_m":                spec.MinAirborneAltM,
+		"preflight_ready_sec":               spec.PreflightReadySec,
+		"max_wait_ready_sec":                spec.MaxWaitReadySec,
+		"hover_settle_sec":                  spec.HoverSettleSec,
+		"hover_altitude_tolerance_m":        spec.HoverAltitudeToleranceM,
+		"hover_hold_sec":                    spec.HoverHoldSec,
+		"max_horizontal_drift_m":            spec.MaxHorizontalDriftM,
+		"max_altitude_drift_m":              spec.MaxAltitudeDriftM,
+		"status_topic":                      spec.StatusTopic,
+		"landing_status_topic":              spec.LandingStatusTopic,
+		"landing_intent_topic":              spec.LandingIntentTopic,
+		"external_nav_status_topic":         spec.ExternalNavStatusTopic,
+		"mavlink_external_nav_status_topic": spec.MAVLinkExternalNavStatusTopic,
+		"imu_status_topic":                  spec.IMUStatusTopic,
+		"mavlink_status_topic":              spec.MAVLinkStatusTopic,
+		"pre_land_hold_sec":                 spec.PreLandHoldSec,
+		"landing_policy":                    spec.LandingPolicy,
+		"max_landing_duration_sec":          spec.MaxLandingDurationSec,
+		"landing_descent_rate_mps":          spec.LandingDescentRateMPS,
+		"landing_land_command_altitude_m":   spec.LandingLandCommandAltitudeM,
+		"landing_setpoint_lookahead_sec":    spec.LandingSetpointLookaheadSec,
+		"max_landing_descent_rate_mps":      spec.MaxLandingDescentRateMPS,
+		"touchdown_altitude_m":              spec.TouchdownAltitudeM,
+		"touchdown_vertical_speed_mps":      spec.TouchdownVerticalSpeedMPS,
+		"force_disarm_grace_sec":            spec.ForceDisarmGraceSec,
+		"require_disarm":                    spec.RequireDisarm,
+		"require_motors_safe":               spec.RequireMotorsSafe,
+		"require_external_nav":              spec.RequireExternalNav,
+		"require_imu_status":                spec.RequireIMUStatus,
+		"disable_arming_checks":             spec.DisableArmingChecks,
+		"force_arm":                         spec.ForceArm,
 	})
 	if err != nil {
 		return "", err
@@ -626,6 +1051,7 @@ def main() -> int:
         "takeoff-alt-m",
         "min-airborne-alt-m",
         "preflight-ready-sec",
+        "max-wait-ready-sec",
         "hover-settle-sec",
         "hover-altitude-tolerance-m",
         "hover-hold-sec",
@@ -637,12 +1063,18 @@ def main() -> int:
         "landing-status-topic",
         "landing-intent-topic",
         "external-nav-status-topic",
+        "mavlink-external-nav-status-topic",
         "imu-status-topic",
         "mavlink-status-topic",
+        "landing-policy",
         "pre-land-hold-sec",
-        "max-landing-duration-sec",
-        "touchdown-altitude-m",
+		"max-landing-duration-sec",
+		"landing-descent-rate-mps",
+		"landing-land-command-altitude-m",
+		"max-landing-descent-rate-mps",
+		"touchdown-altitude-m",
         "touchdown-vertical-speed-mps",
+        "force-disarm-grace-sec",
     ]:
         key = name.replace("-", "_")
         value = str(artifact_dir / "mission_summary.json") if key == "summary_file" else SPEC[key]
@@ -659,6 +1091,238 @@ def main() -> int:
     rc = int(run(argv) or 0)
     (artifact_dir / "hover_mission_rc.txt").write_text(str(rc) + "\n", encoding="utf-8")
     return rc
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+`, string(payload)), nil
+}
+
+func SlamOnlyProbeScript(spec SlamOnlySpec, durationSec float64) (string, error) {
+	if spec.ScanTopic == "" {
+		spec = DefaultSlamOnlySpec()
+	}
+	probeDuration := spec.ProbeDurationSec
+	if durationSec > 0 && durationSec < probeDuration {
+		probeDuration = durationSec
+	}
+	if probeDuration < spec.MinProbeDurationSec {
+		probeDuration = spec.MinProbeDurationSec
+	}
+	payload, err := json.Marshal(map[string]any{
+		"scan_topic":                spec.ScanTopic,
+		"imu_topic":                 spec.IMUTopic,
+		"slam_odom_topic":           spec.SlamOdomTopic,
+		"slam_status_topic":         spec.SlamStatusTopic,
+		"external_nav_status_topic": spec.ExternalNavStatusTopic,
+		"duration_sec":              probeDuration,
+		"min_odom_rate_hz":          spec.MinOdomRateHz,
+		"max_odom_stale_sec":        spec.MaxOdomStaleSec,
+		"max_position_jump_m":       spec.MaxPositionJumpM,
+		"min_probe_duration_sec":    spec.MinProbeDurationSec,
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(`from __future__ import annotations
+
+import json
+import math
+import time
+
+SPEC = json.loads(%q)
+
+
+def stamp_to_float(stamp) -> float:
+    return float(stamp.sec) + float(stamp.nanosec) * 1e-9
+
+
+def yaw_from_quaternion(q) -> float:
+    siny_cosp = 2.0 * (float(q.w) * float(q.z) + float(q.x) * float(q.y))
+    cosy_cosp = 1.0 - 2.0 * (float(q.y) * float(q.y) + float(q.z) * float(q.z))
+    return math.atan2(siny_cosp, cosy_cosp)
+
+
+def unwrap_delta(current: float, previous: float) -> float:
+    delta = current - previous
+    while delta > math.pi:
+        delta -= 2.0 * math.pi
+    while delta < -math.pi:
+        delta += 2.0 * math.pi
+    return delta
+
+
+def parse_status(data: str) -> dict:
+    try:
+        value = json.loads(data)
+    except Exception:
+        return {"raw": data}
+    return value if isinstance(value, dict) else {"raw": data}
+
+
+def status_ready(payload: dict) -> bool:
+    if payload.get("ready") is True:
+        return True
+    state = str(payload.get("state") or payload.get("tracking_state") or "").lower()
+    quality = str(payload.get("quality") or "").lower()
+    return state in {"ready", "healthy", "tracking"} or quality in {"good", "healthy"}
+
+
+def main() -> int:
+    import rclpy
+    from nav_msgs.msg import Odometry
+    from sensor_msgs.msg import Imu, LaserScan
+    from std_msgs.msg import String
+    from rclpy.qos import qos_profile_sensor_data
+
+    rclpy.init()
+    node = rclpy.create_node("navlab_slam_only_probe")
+    state = {
+        "start_wall": time.monotonic(),
+        "odom": [],
+        "scan_count": 0,
+        "imu_count": 0,
+        "imu_nonmonotonic_count": 0,
+        "last_imu_stamp": None,
+        "status_count": 0,
+        "last_status": {},
+        "external_nav_status_count": 0,
+        "last_external_nav_status": {},
+        "last_odom_wall": None,
+    }
+
+    def on_odom(msg: Odometry) -> None:
+        wall = time.monotonic()
+        yaw = yaw_from_quaternion(msg.pose.pose.orientation)
+        state["odom"].append({
+            "wall": wall,
+            "stamp": stamp_to_float(msg.header.stamp),
+            "x": float(msg.pose.pose.position.x),
+            "y": float(msg.pose.pose.position.y),
+            "z": float(msg.pose.pose.position.z),
+            "yaw": yaw,
+        })
+        state["last_odom_wall"] = wall
+
+    def on_scan(_msg: LaserScan) -> None:
+        state["scan_count"] += 1
+
+    def on_imu(msg: Imu) -> None:
+        stamp = stamp_to_float(msg.header.stamp)
+        last = state.get("last_imu_stamp")
+        if last is not None and stamp < last:
+            state["imu_nonmonotonic_count"] += 1
+        state["last_imu_stamp"] = stamp
+        state["imu_count"] += 1
+
+    def on_status(msg: String) -> None:
+        state["status_count"] += 1
+        state["last_status"] = parse_status(msg.data)
+
+    def on_external_nav_status(msg: String) -> None:
+        state["external_nav_status_count"] += 1
+        state["last_external_nav_status"] = parse_status(msg.data)
+
+    node.create_subscription(Odometry, SPEC["slam_odom_topic"], on_odom, qos_profile_sensor_data)
+    node.create_subscription(LaserScan, SPEC["scan_topic"], on_scan, qos_profile_sensor_data)
+    node.create_subscription(Imu, SPEC["imu_topic"], on_imu, qos_profile_sensor_data)
+    node.create_subscription(String, SPEC["slam_status_topic"], on_status, 10)
+    node.create_subscription(String, SPEC["external_nav_status_topic"], on_external_nav_status, 10)
+
+    deadline = time.monotonic() + float(SPEC["duration_sec"])
+    while rclpy.ok() and time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.05)
+
+    finished = time.monotonic()
+    odom = state["odom"]
+    elapsed = max(0.0, finished - state["start_wall"])
+    blockers = []
+    max_jump = 0.0
+    yaw_span = 0.0
+    horizontal_span = 0.0
+    odom_rate = 0.0
+    if len(odom) >= 2:
+        odom_elapsed = max(1e-6, odom[-1]["wall"] - odom[0]["wall"])
+        odom_rate = float(len(odom) - 1) / odom_elapsed
+        min_x = min(p["x"] for p in odom)
+        max_x = max(p["x"] for p in odom)
+        min_y = min(p["y"] for p in odom)
+        max_y = max(p["y"] for p in odom)
+        horizontal_span = math.hypot(max_x - min_x, max_y - min_y)
+        yaw_accum = 0.0
+        yaw_values = [0.0]
+        for prev, cur in zip(odom, odom[1:]):
+            jump = math.hypot(cur["x"] - prev["x"], cur["y"] - prev["y"])
+            max_jump = max(max_jump, jump)
+            yaw_accum += unwrap_delta(cur["yaw"], prev["yaw"])
+            yaw_values.append(yaw_accum)
+        yaw_span = max(yaw_values) - min(yaw_values)
+    else:
+        blockers.append("slam_only_odom_missing")
+
+    stale_age = None
+    if state["last_odom_wall"] is not None:
+        stale_age = max(0.0, finished - float(state["last_odom_wall"]))
+    if odom_rate < float(SPEC["min_odom_rate_hz"]):
+        blockers.append("slam_only_odom_rate_low")
+    if stale_age is None or stale_age > float(SPEC["max_odom_stale_sec"]):
+        blockers.append("slam_only_odom_stale")
+    if state["scan_count"] <= 0:
+        blockers.append("slam_only_scan_missing")
+    if state["imu_count"] <= 1:
+        blockers.append("slam_only_imu_missing")
+    if state["imu_nonmonotonic_count"] > 0:
+        blockers.append("slam_only_imu_timestamp_nonmonotonic")
+    if state["status_count"] <= 0:
+        blockers.append("slam_only_status_missing")
+    elif not status_ready(state["last_status"]):
+        blockers.append("slam_only_status_not_ready")
+    if max_jump > float(SPEC["max_position_jump_m"]):
+        blockers.append("slam_only_pose_jump")
+    quality_fields = {"slam_quality", "slam_quality_reason", "slam_quality_good", "slam_quality_report"}
+    external_status = state["last_external_nav_status"]
+    if state["external_nav_status_count"] <= 0:
+        blockers.append("slam_only_external_nav_status_missing")
+    elif not quality_fields.issubset(set(external_status.keys())):
+        blockers.append("slam_only_external_nav_quality_fields_missing")
+
+    output = {
+        "ok": len(blockers) == 0,
+        "status": "ok" if len(blockers) == 0 else "blocked",
+        "blockers": blockers,
+        "topics": {
+            "scan": SPEC["scan_topic"],
+            "imu": SPEC["imu_topic"],
+            "slam_odom": SPEC["slam_odom_topic"],
+            "slam_status": SPEC["slam_status_topic"],
+            "external_nav_status": SPEC["external_nav_status_topic"],
+        },
+        "metrics": {
+            "duration_sec": elapsed,
+            "odom_count": len(odom),
+            "odom_rate_hz": odom_rate,
+            "odom_stale_age_sec": stale_age,
+            "scan_count": state["scan_count"],
+            "imu_count": state["imu_count"],
+            "imu_nonmonotonic_count": state["imu_nonmonotonic_count"],
+            "status_count": state["status_count"],
+            "external_nav_status_count": state["external_nav_status_count"],
+            "external_nav_quality_fields_ok": (
+                state["external_nav_status_count"] > 0
+                and quality_fields.issubset(set(external_status.keys()))
+            ),
+            "status_ready": status_ready(state["last_status"]) if state["status_count"] > 0 else False,
+            "max_position_jump_m": max_jump,
+            "horizontal_span_m": horizontal_span,
+            "yaw_span_rad": yaw_span,
+        },
+        "last_status": state["last_status"],
+        "last_external_nav_status": external_status,
+    }
+    print(json.dumps(output, sort_keys=True))
+    node.destroy_node()
+    rclpy.shutdown()
+    return 0 if output["ok"] else 2
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
@@ -2826,6 +3490,7 @@ func WriteScanRobustnessBridgeOverride(path string, imuRawTopic string) error {
 
 func BaselineROSEnv() map[string]string {
 	return map[string]string{
+		"CYCLONEDDS_URI":     "<CycloneDDS><Domain><Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>512</MaxAutoParticipantIndex></Discovery></Domain></CycloneDDS>",
 		"DDS_ENABLE":         "from config.toml",
 		"DDS_DOMAIN_ID":      "from config.toml",
 		"ROS_DOMAIN_ID":      "from config.toml",
@@ -2912,17 +3577,43 @@ def slam_status_has_odom_evidence(sample: dict) -> bool:
     return bool(quality.get("odom_samples_positive", False))
 
 def sample_topic(topic: str) -> dict:
+    rclpy_sample = sample_message_topic(topic)
+    if rclpy_sample.get("ok", False):
+        return rclpy_sample
+
     import subprocess
 
-    command = ["timeout", str(PROBE_TIMEOUT_SEC), "ros2", "topic", "echo", "--once", topic]
     started = time.time()
-    result = subprocess.run(command, check=False, capture_output=True, text=True)
-    stdout = result.stdout.strip()
-    stderr = result.stderr.strip()
+    deadline = time.monotonic() + PROBE_TIMEOUT_SEC
+    attempts = 0
+    result = None
+    stdout = ""
+    stderr = ""
+    while time.monotonic() < deadline:
+        attempts += 1
+        remaining = max(0.2, min(2.0, deadline - time.monotonic()))
+        command = ["timeout", str(remaining), "ros2", "topic", "echo", "--once", topic]
+        result = subprocess.run(command, check=False, capture_output=True, text=True)
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        if result.returncode == 0 and stdout:
+            break
+        # ros2 can return immediately when discovery has not learned a late
+        # publisher yet. It can also fail during ROS graph churn with XMLRPC
+        # connection errors while the publisher is otherwise healthy. Keep
+        # retrying transient graph/CLI failures until the probe deadline.
+        if not retryable_probe_error(result.returncode, stdout + "\n" + stderr):
+            break
+        time.sleep(0.2)
+    if result is None:
+        class EmptyResult:
+            returncode = 124
+        result = EmptyResult()
     sample = {
         "ok": result.returncode == 0 and bool(stdout),
         "return_code": result.returncode,
         "latency_sec": round(time.time() - started, 3),
+        "attempts": attempts,
     }
     if stdout:
         sample["stdout"] = stdout[-4000:]
@@ -2934,7 +3625,116 @@ def sample_topic(topic: str) -> dict:
                 sample["parsed"] = parsed
     if stderr:
         sample["stderr"] = stderr[-2000:]
+    if rclpy_sample:
+        sample["rclpy_attempt"] = rclpy_sample
     return sample
+
+def sample_message_topic(topic: str) -> dict:
+    started = time.time()
+    try:
+        import rclpy
+        from rclpy.qos import qos_profile_sensor_data
+        from rosidl_runtime_py.utilities import get_message
+    except Exception as exc:
+        return {"ok": False, "return_code": 125, "latency_sec": 0.0, "error": "rclpy_unavailable:" + str(exc)}
+
+    holder = {"msg": None, "type": ""}
+    node = None
+    try:
+        rclpy.init(args=None)
+        node = rclpy.create_node("navlab_probe_message_topic")
+        type_deadline = time.monotonic() + min(2.0, PROBE_TIMEOUT_SEC)
+        topic_type = ""
+        while rclpy.ok() and time.monotonic() < type_deadline:
+            for name, types in node.get_topic_names_and_types():
+                if name == topic and types:
+                    topic_type = types[0]
+                    break
+            if topic_type:
+                break
+            rclpy.spin_once(node, timeout_sec=0.1)
+        if not topic_type:
+            return {"ok": False, "return_code": 124, "latency_sec": round(time.time() - started, 3), "error": "topic_type_missing"}
+        msg_type = get_message(topic_type)
+        holder["type"] = topic_type
+
+        def on_msg(msg) -> None:
+            holder["msg"] = msg
+
+        subscription = node.create_subscription(msg_type, topic, on_msg, qos_profile_sensor_data)
+        deadline = time.monotonic() + PROBE_TIMEOUT_SEC
+        spins = 0
+        while rclpy.ok() and time.monotonic() < deadline and holder["msg"] is None:
+            spins += 1
+            rclpy.spin_once(node, timeout_sec=0.1)
+        _ = subscription
+        msg = holder["msg"]
+        sample = {
+            "ok": msg is not None,
+            "return_code": 0 if msg is not None else 124,
+            "latency_sec": round(time.time() - started, 3),
+            "attempts": spins,
+            "sample_method": "rclpy_subscription",
+            "type": topic_type,
+        }
+        if msg is not None:
+            data = getattr(msg, "data", None)
+            if isinstance(data, str):
+                sample["data"] = data
+                sample["stdout"] = "data: " + data
+                parsed = parse_json_payload(data)
+                if parsed is not None:
+                    sample["parsed"] = parsed
+            else:
+                sample["stdout"] = summarize_message(msg)
+        return sample
+    except Exception as exc:
+        return {"ok": False, "return_code": 125, "latency_sec": round(time.time() - started, 3), "error": "rclpy_sample_failed:" + str(exc)}
+    finally:
+        if node is not None:
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
+
+def summarize_message(msg) -> str:
+    summary = {}
+    header = getattr(msg, "header", None)
+    if header is not None:
+        stamp = getattr(header, "stamp", None)
+        summary["header"] = {
+            "frame_id": getattr(header, "frame_id", ""),
+            "stamp_sec": getattr(stamp, "sec", None),
+            "stamp_nanosec": getattr(stamp, "nanosec", None),
+        }
+    for field in ("range", "radiation_type", "angle_min", "angle_max", "time_increment", "scan_time"):
+        if hasattr(msg, field):
+            value = getattr(msg, field)
+            try:
+                summary[field] = float(value)
+            except Exception:
+                summary[field] = str(value)
+    return json.dumps(summary, sort_keys=True)
+
+def retryable_probe_error(return_code: int, output: str) -> bool:
+    if return_code in (124, 130):
+        return True
+    transient_markers = (
+        "does not appear to be published yet",
+        "Failed to find a free participant index",
+        "ConnectionRefusedError",
+        "Connection refused",
+        "rmw_create_node",
+        "error creating node",
+        "xmlrpc/client.py",
+        "node.get_namespace()",
+    )
+    return any(marker in output for marker in transient_markers)
 
 def sample_string_topics(topics: list[str]) -> dict:
     if not topics:
@@ -2947,8 +3747,17 @@ def sample_string_topics(topics: list[str]) -> dict:
 
     holders = {topic: {"data": None, "parsed": None, "best_data": None, "best_parsed": None, "started": time.time()} for topic in topics}
     started = time.time()
-    rclpy.init(args=None)
-    node = rclpy.create_node("navlab_probe_string_topics")
+    try:
+        rclpy.init(args=None)
+        node = rclpy.create_node("navlab_probe_string_topics")
+    except Exception:
+        # DDS participant exhaustion is probe infrastructure churn, not sensor
+        # evidence. Fall back to ros2 topic echo sampling for every topic.
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
+        return {}
 
     def make_callback(topic: str):
         def on_msg(msg: String) -> None:

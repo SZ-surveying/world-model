@@ -126,12 +126,58 @@ func TestBuildExecutionPlanHoverKeepsMatureSLAMRosbagTopics(t *testing.T) {
 
 	assertHasRosbag(t, plan, "hover_rosbag")
 	assertHasService(t, plan, "hover_mission")
+	assertHasService(t, plan, "scan_reference_cartographer_odom")
+	assertHasService(t, plan, "external_nav_source_selector")
+	assertServiceBefore(t, plan, "external_nav_source_selector", "slam_backend")
+	assertHasArtifact(t, plan, "external_nav_source_selector_runtime.py")
 	assertMissingService(t, plan, "fcu_controller")
 	assertServiceCommandContains(t, plan, "hover_mission", "hover_mission_runtime.py")
+	assertServiceCommandContains(t, plan, "scan_reference_cartographer_odom", "scan_reference_cartographer_odom_runtime.py")
+	assertServiceCommandContains(t, plan, "external_nav_source_selector", "external_nav_source_selector_runtime.py")
+	assertProbeHasTopics(t, plan, "slam_hover_probe", []string{"/external_nav/odom_candidate", "/external_nav/source_selector/status"})
 	assertRosbagHasTopics(t, plan, "hover_rosbag", MatureWorldSLAMReviewTopics())
-	assertRosbagHasRequiredTopics(t, plan, "hover_rosbag", HoverTaskRequiredTopics(DefaultSlamHoverSpec()))
+	assertRosbagHasTopics(t, plan, "hover_rosbag", []string{DiagnosticGazeboModelOdometryTopic, DiagnosticGazeboTFTopic, DiagnosticGazeboTFStaticTopic, CartographerOdometryInputTopic, CartographerTFTopic, "/navlab/scan_reference_cartographer_odom/status", "/external_nav/odom_candidate", "/external_nav/source_selector/status"})
+	assertRosbagHasRequiredTopics(t, plan, "hover_rosbag", append(HoverTaskRequiredTopics(DefaultSlamHoverSpec()), CartographerOdometryInputTopic, "/navlab/scan_reference_cartographer_odom/status"))
+	assertRosbagRequiredMissingTopics(t, plan, "hover_rosbag", []string{DiagnosticGazeboModelOdometryTopic, DiagnosticGazeboTFTopic, DiagnosticGazeboTFStaticTopic, CartographerTFTopic})
 	assertGateHasInputs(t, plan, "slam_hover_acceptance", []string{"mission_summary.json"})
 	assertGateMissingInputs(t, plan, "slam_hover_acceptance", []string{"controller_summary.json"})
+}
+
+func TestBuildExecutionPlanHoverSlamOnlyDoesNotStartMissionOrExternalNav(t *testing.T) {
+	task := config.TaskConfig{
+		ID:     "hover-slam-only",
+		Family: "sim",
+		Task: config.TaskParameters{
+			DurationSec:       45,
+			SimulationProfile: "ideal",
+		},
+	}
+	definitions, err := DefaultRegistry().Resolve([]string{
+		"sensors",
+		"slam",
+		"slam-only",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := BuildExecutionPlan(task, 45, "ideal", definitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertHasService(t, plan, "slam_backend")
+	assertHasService(t, plan, "gazebo_sensor")
+	assertMissingService(t, plan, "hover_mission")
+	assertMissingService(t, plan, "fcu_controller")
+	assertMissingService(t, plan, "hover_scan_map_localizer")
+	assertHasProbe(t, plan, "slam_only_probe")
+	assertMissingProbe(t, plan, "rangefinder_probe")
+	assertMissingProbe(t, plan, "imu_probe")
+	assertMissingProbe(t, plan, "frame_contract_probe")
+	assertHasRosbag(t, plan, "slam_only_rosbag")
+	assertRosbagHasRequiredTopics(t, plan, "slam_only_rosbag", DefaultSlamOnlySpec().RequiredTopics())
+	assertGateHasInputs(t, plan, "slam_only_acceptance", []string{"slam_only_probe.json"})
 }
 
 func TestBuildExecutionPlanExplorationKeepsMatureSLAMRosbagTopics(t *testing.T) {
@@ -200,8 +246,12 @@ func TestHoverRequiredTopicsStayReplayLiteCompatible(t *testing.T) {
 		"/tf",
 		"/tf_static",
 		"/map",
+		"/lidar",
 		"/scan",
+		"/sim/x2/status",
 		"/slam/odom",
+		"/external_nav/odom",
+		"/navlab/slam/imu",
 		"/navlab/hover/status",
 		"/navlab/landing/status",
 		"/rangefinder/down/range",
@@ -226,8 +276,8 @@ func TestMatureReviewTopicsExcludeHeavyDiagnosticTopics(t *testing.T) {
 	for _, topic := range []string{
 		"/imu",
 		"/ap/v1/cmd_vel",
-		"/gazebo/tf",
-		"/gazebo/tf_static",
+		DiagnosticGazeboTFTopic,
+		DiagnosticGazeboTFStaticTopic,
 		DiagnosticTruthOdometryTopic,
 		DiagnosticGazeboModelOdometryTopic,
 		"/navlab/x2/scan_normalized",
@@ -555,6 +605,16 @@ func assertHasService(t *testing.T, plan ExecutionPlan, name string) {
 	t.Fatalf("execution plan missing service %q", name)
 }
 
+func assertHasArtifact(t *testing.T, plan ExecutionPlan, path string) {
+	t.Helper()
+	for _, artifact := range plan.GeneratedArtifacts {
+		if artifact.Path == path {
+			return
+		}
+	}
+	t.Fatalf("execution plan missing artifact %q", path)
+}
+
 func assertMissingService(t *testing.T, plan ExecutionPlan, name string) {
 	t.Helper()
 	for _, service := range plan.RuntimeServices {
@@ -589,6 +649,23 @@ func assertServiceEnvContains(t *testing.T, plan ExecutionPlan, name string, key
 		}
 	}
 	t.Fatalf("execution plan missing service %q", name)
+}
+
+func assertServiceBefore(t *testing.T, plan ExecutionPlan, left string, right string) {
+	t.Helper()
+	leftIndex := -1
+	rightIndex := -1
+	for idx, service := range plan.RuntimeServices {
+		if service.ServiceName == left {
+			leftIndex = idx
+		}
+		if service.ServiceName == right {
+			rightIndex = idx
+		}
+	}
+	if leftIndex < 0 || rightIndex < 0 || leftIndex >= rightIndex {
+		t.Fatalf("service order invalid: %q index=%d, %q index=%d, services=%#v", left, leftIndex, right, rightIndex, plan.RuntimeServices)
+	}
 }
 
 func assertHasProbe(t *testing.T, plan ExecutionPlan, name string) {

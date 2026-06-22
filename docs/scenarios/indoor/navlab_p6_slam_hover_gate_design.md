@@ -272,7 +272,7 @@ P6 通过必须满足：
 建议默认阈值：
 
 ```text
-max_hover_horizontal_drift_m = 0.35
+max_hover_horizontal_drift_m = 0.10
 max_hover_altitude_error_m = 0.25
 max_hover_yaw_drift_rad = 0.35
 max_stop_drift_m = 0.20

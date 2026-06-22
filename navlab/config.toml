@@ -115,6 +115,8 @@ reset_counter = 0
 source_system = 191
 use_fcu_roll_pitch = true
 local_position_pose_topic = "/navlab/fcu/local_position_pose"
+max_horizontal_speed_mps = 0.25
+max_yaw_rate_radps = 0.6
 
 [companion.runtime.mission]
 autostart = false
@@ -159,6 +161,7 @@ setpoint_rate_hz = 10.0
 setpoint_lookahead_sec = 2.0
 pre_land_hold_sec = 2.0
 max_landing_duration_sec = 35.0
+landing_setpoint_lookahead_sec = 0.5
 touchdown_altitude_m = 0.12
 touchdown_vertical_speed_mps = 0.08
 require_external_nav = true

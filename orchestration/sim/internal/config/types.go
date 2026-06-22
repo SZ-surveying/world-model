@@ -117,6 +117,7 @@ type LandingConfig struct {
 	MaxReturnHomeDurationSec  float64 `mapstructure:"max_return_home_duration_sec"`
 	MaxLandingDurationSec     float64 `mapstructure:"max_landing_duration_sec"`
 	MaxDescentRateMPS         float64 `mapstructure:"max_descent_rate_mps"`
+	SetpointLookaheadSec      float64 `mapstructure:"landing_setpoint_lookahead_sec"`
 	TouchdownAltitudeM        float64 `mapstructure:"touchdown_altitude_m"`
 	TouchdownVerticalSpeedMPS float64 `mapstructure:"touchdown_vertical_speed_mps"`
 	RequireDisarm             bool    `mapstructure:"require_disarm"`

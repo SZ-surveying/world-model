@@ -33,12 +33,34 @@ func TestGenerateRuntimeArtifactsFromConfiguredTasks(t *testing.T) {
 				"rangefinder_probe.py",
 				"imu_probe.py",
 				"slam_runtime.toml",
+				helpers.HoverCartographerConfigBasename,
 				"external_nav_bridge_params.yaml",
 				"frame_contract_runtime.toml",
 				"frame_contract_probe.py",
 				"slam_hover_runtime.toml",
+				"scan_reference_drift_runtime.py",
+				"scan_reference_cartographer_odom_runtime.py",
+				"scan_reference_correction_runtime.py",
+				"external_nav_source_selector_runtime.py",
 				"hover_mission_runtime.py",
 				"slam_hover_probe.py",
+			},
+		},
+		{
+			name:   "hover-slam-only",
+			taskID: "hover-slam-only",
+			wantFiles: []string{
+				"bridge_override.yaml",
+				"vendor_profile.yaml",
+				"model_overlay.sdf",
+				"gazebo-iris-rangefinder.parm",
+				"gazebo_sensor_runtime.toml",
+				"rangefinder_probe.py",
+				"imu_probe.py",
+				"slam_runtime.toml",
+				helpers.HoverCartographerConfigBasename,
+				"external_nav_bridge_params.yaml",
+				"slam_only_probe.py",
 			},
 		},
 		{
@@ -123,10 +145,220 @@ func TestGenerateRuntimeArtifactsFromConfiguredTasks(t *testing.T) {
 				assertFileExists(t, filepath.Join(artifactDir, name))
 			}
 			if tt.taskID == "hover" {
+				assertModelOverlayUsesNavLabRangefinderModel(t, filepath.Join(artifactDir, "model_overlay.sdf"))
 				assertParamOverlayContainsExternalNavAndRangefinder(t, filepath.Join(artifactDir, "gazebo-iris-rangefinder.parm"))
 				assertSensorRuntimeUsesBenewakeSerial(t, filepath.Join(artifactDir, "gazebo_sensor_runtime.toml"))
+				assertHoverSlamRuntimeUsesCartographerAdapter(t, filepath.Join(artifactDir, "slam_runtime.toml"))
+				assertHoverExternalNavUsesCartographerAdapter(t, filepath.Join(artifactDir, "external_nav_bridge_params.yaml"))
+				assertCopiedHoverCartographerConfig(t, filepath.Join(artifactDir, helpers.HoverCartographerConfigBasename))
+				assertScanReferenceCartographerOdomRuntime(t, filepath.Join(artifactDir, "scan_reference_cartographer_odom_runtime.py"))
+				assertHoverOfficialMazeOverlayPublishesMapAlias(t, filepath.Join(artifactDir, "official_maze_overlay_runtime.py"))
+				assertFileMissing(t, filepath.Join(artifactDir, "hover_cartographer_odom_prior.py"))
+				assertProbeScriptRetriesTopicEcho(t, filepath.Join(artifactDir, "frame_contract_probe.py"))
+				assertProbeScriptRetriesTopicEcho(t, filepath.Join(artifactDir, "slam_hover_probe.py"))
+				assertHoverMissionRuntimeUsesAPLandPolicy(t, filepath.Join(artifactDir, "hover_mission_runtime.py"))
+			}
+			if tt.taskID == "hover-slam-only" {
+				assertModelOverlayUsesNavLabRangefinderModel(t, filepath.Join(artifactDir, "model_overlay.sdf"))
+				assertHoverSlamRuntimeUsesCartographerAdapter(t, filepath.Join(artifactDir, "slam_runtime.toml"))
+				assertHoverExternalNavUsesCartographerAdapter(t, filepath.Join(artifactDir, "external_nav_bridge_params.yaml"))
+				assertCopiedHoverCartographerConfig(t, filepath.Join(artifactDir, helpers.HoverCartographerConfigBasename))
+				assertFileExists(t, filepath.Join(artifactDir, "slam_only_probe.py"))
+				assertFileMissing(t, filepath.Join(artifactDir, "hover_cartographer_odom_prior.py"))
+				assertFileMissing(t, filepath.Join(artifactDir, "official_maze_overlay_runtime.py"))
 			}
 		})
+	}
+}
+
+func assertHoverMissionRuntimeUsesAPLandPolicy(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated hover mission runtime script: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`\"landing_policy\":\"ap_land_mode_after_hover\"`,
+		`\"force_disarm_grace_sec\":3`,
+		`\"hover_settle_sec\":8`,
+		`\"max_horizontal_drift_m\":0.1`,
+		`\"max_wait_ready_sec\":35`,
+		`"landing-policy"`,
+		`"force-disarm-grace-sec"`,
+		`"max-wait-ready-sec"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("hover mission runtime missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func assertHoverSlamRuntimeUsesCartographerAdapter(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated slam runtime config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`cartographer_configuration_directory = '/workspace/navlab/common/slam/ros/localization/navlab_cartographer_adapter/config'`,
+		`cartographer_configuration_basename = 'navlab_cartographer_2d_hover.lua'`,
+		`cartographer_odometry_topic = '/cartographer/odometry_input'`,
+		`cartographer_tf_topic = '/navlab/slam/tf'`,
+		`external_nav_input_odom_topic = '/external_nav/odom_candidate'`,
+		`imu_source_topic = '/imu'`,
+		`imu_topic = '/navlab/slam/imu'`,
+		`launch_cartographer_backend = true`,
+		`odom_topic = '/slam/odom'`,
+		`slam_status_topic = '/navlab/slam/status'`,
+		`publish_global_tf = false`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("hover slam runtime missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `cartographer_odometry_topic = '/odometry'`) {
+		t.Fatalf("hover slam runtime must not use diagnostic truth /odometry:\n%s", text)
+	}
+	if strings.Contains(text, `external_nav_input_odom_topic = '/slam/cartographer_odom'`) {
+		t.Fatalf("hover external nav launch arg must not consume Cartographer side-channel odom:\n%s", text)
+	}
+	if strings.Contains(text, `/navlab/cartographer/odom`) || strings.Contains(text, `/navlab/cartographer/status`) {
+		t.Fatalf("hover runtime must not route Cartographer through diagnostic side-channel topics:\n%s", text)
+	}
+}
+
+func assertHoverExternalNavUsesCartographerAdapter(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated external nav bridge params: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "input_odom_topic: /external_nav/odom_candidate") {
+		t.Fatalf("hover external nav must consume fail-closed selector candidate /external_nav/odom_candidate:\n%s", text)
+	}
+	if strings.Contains(text, "input_odom_topic: /slam/odom\n") {
+		t.Fatalf("hover external nav must not bypass correction gate with raw /slam/odom:\n%s", text)
+	}
+	for _, want := range []string{
+		"slam_quality_gate_enabled: true",
+		"require_imu_for_quality: true",
+		"require_scan_for_quality: true",
+		"low_observability_mode: true",
+		"scan_topic: /scan",
+		"min_scan_valid_ratio_for_quality: 0.50",
+		"min_scan_hit_ratio_for_quality: 0.25",
+		"min_scan_range_span_m_for_quality: 1.0",
+		"min_scan_range_stddev_m_for_quality: 0.20",
+		"min_scan_observed_quadrants_for_quality: 3",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("hover external nav quality gate missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "input_odom_topic: /slam/cartographer_odom") {
+		t.Fatalf("hover external nav must not consume Cartographer side-channel odom:\n%s", text)
+	}
+	if strings.Contains(text, "input_odom_topic: /navlab/cartographer/odom") {
+		t.Fatalf("hover external nav must not consume diagnostic Cartographer side-channel odom:\n%s", text)
+	}
+}
+
+func assertCopiedHoverCartographerConfig(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read copied hover Cartographer config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"Hover-only profile",
+		"use_odometry = true",
+		"scan-reference odometry prior derived only from /scan",
+		"TRAJECTORY_BUILDER_2D.use_imu_data = true",
+		"TRAJECTORY_BUILDER_2D.ceres_scan_matcher.translation_weight = 1.",
+		"TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.linear_search_window = 0.50",
+		"POSE_GRAPH.optimization_problem.odometry_translation_weight = 1e4",
+		"POSE_GRAPH.optimize_every_n_nodes = 30",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("copied hover Cartographer config missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func assertScanReferenceCartographerOdomRuntime(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read scan-reference Cartographer odom runtime: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`\"odom_topic\":\"/cartographer/odometry_input\"`,
+		`\"status_topic\":\"/navlab/scan_reference_cartographer_odom/status\"`,
+		`\"frame_id\":\"odom\"`,
+		`\"reset_on_hover_hold\":false`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("scan-reference Cartographer odom runtime missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `\"odom_topic\":\"/odometry\"`) {
+		t.Fatalf("scan-reference Cartographer odom runtime must not use Gazebo truth /odometry:\n%s", text)
+	}
+}
+
+func assertHoverOfficialMazeOverlayPublishesMapAlias(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated official maze overlay script: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`/navlab/official_maze/map`,
+		`/map`,
+		`publishers = [node.create_publisher`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("hover official maze overlay script missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func assertModelOverlayUsesNavLabRangefinderModel(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated model overlay: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`<uri>model://iris_with_standoffs</uri>`,
+		`<uri>model://lidar_2d</uri>`,
+		`<link name="rangefinder_down_link">`,
+		`<pose relative_to="base_link">0 0 -0.08 0 0 0</pose>`,
+		`<sensor name="rangefinder_down" type="gpu_lidar">`,
+		`<gz_frame_id>rangefinder_down_frame</gz_frame_id>`,
+		`<pose>0 0 -0.02 0 1.5707963267948966 0</pose>`,
+		`<topic>/rangefinder/down/scan_ideal</topic>`,
+		`<child>rangefinder_down_link</child>`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated model overlay missing %q:\n%s", want, text)
+		}
+	}
+	for _, stale := range []string{
+		`<link name="rangefinder_down_frame">`,
+		`<sensor name="down_rangefinder_sensor"`,
+		`<topic>rangefinder/down/scan_ideal</topic>`,
+	} {
+		if strings.Contains(text, stale) {
+			t.Fatalf("generated model overlay retained stale generated shape %q:\n%s", stale, text)
+		}
 	}
 }
 
@@ -168,12 +400,17 @@ func assertParamOverlayContainsExternalNavAndRangefinder(t *testing.T, path stri
 	text := string(data)
 	for _, want := range []string{
 		"GPS1_TYPE 0",
+		"SIM_GPS1_ENABLE 0",
+		"SIM_GPS1_TYPE 0",
+		"SIM_GPS2_ENABLE 0",
+		"SIM_GPS3_ENABLE 0",
+		"SIM_GPS4_ENABLE 0",
 		"VISO_TYPE 1",
 		"EK3_SRC1_POSXY 6",
 		"EK3_SRC1_POSZ 2",
-		"EK3_SRC1_VELXY 6",
-		"EK3_SRC1_VELZ 6",
-		"EK3_SRC1_YAW 6",
+		"EK3_SRC1_VELXY 0",
+		"EK3_SRC1_VELZ 0",
+		"EK3_SRC1_YAW 1",
 		"SERIAL7_PROTOCOL 9",
 		"RNGFND1_PIN -1",
 		"RNGFND1_SCALING 3",
@@ -196,9 +433,40 @@ func assertParamOverlayContainsExternalNavAndRangefinder(t *testing.T, path stri
 		"RNGFND1_PIN 0",
 		"RNGFND1_MAX 50.00",
 		"SIM_SONAR_SCALE",
+		"SIM_GPS1_ENABLE 1",
+		"SIM_GPS1_TYPE 1",
 	} {
 		if strings.Contains(text, stale) {
 			t.Fatalf("generated param overlay should not override ExternalNav profile with %q:\n%s", stale, text)
+		}
+	}
+}
+
+func assertProbeScriptRetriesTopicEcho(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated probe script: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"while time.monotonic() < deadline:",
+		"attempts += 1",
+		`"does not appear to be published yet"`,
+		`"Failed to find a free participant index"`,
+		`"rmw_create_node"`,
+		"retryable_probe_error",
+		"ConnectionRefusedError",
+		"Fall back to ros2 topic echo sampling",
+		"sample_message_topic",
+		"rclpy_subscription",
+		"from rosidl_runtime_py.utilities import get_message",
+		`getattr(msg, "data", None)`,
+		"parse_json_payload(data)",
+		`"attempts": attempts`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated probe script missing retry evidence %q:\n%s", want, text)
 		}
 	}
 }
@@ -368,6 +636,7 @@ func TestHoverRuntimeScriptCallsPythonMissionRuntime(t *testing.T) {
 		"from navlab.sim.companion.nodes.hover_mission import run",
 		"mission_summary.json",
 		"takeoff-alt-m",
+		"max-wait-ready-sec",
 		"hover-hold-sec",
 		"landing-status-topic",
 		"require-external-nav",
@@ -449,5 +718,14 @@ func assertFileExists(t *testing.T, path string) {
 	}
 	if info.IsDir() {
 		t.Fatalf("expected file %s, got directory", path)
+	}
+}
+
+func assertFileMissing(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("unexpected generated file %s", path)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat %s: %v", path, err)
 	}
 }

@@ -15,6 +15,7 @@ const OfficialMazeOverlayTopic = "/navlab/official_maze/map"
 
 type OfficialMazeOverlaySpec struct {
 	Topic       string
+	AliasTopics []string
 	FrameID     string
 	ResolutionM float64
 	MarginM     float64
@@ -51,6 +52,7 @@ func WriteOfficialMazeOverlayRuntimeScript(path string, source string, spec Offi
 	if spec.MarginM < 0 {
 		spec.MarginM = 0
 	}
+	topics := append([]string{spec.Topic}, spec.AliasTopics...)
 	walls, err := ParseOfficialMazeWalls(source)
 	if err != nil {
 		return err
@@ -60,6 +62,7 @@ func WriteOfficialMazeOverlayRuntimeScript(path string, source string, spec Offi
 	}
 	payload, err := json.Marshal(map[string]any{
 		"topic":        spec.Topic,
+		"topics":       topics,
 		"frame_id":     spec.FrameID,
 		"resolution_m": spec.ResolutionM,
 		"margin_m":     spec.MarginM,
@@ -139,18 +142,19 @@ def main():
     qos = QoSProfile(depth=1)
     qos.reliability = ReliabilityPolicy.RELIABLE
     qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-    publisher = node.create_publisher(OccupancyGrid, SPEC["topic"], qos)
+    publishers = [node.create_publisher(OccupancyGrid, topic, qos) for topic in SPEC["topics"]]
     msg = build_map()
 
     def publish():
         msg.header.stamp = node.get_clock().now().to_msg()
-        publisher.publish(msg)
+        for publisher in publishers:
+            publisher.publish(msg)
 
     timer = node.create_timer(1.0, publish)
     publish()
     node.get_logger().info(
-        "official maze overlay publishing topic=%%s frame=%%s width=%%d height=%%d"
-        %% (SPEC["topic"], SPEC["frame_id"], msg.info.width, msg.info.height)
+        "official maze overlay publishing topics=%%s frame=%%s width=%%d height=%%d"
+        %% (SPEC["topics"], SPEC["frame_id"], msg.info.width, msg.info.height)
     )
     try:
         rclpy.spin(node)

@@ -30,7 +30,7 @@ func TestBuildTaskRuntimeConfigAppliesTaskOverrides(t *testing.T) {
 	if runtimeConfig.SlamHover.HoverWindowSec != 18 {
 		t.Fatalf("hover window = %v", runtimeConfig.SlamHover.HoverWindowSec)
 	}
-	if runtimeConfig.Landing.HoverPolicy != "land_in_place" {
+	if runtimeConfig.Landing.HoverPolicy != "ap_land_mode_after_hover" {
 		t.Fatalf("hover landing policy = %q", runtimeConfig.Landing.HoverPolicy)
 	}
 	if runtimeConfig.FrameContract.MapFrameID != "map" {

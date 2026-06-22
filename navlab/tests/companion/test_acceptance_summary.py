@@ -185,6 +185,7 @@ def _write_hover_acceptance_inputs(tmp_path: Path) -> dict[str, object]:
                 "phases_seen": ["wait_ready", "guided", "arm", "takeoff", "hover_settle", "hover_hold"],
                 "hover_drift": {
                     "ok": True,
+                    "quality": "tight",
                     "sample_count": 10,
                     "duration_sec": 20.0,
                     "duration_tolerance_sec": 0.25,
@@ -192,6 +193,36 @@ def _write_hover_acceptance_inputs(tmp_path: Path) -> dict[str, object]:
                     "horizontal_span_m": 0.03,
                     "z_drift_m": 0.01,
                     "z_span_m": 0.02,
+                },
+                "hover_altitude_sources": {
+                    "fcu_local_z_ned": -0.45,
+                    "fcu_local_height_m": 0.45,
+                    "external_nav_height_m": 0.44,
+                    "rangefinder_range_m": 0.50,
+                    "rangefinder_relative_height_m": 0.45,
+                },
+                "hover_altitude_crosscheck": {
+                    "ok": True,
+                    "sample_count": 10,
+                    "target_alt_m": 0.45,
+                    "tolerance_m": 0.08,
+                    "sources": {
+                        "fcu_local_z_ned": -0.45,
+                        "fcu_local_height_m": 0.45,
+                        "external_nav_height_m": 0.44,
+                        "rangefinder_range_m": 0.50,
+                        "rangefinder_relative_height_m": 0.45,
+                    },
+                    "diffs": {
+                        "fcu_vs_external_abs_m": 0.01,
+                        "fcu_vs_rangefinder_abs_m": 0.0,
+                        "external_vs_rangefinder_abs_m": 0.01,
+                        "fcu_target_error_m": 0.0,
+                        "external_target_error_m": 0.01,
+                        "rangefinder_target_error_m": 0.0,
+                    },
+                    "missing_sources": [],
+                    "over_tolerance": [],
                 },
             }
         ),
@@ -437,6 +468,9 @@ def test_hover_summary_requires_slam_truth_error_within_gate(tmp_path: Path) -> 
     assert rc == 0
     assert summary["ok"] is True
     assert summary["slam_truth_error_ok"] is True
+    assert summary["hover_drift_quality"] == "tight"
+    assert summary["hover_altitude_crosscheck"]["ok"] is True
+    assert summary["hover_altitude_sources"]["rangefinder_relative_height_m"] == 0.45
 
 
 def test_hover_summary_fails_when_slam_truth_error_is_too_large(tmp_path: Path) -> None:

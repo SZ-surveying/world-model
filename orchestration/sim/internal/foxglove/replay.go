@@ -89,24 +89,27 @@ type CropSummary struct {
 }
 
 type ReplayMCAPSummary struct {
-	Path                  string         `json:"path"`
-	RawMCAPPath           string         `json:"raw_mcap_path"`
-	RawMCAPSizeBytes      int64          `json:"raw_mcap_size_bytes"`
-	FoxgloveMCAPSizeBytes int64          `json:"foxglove_mcap_size_bytes"`
-	SizeReductionRatio    float64        `json:"size_reduction_ratio"`
-	RequiredTopics        []string       `json:"required_topics"`
-	MissingTopics         []string       `json:"missing_topics"`
-	PresentTopics         []string       `json:"present_topics"`
-	MessageCounts         map[string]int `json:"message_counts"`
-	ConfiguredDropTopics  []string       `json:"configured_drop_topics"`
-	RetainedTopics        []string       `json:"retained_topics"`
-	DownsampledTopics     map[string]any `json:"downsampled_topics"`
+	Path                  string               `json:"path"`
+	RawMCAPPath           string               `json:"raw_mcap_path"`
+	RawMCAPSizeBytes      int64                `json:"raw_mcap_size_bytes"`
+	FoxgloveMCAPSizeBytes int64                `json:"foxglove_mcap_size_bytes"`
+	SizeReductionRatio    float64              `json:"size_reduction_ratio"`
+	RequiredTopics        []string             `json:"required_topics"`
+	MissingTopics         []string             `json:"missing_topics"`
+	PresentTopics         []string             `json:"present_topics"`
+	MessageCounts         map[string]int       `json:"message_counts"`
+	ConfiguredDropTopics  []string             `json:"configured_drop_topics"`
+	RetainedTopics        []string             `json:"retained_topics"`
+	DerivedTopics         []derivedScanProfile `json:"derived_topics,omitempty"`
+	DerivedDisplayTFs     []derivedTFProfile   `json:"derived_display_tfs,omitempty"`
+	DownsampledTopics     map[string]any       `json:"downsampled_topics"`
 }
 
 type TruthBoundary struct {
 	UsesOfficialMazeAsInput bool   `json:"uses_official_maze_as_input"`
 	UsesGazeboTruthAsInput  bool   `json:"uses_gazebo_truth_as_input"`
 	OfficialMazeLayerRole   string `json:"official_maze_layer_role"`
+	GazeboTruthLayerRole    string `json:"gazebo_truth_layer_role,omitempty"`
 }
 
 type TaskSummaryGate struct {
@@ -187,8 +190,9 @@ func BuildReplay(options ReplayOptions) (ReplayResult, error) {
 		},
 		TruthBoundary: TruthBoundary{
 			UsesOfficialMazeAsInput: false,
-			UsesGazeboTruthAsInput:  false,
+			UsesGazeboTruthAsInput:  profileUsesGazeboDisplayTF(profile),
 			OfficialMazeLayerRole:   "visualization_only",
+			GazeboTruthLayerRole:    gazeboTruthLayerRole(profile),
 		},
 		ReplayMCAPInfo: ReplayMCAPSummary{
 			Path:                 outputPath,
@@ -311,9 +315,12 @@ func buildReplayUnchecked(result ReplayResult, profile liteTopicProfile, options
 		if err := os.MkdirAll(filepath.Dir(result.ReplayMCAP), 0o755); err != nil {
 			return result, err
 		}
-		if err := writeLiteMCAP(result.RawMCAP, result.ReplayMCAP, profile); err != nil {
+		derivedTopics, derivedTFs, err := writeLiteMCAP(result.RawMCAP, result.ReplayMCAP, profile)
+		if err != nil {
 			return result, err
 		}
+		result.ReplayMCAPInfo.DerivedTopics = derivedTopics
+		result.ReplayMCAPInfo.DerivedDisplayTFs = derivedTFs
 	}
 
 	var counts map[string]int
@@ -466,7 +473,12 @@ func (cursor *cdrCursor) align(size int) {
 	if size <= 1 {
 		return
 	}
-	if remainder := cursor.off % size; remainder != 0 {
+	base := 4
+	remainder := (cursor.off - base) % size
+	if remainder < 0 {
+		remainder += size
+	}
+	if remainder != 0 {
 		cursor.off += size - remainder
 	}
 }
@@ -495,48 +507,62 @@ func (cursor *cdrCursor) int32() (int32, error) {
 }
 
 func (cursor *cdrCursor) string() error {
-	length, err := cursor.uint32()
-	if err != nil {
-		return err
-	}
-	if int(length) > cursor.remaining() {
-		return fmt.Errorf("string length %d exceeds remaining %d", length, cursor.remaining())
-	}
-	cursor.off += int(length)
-	cursor.align(4)
-	return nil
+	_, err := cursor.stringValue()
+	return err
 }
 
-func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) error {
+func (cursor *cdrCursor) stringValue() (string, error) {
+	length, err := cursor.uint32()
+	if err != nil {
+		return "", err
+	}
+	if int(length) > cursor.remaining() {
+		return "", fmt.Errorf("string length %d exceeds remaining %d", length, cursor.remaining())
+	}
+	raw := cursor.data[cursor.off : cursor.off+int(length)]
+	cursor.off += int(length)
+	cursor.align(4)
+	if len(raw) > 0 && raw[len(raw)-1] == 0 {
+		raw = raw[:len(raw)-1]
+	}
+	return string(raw), nil
+}
+
+func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) ([]derivedScanProfile, []derivedTFProfile, error) {
 	source, err := openMCAP(rawPath)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	defer source.close()
 	dst, err := os.Create(outputPath)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	defer func() { _ = dst.Close() }()
 	writer, err := mcap.NewWriter(dst, &mcap.WriterOptions{Chunked: true, Compression: mcap.CompressionLZ4})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	header := source.reader.Header()
 	if header == nil {
 		header = &mcap.Header{}
 	}
 	if err := writer.WriteHeader(&mcap.Header{Profile: header.Profile, Library: "navlab-sim foxglove-lite"}); err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	retain := retainIntervals(profile)
+	derivedStates := newDerivedScanStates(profile)
+	derivedTFStates := newDerivedTFStates(profile)
+	replaceEdges := derivedTFReplaceEdges(derivedTFStates)
 	writtenSchemas := map[uint16]bool{}
 	writtenChannels := map[uint16]bool{}
 	lastWritten := map[string]uint64{}
+	var maxSchemaID uint16
+	var maxChannelID uint16
 	it, err := source.reader.Messages(mcap.UsingIndex(false))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	for {
 		schema, channel, message, err := it.Next(nil) //nolint:staticcheck
@@ -544,7 +570,18 @@ func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) 
 			break
 		}
 		if err != nil {
-			return err
+			return nil, nil, err
+		}
+		if schema != nil && schema.ID > maxSchemaID {
+			maxSchemaID = schema.ID
+		}
+		if channel != nil && channel.ID > maxChannelID {
+			maxChannelID = channel.ID
+		}
+		for _, state := range derivedTFStates {
+			if err := state.maybeCollect(channel, message); err != nil {
+				return nil, nil, err
+			}
 		}
 		interval, ok := retain[channel.Topic]
 		if !ok {
@@ -555,15 +592,26 @@ func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) 
 				continue
 			}
 		}
+		data := append([]byte(nil), message.Data...)
+		if edges := replaceEdges[channel.Topic]; len(edges) > 0 {
+			filtered, keep, err := filterTFMessageCDR(data, edges)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !keep {
+				continue
+			}
+			data = filtered
+		}
 		if schema != nil && !writtenSchemas[schema.ID] {
 			if err := writer.WriteSchema(copySchema(schema, schema.ID)); err != nil {
-				return err
+				return nil, nil, err
 			}
 			writtenSchemas[schema.ID] = true
 		}
 		if !writtenChannels[channel.ID] {
 			if err := writer.WriteChannel(copyChannel(channel, channel.ID)); err != nil {
-				return err
+				return nil, nil, err
 			}
 			writtenChannels[channel.ID] = true
 		}
@@ -572,13 +620,26 @@ func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) 
 			Sequence:    message.Sequence,
 			LogTime:     message.LogTime,
 			PublishTime: message.PublishTime,
-			Data:        append([]byte(nil), message.Data...),
+			Data:        data,
 		}); err != nil {
-			return err
+			return nil, nil, err
+		}
+		for _, state := range derivedStates {
+			if err := state.maybeCollect(schema, channel, message); err != nil {
+				return nil, nil, err
+			}
 		}
 		lastWritten[channel.Topic] = message.LogTime
 	}
-	return writer.Close()
+	derivedTopics, nextSchemaID, nextChannelID, err := writeDerivedScanOutputs(writer, derivedStates, maxSchemaID+1, maxChannelID+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	derivedTFs, err := writeDerivedTFOutputs(writer, derivedTFStates, nextSchemaID, nextChannelID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return derivedTopics, derivedTFs, writer.Close()
 }
 
 func scanRawMCAP(path string) (replayInputScan, error) {
@@ -760,6 +821,22 @@ func profileDownsampleIntervals(profile liteTopicProfile) map[string]any {
 		}
 	}
 	return values
+}
+
+func profileUsesGazeboDisplayTF(profile liteTopicProfile) bool {
+	for _, spec := range profile.DerivedTFs {
+		if strings.Contains(spec.Source, "gazebo") {
+			return true
+		}
+	}
+	return false
+}
+
+func gazeboTruthLayerRole(profile liteTopicProfile) string {
+	if profileUsesGazeboDisplayTF(profile) {
+		return "visualization_only_replay_display_tf"
+	}
+	return ""
 }
 
 func missingTopics(required []string, counts map[string]int) []string {

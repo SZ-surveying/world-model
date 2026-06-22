@@ -81,6 +81,11 @@ def generate_launch_description():
                 description="Launch cartographer_ros backend nodes",
             ),
             DeclareLaunchArgument(
+                "cartographer_configuration_directory",
+                default_value=cartographer_config_dir,
+                description="Cartographer Lua configuration directory",
+            ),
+            DeclareLaunchArgument(
                 "cartographer_configuration_basename",
                 default_value="navlab_cartographer_2d_real.lua",
                 description="Cartographer Lua configuration file",
@@ -325,7 +330,7 @@ def generate_launch_description():
                 output="screen",
                 arguments=[
                     "-configuration_directory",
-                    cartographer_config_dir,
+                    LaunchConfiguration("cartographer_configuration_directory"),
                     "-configuration_basename",
                     LaunchConfiguration("cartographer_configuration_basename"),
                 ],

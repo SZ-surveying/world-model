@@ -29,8 +29,13 @@ class DownRangeHeightEstimator(Node):
         self._max_age_ms = args.max_age_ms
         self._covariance = args.covariance
         self._source_type = args.source_type
+        self._max_vertical_speed_mps = args.max_vertical_speed_mps
+        self._max_vertical_velocity_output_mps = args.max_vertical_velocity_output_mps
+        self._velocity_smoothing_alpha = args.velocity_smoothing_alpha
+        self._max_filter_dt_sec = args.max_filter_dt_sec
         self._ground_range_m: float | None = None
         self._last_height_m: float | None = None
+        self._last_vz_mps: float | None = None
         self._last_rx_monotonic = 0.0
         self._last_publish_monotonic = 0.0
         self._input_count = 0
@@ -54,17 +59,24 @@ class DownRangeHeightEstimator(Node):
         if self._ground_range_m is None:
             self._ground_range_m = distance_m
 
-        z_m = max(0.0, distance_m - self._ground_range_m)
         dt = now - self._last_publish_monotonic if self._last_publish_monotonic > 0.0 else 0.0
-        if dt > 0.0 and self._last_height_m is not None:
-            vz_mps = (z_m - self._last_height_m) / dt
-        else:
-            vz_mps = 0.0
+        z_m, vz_mps = estimate_relative_height(
+            distance_m=distance_m,
+            ground_range_m=self._ground_range_m,
+            last_height_m=self._last_height_m,
+            last_vz_mps=self._last_vz_mps,
+            dt_sec=dt,
+            max_vertical_speed_mps=self._max_vertical_speed_mps,
+            max_vertical_velocity_output_mps=self._max_vertical_velocity_output_mps,
+            velocity_smoothing_alpha=self._velocity_smoothing_alpha,
+            max_filter_dt_sec=self._max_filter_dt_sec,
+        )
 
         self._input_count += 1
         self._last_rx_monotonic = now
         self._last_publish_monotonic = now
         self._last_height_m = z_m
+        self._last_vz_mps = vz_mps
         payload = {
             "z": z_m,
             "vz": vz_mps,
@@ -95,10 +107,54 @@ class DownRangeHeightEstimator(Node):
             "source_type": self._source_type,
             "ground_range_m": self._ground_range_m,
             "last_height_m": self._last_height_m,
+            "last_vz_mps": self._last_vz_mps,
+            "max_vertical_speed_mps": self._max_vertical_speed_mps,
+            "max_vertical_velocity_output_mps": self._max_vertical_velocity_output_mps,
+            "velocity_smoothing_alpha": self._velocity_smoothing_alpha,
+            "max_filter_dt_sec": self._max_filter_dt_sec,
         }
         message = String()
         message.data = json.dumps(payload, separators=(",", ":"))
         self._status_pub.publish(message)
+
+
+def estimate_relative_height(
+    *,
+    distance_m: float,
+    ground_range_m: float,
+    last_height_m: float | None,
+    last_vz_mps: float | None,
+    dt_sec: float,
+    max_vertical_speed_mps: float,
+    velocity_smoothing_alpha: float,
+    max_vertical_velocity_output_mps: float | None = None,
+    max_filter_dt_sec: float = 0.1,
+) -> tuple[float, float]:
+    raw_z_m = max(0.0, distance_m - ground_range_m)
+    effective_dt_sec = dt_sec
+    if max_filter_dt_sec > 0.0:
+        effective_dt_sec = min(effective_dt_sec, max_filter_dt_sec)
+    z_m = raw_z_m
+    if effective_dt_sec > 0.0 and last_height_m is not None:
+        max_delta_m = max(0.0, max_vertical_speed_mps) * effective_dt_sec
+        z_m = clamp(raw_z_m, last_height_m - max_delta_m, last_height_m + max_delta_m)
+        z_m = max(0.0, z_m)
+    if effective_dt_sec > 0.0 and last_height_m is not None:
+        raw_vz_mps = (z_m - last_height_m) / effective_dt_sec
+    else:
+        raw_vz_mps = 0.0
+    max_vz_output_mps = max_vertical_speed_mps
+    if max_vertical_velocity_output_mps is not None and max_vertical_velocity_output_mps > 0.0:
+        max_vz_output_mps = max_vertical_velocity_output_mps
+    vz_mps = clamp(raw_vz_mps, -max_vz_output_mps, max_vz_output_mps)
+    if last_vz_mps is not None:
+        alpha = clamp(velocity_smoothing_alpha, 0.0, 1.0)
+        vz_mps = (alpha * vz_mps) + ((1.0 - alpha) * last_vz_mps)
+    return z_m, clamp(vz_mps, -max_vz_output_mps, max_vz_output_mps)
+
+
+def clamp(value: float, low: float, high: float) -> float:
+    return min(max(value, low), high)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -109,6 +165,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-age-ms", type=float, default=1000.0)
     parser.add_argument("--covariance", type=float, default=0.04)
     parser.add_argument("--source-type", default="rangefinder_down_relative")
+    parser.add_argument("--max-vertical-speed-mps", type=float, default=0.7)
+    parser.add_argument("--max-vertical-velocity-output-mps", type=float, default=0.0)
+    parser.add_argument("--velocity-smoothing-alpha", type=float, default=0.35)
+    parser.add_argument("--max-filter-dt-sec", type=float, default=0.1)
     return parser.parse_args(argv)
 
 

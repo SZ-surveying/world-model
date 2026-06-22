@@ -15,6 +15,7 @@ def test_slam_runtime_config_loads_cartographer_contract() -> None:
     assert config.scan_topic == "/scan"
     assert config.imu_topic == "/imu"
     assert config.cartographer_odometry_topic == "/cartographer/odometry_input"
+    assert config.cartographer_configuration_directory == ""
     assert config.publish_global_tf is True
     assert config.global_tf_topic == "/tf"
     assert config.odom_topic == "/slam/odom"
@@ -36,6 +37,7 @@ def test_cartographer_backend_generates_launch_command_from_runtime_config() -> 
     assert "laser_frame:=laser_frame" in command
     assert "laser_z:=0" in command
     assert "cartographer_odometry_topic:=/cartographer/odometry_input" in command
+    assert "cartographer_configuration_directory:=" in command
     assert "cartographer_odometry_topic:=/odometry" not in command
     assert "publish_global_tf:=true" in command
     assert "global_tf_topic:=/tf" in command

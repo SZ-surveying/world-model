@@ -4,6 +4,7 @@
 #   required TOPIC interval=SECONDS|all
 #   optional TOPIC interval=SECONDS|all
 #   drop TOPIC
+#   derive_display_tf TOPIC source=TOPIC parent=FRAME child=FRAME mode=replace coordinate_mode=raw|gazebo_xyz_to_ned role=visualization_only
 
 overlay /navlab/official_maze/map
 
@@ -16,6 +17,9 @@ required /navlab/hover/status interval=0.25
 required /navlab/landing/status interval=0.10
 required /rangefinder/down/range interval=0.20
 
+optional /lidar interval=0.10
+optional /gazebo/model/odometry interval=0.05
+optional /sim/x2/status interval=0.50
 optional /navlab/fcu/setpoint/intent interval=all
 optional /navlab/fcu/setpoint/output interval=0.10
 optional /navlab/fcu/controller/status interval=0.25
@@ -26,12 +30,12 @@ optional /navlab/slam/status interval=0.50
 optional /ap/v1/pose/filtered interval=0.20
 optional /ap/v1/twist/filtered interval=0.20
 optional /ap/v1/status interval=0.50
+optional /submap_list interval=0.50
+optional /trajectory_node_list interval=0.50
 
 drop /imu
 drop /clock
 drop /odometry
-drop /submap_list
-drop /trajectory_node_list
 drop /ap/v1/time
 drop /ap/v1/cmd_vel
 drop /navlab/fcu/owner/status
@@ -39,4 +43,5 @@ drop /navlab/fcu/state
 drop /navlab/x2/vendor_scan
 drop /rangefinder/down/scan_ideal
 drop /rangefinder/down/status
-drop /sim/x2/status
+
+derive_display_tf /tf source=/gazebo/model/odometry parent=map child=base_link mode=replace coordinate_mode=gazebo_xyz_to_ned role=visualization_only

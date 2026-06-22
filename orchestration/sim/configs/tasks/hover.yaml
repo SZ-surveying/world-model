@@ -20,12 +20,14 @@ slam_hover:
   settle_window_sec: 8.0
   hover_window_sec: 18.0
   final_hold_window_sec: 5.0
-  max_hover_horizontal_drift_m: 0.35
+  max_hover_horizontal_drift_m: 0.10
   max_hover_altitude_error_m: 0.30
 landing:
-  hover_policy: land_in_place
+  hover_policy: ap_land_mode_after_hover
   pre_land_hold_sec: 2.0
   max_landing_duration_sec: 35.0
+  max_descent_rate_mps: 0.25
+  landing_setpoint_lookahead_sec: 0.5
   touchdown_altitude_m: 0.12
   require_disarm: true
   require_motors_safe: true

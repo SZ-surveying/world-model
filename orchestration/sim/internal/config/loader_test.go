@@ -117,14 +117,19 @@ func TestLoaderReadsProjectAndYAMLTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTasks() error = %v", err)
 	}
-	if len(tasks) != 4 {
-		t.Fatalf("len(tasks) = %d, want 4", len(tasks))
+	if len(tasks) != 5 {
+		t.Fatalf("len(tasks) = %d, want 5", len(tasks))
 	}
 	if tasks[0].ID != "exploration" {
 		t.Fatalf("first task = %q, want exploration", tasks[0].ID)
 	}
-	if tasks[2].ID != "navigation" {
-		t.Fatalf("third task = %q, want navigation", tasks[2].ID)
+	gotTaskIDs := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		gotTaskIDs = append(gotTaskIDs, task.ID)
+	}
+	wantTaskIDs := []string{"exploration", "hover", "hover-slam-only", "navigation", "scan-robustness"}
+	if strings.Join(gotTaskIDs, ",") != strings.Join(wantTaskIDs, ",") {
+		t.Fatalf("task IDs = %#v, want %#v", gotTaskIDs, wantTaskIDs)
 	}
 }
 

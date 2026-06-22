@@ -99,6 +99,14 @@ func DefaultRegistry() *Registry {
 			MigrationStatus: "ported_partial",
 		},
 		{
+			ID:              "slam-only",
+			Phase:           "validation_probe",
+			Role:            "write SLAM-only probe and rosbag profile without hover mission or external-nav injection",
+			ArtifactOutputs: []string{"slam_only_probe.json", "slam_only_rosbag", "summary.json"},
+			RuntimeAction:   true,
+			MigrationStatus: "ported_partial",
+		},
+		{
 			ID:              "motion",
 			Phase:           "doctor_probe",
 			Role:            "build bounded motion doctor summary for exploration dependencies",

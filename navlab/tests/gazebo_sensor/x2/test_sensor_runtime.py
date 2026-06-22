@@ -6,6 +6,7 @@ from pathlib import Path
 
 from navlab.sim.gazebo_sensor.runtime import (
     X2SensorLaunchConfig,
+    build_cloud_scan_projection_command,
     build_down_rangefinder_bridge_command,
     build_down_rangefinder_projection_command,
     build_emulator_command,
@@ -16,7 +17,14 @@ from navlab.sim.gazebo_sensor.runtime import (
     build_vendor_driver_command,
     wait_for_virtual_serial_link,
 )
-from navlab.sim.gazebo_sensor.scan_time_normalizer import monotonic_scan_stamp_ns
+from navlab.sim.gazebo_sensor.scan_time_normalizer import (
+    CARTOGRAPHER_TIME_TICK_NS,
+    DEFAULT_STATUS_TOPIC,
+    build_status_payload,
+    monotonic_scan_stamp_ns,
+    select_scan_stamp_ns,
+    should_zero_scan_time_increment,
+)
 
 
 def _runtime_config() -> X2SensorLaunchConfig:
@@ -78,6 +86,12 @@ def test_down_rangefinder_projection_runs_in_gazebo_sensor_runtime() -> None:
     assert command == [command[0], "-m", "navlab.sim.gazebo_sensor.range_projection"]
 
 
+def test_cloud_scan_projection_runs_in_gazebo_sensor_runtime() -> None:
+    command = build_cloud_scan_projection_command()
+
+    assert command == [command[0], "-m", "navlab.sim.gazebo_sensor.cloud_scan_projection"]
+
+
 def test_x2_sensor_runtime_vendor_driver_uses_profile() -> None:
     command = build_vendor_driver_command(_runtime_config())
 
@@ -113,6 +127,125 @@ def test_scan_time_normalizer_uses_monotonic_fallback_for_zero_stamp() -> None:
 def test_scan_time_normalizer_keeps_preferred_stamp_when_valid() -> None:
     assert monotonic_scan_stamp_ns(preferred_ns=42, fallback_elapsed_sec=1.0, previous_ns=None) == 42
     assert monotonic_scan_stamp_ns(preferred_ns=40, fallback_elapsed_sec=1.0, previous_ns=42) == 43
+
+
+def test_scan_time_normalizer_prefers_ideal_scan_stamp_over_wall_fallback() -> None:
+    decision = select_scan_stamp_ns(
+        clock_ns=0,
+        ideal_scan_ns=12_000_000_000,
+        input_scan_ns=0,
+        fallback_elapsed_sec=90.0,
+        previous_ns=None,
+    )
+
+    assert decision.stamp_ns == 12_000_000_000
+    assert decision.source == "ideal_scan_stamp"
+    assert not decision.monotonic_adjusted
+
+
+def test_scan_time_normalizer_prefers_clock_when_ideal_scan_missing() -> None:
+    decision = select_scan_stamp_ns(
+        clock_ns=12_000_000_000,
+        ideal_scan_ns=0,
+        input_scan_ns=0,
+        fallback_elapsed_sec=90.0,
+        previous_ns=None,
+    )
+
+    assert decision.stamp_ns == 12_000_000_000
+    assert decision.source == "clock"
+
+
+def test_scan_time_normalizer_prefers_input_scan_stamp_before_wall_fallback() -> None:
+    decision = select_scan_stamp_ns(
+        clock_ns=0,
+        ideal_scan_ns=0,
+        input_scan_ns=12_000_000_000,
+        fallback_elapsed_sec=90.0,
+        previous_ns=None,
+    )
+
+    assert decision.stamp_ns == 12_000_000_000
+    assert decision.source == "input_scan_stamp"
+
+
+def test_scan_time_normalizer_marks_monotonic_adjustment() -> None:
+    decision = select_scan_stamp_ns(
+        clock_ns=0,
+        ideal_scan_ns=12_000_000_000,
+        input_scan_ns=0,
+        fallback_elapsed_sec=90.0,
+        previous_ns=12_000_000_000,
+        min_increment_ns=142_000_000,
+    )
+
+    assert decision.stamp_ns == 12_000_000_000 + CARTOGRAPHER_TIME_TICK_NS
+    assert decision.source == "ideal_scan_stamp"
+    assert decision.monotonic_adjusted
+
+
+def test_scan_time_normalizer_uses_cartographer_tick_for_trusted_repeat() -> None:
+    decision = select_scan_stamp_ns(
+        clock_ns=12_000_000_000,
+        ideal_scan_ns=0,
+        input_scan_ns=0,
+        fallback_elapsed_sec=90.0,
+        previous_ns=12_000_000_000,
+        min_increment_ns=142_000_000,
+    )
+
+    assert decision.stamp_ns == 12_000_000_000 + CARTOGRAPHER_TIME_TICK_NS
+    assert decision.source == "clock"
+    assert decision.monotonic_adjusted
+
+
+def test_scan_time_normalizer_uses_scan_duration_only_for_wall_fallback() -> None:
+    decision = select_scan_stamp_ns(
+        clock_ns=0,
+        ideal_scan_ns=0,
+        input_scan_ns=0,
+        fallback_elapsed_sec=11.0,
+        previous_ns=12_000_000_000,
+        min_increment_ns=142_000_000,
+    )
+
+    assert decision.stamp_ns == 12_142_000_000
+    assert decision.source == "wall_elapsed_fallback"
+    assert decision.monotonic_adjusted
+
+
+def test_scan_time_normalizer_status_reports_time_sources() -> None:
+    payload = build_status_payload(
+        input_topic="/navlab/x2/vendor_scan",
+        ideal_scan_topic="/lidar",
+        output_topic="/scan",
+        status_topic=DEFAULT_STATUS_TOPIC,
+        count=3,
+        latest_clock_ns=0,
+        latest_ideal_scan_ns=12_000_000_000,
+        latest_input_scan_ns=0,
+        latest_output_scan_ns=12_142_000_000,
+        latest_stamp_source="ideal_scan_stamp",
+        source_counts={"ideal_scan_stamp": 2, "wall_elapsed_fallback": 1},
+        monotonic_adjust_count=1,
+        time_increment_zeroed_count=2,
+    )
+
+    assert payload["state"] == "publishing"
+    assert payload["clock_seen"] is False
+    assert payload["ideal_scan_seen"] is True
+    assert payload["latest_stamp_source"] == "ideal_scan_stamp"
+    assert payload["wall_fallback_count"] == 1
+    assert payload["monotonic_adjust_count"] == 1
+    assert payload["time_increment_zeroed_count"] == 2
+    assert payload["status_topic"] == DEFAULT_STATUS_TOPIC
+
+
+def test_scan_time_normalizer_zeroes_time_increment_for_trusted_anchors() -> None:
+    assert should_zero_scan_time_increment("ideal_scan_stamp")
+    assert should_zero_scan_time_increment("clock")
+    assert should_zero_scan_time_increment("input_scan_stamp")
+    assert not should_zero_scan_time_increment("wall_elapsed_fallback")
 
 
 def test_scan_time_normalizer_advances_by_scan_duration_when_clock_repeats() -> None:

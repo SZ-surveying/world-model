@@ -141,6 +141,31 @@ func TestDefaultRegistryHoverUsesPythonMissionRuntimeOnly(t *testing.T) {
 	}
 }
 
+func TestDefaultRegistryHoverSlamOnlyDoesNotUseHoverMission(t *testing.T) {
+	registry := DefaultRegistry()
+	task, err := registry.ConfigureOne(config.TaskConfig{
+		ID:     "hover-slam-only",
+		Family: "sim",
+		Task: config.TaskParameters{
+			DurationSec:       45,
+			SimulationProfile: "ideal",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConfigureOne(hover-slam-only) error = %v", err)
+	}
+	plan, err := task.Plan(PlanOptions{}, helpers.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("Plan(hover-slam-only) error = %v", err)
+	}
+	if hasHelperID(plan.Helpers, "slam-hover") || hasHelperID(plan.Helpers, "landing") || hasHelperID(plan.Helpers, "fcu-controller") || hasHelperID(plan.Helpers, "frame-contract") {
+		t.Fatalf("hover-slam-only must not include mission/landing/FCU helpers: %#v", plan.Helpers)
+	}
+	if !hasHelperID(plan.Helpers, "slam-only") {
+		t.Fatalf("hover-slam-only helpers missing slam-only: %#v", plan.Helpers)
+	}
+}
+
 func hasHelperID(helperDefinitions []helpers.Definition, id string) bool {
 	for _, helper := range helperDefinitions {
 		if helper.ID == id {

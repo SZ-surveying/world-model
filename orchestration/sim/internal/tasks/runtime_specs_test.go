@@ -113,6 +113,10 @@ func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
 		"--range-topic /rangefinder/down/range",
 		"--height-topic /height/estimate",
 		"--status-topic /height/status",
+		"--max-vertical-speed-mps 0.5",
+		"--max-vertical-velocity-output-mps 0.25",
+		"--velocity-smoothing-alpha 0.25",
+		"--max-filter-dt-sec 0.1",
 	} {
 		if !strings.Contains(heightEstimatorCommand, expected) {
 			t.Fatalf("height estimator command = %q, want %q", heightEstimatorCommand, expected)
@@ -127,6 +131,8 @@ func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
 		"--local-position-pose-topic /navlab/fcu/local_position_pose",
 		"--align-yaw-to-fcu",
 		"--max-local-position-age-ms 1000",
+		"--max-horizontal-speed-mps 0.25",
+		"--max-yaw-rate-radps 0.6",
 	} {
 		if !strings.Contains(externalNavCommand, expected) {
 			t.Fatalf("external nav command = %q, want %q", externalNavCommand, expected)
@@ -140,6 +146,10 @@ func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
 	}
 	if bundle.Probes[0].Env["ROS_DISTRO"] != "humble" || bundle.Rosbags[0].Env["ROS_DISTRO"] != "humble" {
 		t.Fatalf("probe/rosbag env = %#v %#v", bundle.Probes[0].Env, bundle.Rosbags[0].Env)
+	}
+	if !strings.Contains(bundle.Probes[0].Env["CYCLONEDDS_URI"], "MaxAutoParticipantIndex") ||
+		!strings.Contains(bundle.Rosbags[0].Env["CYCLONEDDS_URI"], "MaxAutoParticipantIndex") {
+		t.Fatalf("probe/rosbag env missing CycloneDDS participant cap override = %#v %#v", bundle.Probes[0].Env, bundle.Rosbags[0].Env)
 	}
 	if len(bundle.Rosbags) != 1 {
 		t.Fatalf("rosbags = %#v", bundle.Rosbags)
@@ -250,6 +260,113 @@ func TestBuildRuntimeSpecsMountsOfficialModelAndParamOverlays(t *testing.T) {
 	} {
 		if !strings.Contains(command, expected) {
 			t.Fatalf("official command = %q, want %q", command, expected)
+		}
+	}
+}
+
+func TestBuildRuntimeSpecsMountsHoverCartographerConfigIntoSlamBackend(t *testing.T) {
+	t.Setenv("NAVLAB_SIM_DISTRO", "jazzy")
+	t.Setenv("NAVLAB_SIM_IMAGE_TAG", "")
+	t.Setenv("NAVLAB_SIM_RUNTIME_IMAGE_TAG", "")
+	workspace := t.TempDir()
+	artifactDir := filepath.Join(workspace, "artifacts", "sim", "hover", "run-1")
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, helpers.HoverCartographerConfigBasename), []byte("return options\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project := config.ProjectConfig{
+		Orchestration: config.OrchestrationConfig{
+			Runtime: config.OrchestrationRuntimeConfig{
+				Docker: config.DockerRuntimeConfig{WorkspaceContainerPath: "/workspace"},
+			},
+		},
+		Paths:       config.PathConfig{WorkspaceRoot: workspace},
+		RosDomainID: "85",
+		Navlab: config.NavlabConfig{
+			Images: config.ImageCatalog{TagPolicy: "distro-latest", Distro: "jazzy"},
+		},
+		Images: map[string]config.Image{
+			"mavlink_router":    {Repository: "navlab/mavlink-router"},
+			"official_baseline": {Repository: "navlab/official-baseline"},
+			"slam":              {Repository: "navlab/slam-cartographer"},
+		},
+	}
+	plan := helpers.ExecutionPlan{
+		TaskID: "hover",
+		RuntimeServices: []helpers.RuntimeServicePlan{
+			{
+				HelperID:      "slam",
+				ServiceName:   "slam_backend",
+				ContainerName: "navlab-slam-backend",
+				ImageRef:      "images.slam",
+				Command:       []string{"bash", "-lc", "run"},
+			},
+		},
+	}
+
+	bundle, err := BuildRuntimeSpecs(project, plan, artifactDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slam := serviceByName(bundle.Services, "slam_backend")
+	if slam == nil {
+		t.Fatalf("services = %#v", bundle.Services)
+	}
+	assertVolumeTarget(t, slam.Volumes, helpers.OfficialCartographerConfigDir+"/"+helpers.HoverCartographerConfigBasename)
+}
+
+func TestBuildRuntimeSpecsHoverSlamOnlyDoesNotStartExternalNavInjection(t *testing.T) {
+	t.Setenv("NAVLAB_SIM_DISTRO", "jazzy")
+	workspace := t.TempDir()
+	artifactDir := filepath.Join(workspace, "artifacts", "sim", "hover-slam-only", "run-1")
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, helpers.HoverCartographerConfigBasename), []byte("return options\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project := config.ProjectConfig{
+		Orchestration: config.OrchestrationConfig{
+			Runtime: config.OrchestrationRuntimeConfig{
+				Docker: config.DockerRuntimeConfig{WorkspaceContainerPath: "/workspace"},
+			},
+		},
+		Paths:       config.PathConfig{WorkspaceRoot: workspace},
+		RosDomainID: "85",
+		Navlab: config.NavlabConfig{
+			Images: config.ImageCatalog{TagPolicy: "distro-latest", Distro: "jazzy"},
+		},
+		Images: map[string]config.Image{
+			"mavlink_router":    {Repository: "navlab/mavlink-router"},
+			"official_baseline": {Repository: "navlab/official-baseline"},
+			"slam":              {Repository: "navlab/slam-cartographer"},
+		},
+	}
+	plan := helpers.ExecutionPlan{
+		TaskID: "hover-slam-only",
+		RuntimeServices: []helpers.RuntimeServicePlan{
+			{
+				HelperID:      "slam",
+				ServiceName:   "slam_backend",
+				ContainerName: "navlab-slam-backend",
+				ImageRef:      "images.slam",
+				Command:       []string{"bash", "-lc", "run"},
+			},
+		},
+	}
+
+	bundle, err := BuildRuntimeSpecs(project, plan, artifactDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if serviceByName(bundle.Services, "official_baseline") == nil {
+		t.Fatalf("services = %#v", bundle.Services)
+	}
+	for _, name := range []string{"mavlink_external_nav", "height_estimator", "hover_mission", "fcu_controller", "official_maze_overlay"} {
+		if serviceByName(bundle.Services, name) != nil {
+			t.Fatalf("hover-slam-only unexpectedly starts %s: %#v", name, bundle.Services)
 		}
 	}
 }

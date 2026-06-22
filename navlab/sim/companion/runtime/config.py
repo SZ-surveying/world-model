@@ -387,6 +387,8 @@ class ExternalNavSenderConfig(EndpointNodeConfig):
     source_system: int = 191
     use_fcu_roll_pitch: bool = True
     local_position_pose_topic: str = "/navlab/fcu/local_position_pose"
+    max_horizontal_speed_mps: float = 0.0
+    max_yaw_rate_radps: float = 0.0
 
     @classmethod
     def from_toml(cls, data: dict[str, Any]) -> ExternalNavSenderConfig:
@@ -401,6 +403,8 @@ class ExternalNavSenderConfig(EndpointNodeConfig):
             source_system=_int(data.get("source_system"), 191),
             use_fcu_roll_pitch=as_bool(data.get("use_fcu_roll_pitch"), True),
             local_position_pose_topic=as_str(data.get("local_position_pose_topic"), "/navlab/fcu/local_position_pose"),
+            max_horizontal_speed_mps=_float(data.get("max_horizontal_speed_mps"), 0.0),
+            max_yaw_rate_radps=_float(data.get("max_yaw_rate_radps"), 0.0),
         )
 
     def argv(self) -> list[str]:
@@ -414,6 +418,8 @@ class ExternalNavSenderConfig(EndpointNodeConfig):
         _append_flag(argv, "--source-system", self.source_system)
         _append_bool_flag(argv, "--use-fcu-roll-pitch", self.use_fcu_roll_pitch)
         _append_optional_flag(argv, "--local-position-pose-topic", self.local_position_pose_topic)
+        _append_flag(argv, "--max-horizontal-speed-mps", self.max_horizontal_speed_mps)
+        _append_flag(argv, "--max-yaw-rate-radps", self.max_yaw_rate_radps)
         return argv
 
 
@@ -457,10 +463,13 @@ class MissionNodeConfig(EndpointNodeConfig):
     status_timeout_sec: float = 1.0
     setpoint_rate_hz: float = 5.0
     setpoint_lookahead_sec: float = 2.0
+    landing_policy: str = "ap_land_mode_after_hover"
     pre_land_hold_sec: float = 2.0
     max_landing_duration_sec: float = 35.0
+    landing_setpoint_lookahead_sec: float = 0.5
     touchdown_altitude_m: float = 0.12
     touchdown_vertical_speed_mps: float = 0.08
+    force_disarm_grace_sec: float = 3.0
     require_external_nav: bool = True
     require_imu_status: bool = True
     require_disarm: bool = True
@@ -513,10 +522,13 @@ class MissionNodeConfig(EndpointNodeConfig):
             status_timeout_sec=_float(data.get("status_timeout_sec"), 1.0),
             setpoint_rate_hz=_float(data.get("setpoint_rate_hz"), 5.0),
             setpoint_lookahead_sec=_float(data.get("setpoint_lookahead_sec"), 2.0),
+            landing_policy=as_str(data.get("landing_policy"), "ap_land_mode_after_hover"),
             pre_land_hold_sec=_float(data.get("pre_land_hold_sec"), 2.0),
             max_landing_duration_sec=_float(data.get("max_landing_duration_sec"), 35.0),
+            landing_setpoint_lookahead_sec=_float(data.get("landing_setpoint_lookahead_sec"), 0.5),
             touchdown_altitude_m=_float(data.get("touchdown_altitude_m"), 0.12),
             touchdown_vertical_speed_mps=_float(data.get("touchdown_vertical_speed_mps"), 0.08),
+            force_disarm_grace_sec=_float(data.get("force_disarm_grace_sec"), 3.0),
             require_external_nav=as_bool(data.get("require_external_nav"), True),
             require_imu_status=as_bool(data.get("require_imu_status"), True),
             require_disarm=as_bool(data.get("require_disarm"), True),
@@ -568,10 +580,13 @@ class MissionNodeConfig(EndpointNodeConfig):
         _append_flag(argv, "--status-timeout-sec", self.status_timeout_sec)
         _append_flag(argv, "--setpoint-rate-hz", self.setpoint_rate_hz)
         _append_flag(argv, "--setpoint-lookahead-sec", self.setpoint_lookahead_sec)
+        _append_flag(argv, "--landing-policy", self.landing_policy)
         _append_flag(argv, "--pre-land-hold-sec", self.pre_land_hold_sec)
         _append_flag(argv, "--max-landing-duration-sec", self.max_landing_duration_sec)
+        _append_flag(argv, "--landing-setpoint-lookahead-sec", self.landing_setpoint_lookahead_sec)
         _append_flag(argv, "--touchdown-altitude-m", self.touchdown_altitude_m)
         _append_flag(argv, "--touchdown-vertical-speed-mps", self.touchdown_vertical_speed_mps)
+        _append_flag(argv, "--force-disarm-grace-sec", self.force_disarm_grace_sec)
         _append_boolean_optional_flag(argv, "--require-external-nav", self.require_external_nav)
         _append_boolean_optional_flag(argv, "--require-imu-status", self.require_imu_status)
         _append_boolean_optional_flag(argv, "--require-disarm", self.require_disarm)

@@ -181,6 +181,11 @@ def write_hover_summary(
     )
     local_position_count = int(mission_summary.get("local_position_count", 0) or 0)
     hover_drift = mission_summary.get("hover_drift", {})
+    hover_altitude_sources = mission_summary.get("hover_altitude_sources", {})
+    hover_altitude_crosscheck = mission_summary.get("hover_altitude_crosscheck", {})
+    hover_altitude_crosscheck_ok = (
+        isinstance(hover_altitude_crosscheck, dict) and hover_altitude_crosscheck.get("ok") is True
+    )
     hover_duration_tolerance_sec = float(hover_drift.get("duration_tolerance_sec", 0.25) or 0.25)
     phases_seen = mission_summary.get("phases_seen", [])
     pose_mirror_observation_only = (
@@ -193,6 +198,7 @@ def write_hover_summary(
         and mission_summary.get("crash_detected") is not True
         and "hover_hold" in phases_seen
         and hover_drift.get("ok") is True
+        and hover_altitude_crosscheck_ok
         and float(hover_drift.get("duration_sec", 0.0) or 0.0)
         >= float(mission_summary.get("hover_hold_sec", 0.0) or 0.0) - hover_duration_tolerance_sec
     )
@@ -247,6 +253,9 @@ def write_hover_summary(
         "crash_detected": mission_summary.get("crash_detected") is True,
         "hover_ok": hover_ok,
         "hover_drift": hover_drift,
+        "hover_drift_quality": hover_drift.get("quality") if isinstance(hover_drift, dict) else None,
+        "hover_altitude_sources": hover_altitude_sources,
+        "hover_altitude_crosscheck": hover_altitude_crosscheck,
         "truth_hover_containment": truth_hover_containment,
         "slam_truth_error_ok": slam_truth_error_ok,
         "max_slam_truth_horizontal_error_m": max_slam_truth_horizontal_error_m,

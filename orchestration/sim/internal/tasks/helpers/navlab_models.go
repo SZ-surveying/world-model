@@ -82,6 +82,11 @@ func WriteBridgeOverride(path string) error {
   ros_type_name: "sensor_msgs/msg/PointCloud2"
   gz_type_name: "gz.msgs.PointCloudPacked"
   direction: GZ_TO_ROS
+- ros_topic_name: "rangefinder/down/scan_ideal"
+  gz_topic_name: "/rangefinder/down/scan_ideal"
+  ros_type_name: "sensor_msgs/msg/LaserScan"
+  gz_type_name: "gz.msgs.LaserScan"
+  direction: GZ_TO_ROS
 `)
 }
 
@@ -122,66 +127,74 @@ func WriteModelOverlayFromSource(path string, source string, spec SensorRuntimeS
     <!-- NavLab overlay: down-facing rangefinder ray sensor.
          The X2 vendor-driver input uses the official iris_with_lidar
          /lidar sensor; do not add a second /lidar sensor here. -->
-    <link name="%s">
-      <pose relative_to="base_link">%s</pose>
+    <link name="rangefinder_down_link">
+      <pose relative_to="base_link">0 0 -0.08 0 0 0</pose>
       <inertial>
-        <mass>0.02</mass>
+        <mass>0.03</mass>
         <inertia>
-          <ixx>0.00001</ixx>
-          <iyy>0.00001</iyy>
-          <izz>0.00001</izz>
+          <ixx>0.00002</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.00002</iyy>
+          <iyz>0</iyz>
+          <izz>0.00002</izz>
         </inertia>
       </inertial>
       <collision name="collision">
         <geometry>
           <box>
-            <size>0.02 0.02 0.01</size>
+            <size>0.05 0.04 0.02</size>
           </box>
         </geometry>
       </collision>
       <visual name="visual">
         <geometry>
           <box>
-            <size>0.02 0.02 0.01</size>
+            <size>0.05 0.04 0.02</size>
           </box>
         </geometry>
       </visual>
-      <sensor name="down_rangefinder_sensor" type="gpu_lidar">
+      <sensor name="rangefinder_down" type="gpu_lidar">
         <gz_frame_id>%s</gz_frame_id>
-        <pose>0 0 0 0 0 0</pose>
+        <pose>%s</pose>
         <topic>%s</topic>
         <always_on>true</always_on>
         <update_rate>%g</update_rate>
-        <lidar>
+        <ray>
           <scan>
             <horizontal>
               <samples>%d</samples>
               <resolution>1</resolution>
-              <min_angle>-0.02</min_angle>
-              <max_angle>0.02</max_angle>
+              <min_angle>0</min_angle>
+              <max_angle>0</max_angle>
             </horizontal>
             <vertical>
               <samples>1</samples>
               <resolution>1</resolution>
-              <min_angle>0.0</min_angle>
-              <max_angle>0.0</max_angle>
+              <min_angle>0</min_angle>
+              <max_angle>0</max_angle>
             </vertical>
           </scan>
           <range>
             <min>%g</min>
             <max>%g</max>
-            <resolution>0.01</resolution>
+            <resolution>0.005</resolution>
           </range>
-        </lidar>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>%g</stddev>
+          </noise>
+        </ray>
         <visualize>false</visualize>
       </sensor>
     </link>
 
     <joint name="rangefinder_down_joint" type="fixed">
       <parent>base_link</parent>
-      <child>%s</child>
+      <child>rangefinder_down_link</child>
     </joint>
-`, spec.RangefinderFrameID, spec.RangefinderModelPose, spec.RangefinderFrameID, strings.TrimPrefix(spec.RangefinderScanIdealTopic, "/"), spec.RangefinderModelUpdateHz, spec.RangefinderModelRayCount, spec.RangefinderMinDistanceM, spec.RangefinderMaxDistanceM, spec.RangefinderFrameID)
+`, spec.RangefinderFrameID, spec.RangefinderModelPose, spec.RangefinderScanIdealTopic, spec.RangefinderModelUpdateHz, spec.RangefinderModelRayCount, spec.RangefinderMinDistanceM, spec.RangefinderMaxDistanceM, spec.RangefinderModelNoiseM)
 	rendered := strings.Replace(source, "</model>", overlay+"\n  </model>", 1)
 	return writeText(path, rendered)
 }

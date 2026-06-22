@@ -74,12 +74,21 @@ def test_runtime_config_world_markers_follow_navlab_quad_root() -> None:
     assert config.mission.landing_intent_topic == "/navlab/landing/intent"
     assert config.mission.pre_land_hold_sec == 2.0
     assert config.mission.max_landing_duration_sec == 35.0
+    assert config.mission.landing_policy == "ap_land_mode_after_hover"
+    assert config.mission.landing_setpoint_lookahead_sec == 0.5
+    assert config.mission.force_disarm_grace_sec == 3.0
     pass_x_flag = mission_argv.index("--pass-x-m")
     avoid_distance_flag = mission_argv.index("--obstacle-avoid-distance-m")
     landing_status_flag = mission_argv.index("--landing-status-topic")
+    landing_policy_flag = mission_argv.index("--landing-policy")
+    landing_lookahead_flag = mission_argv.index("--landing-setpoint-lookahead-sec")
+    force_disarm_grace_flag = mission_argv.index("--force-disarm-grace-sec")
     assert mission_argv[pass_x_flag + 1] == "1.25"
     assert mission_argv[avoid_distance_flag + 1] == "1.2"
     assert mission_argv[landing_status_flag + 1] == "/navlab/landing/status"
+    assert mission_argv[landing_policy_flag + 1] == "ap_land_mode_after_hover"
+    assert mission_argv[landing_lookahead_flag + 1] == "0.5"
+    assert mission_argv[force_disarm_grace_flag + 1] == "3.0"
 
 
 def test_companion_runtime_config_uses_structured_fields_not_args_lists() -> None:

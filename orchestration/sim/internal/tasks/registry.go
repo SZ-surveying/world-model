@@ -42,6 +42,25 @@ func DefaultRegistry() *Registry {
 		},
 	})
 	mustRegister(registry, Definition{
+		ID:          "hover-slam-only",
+		Description: "SLAM-only hover preflight over Gazebo without FCU takeoff or external-nav injection.",
+		Steps: []string{
+			"load task YAML config",
+			"generate model, sensor, SLAM, frame, and SLAM-only rosbag artifacts",
+			"start Gazebo/SITL stack without hover mission or FCU controller",
+			"start sensor bridge and Cartographer SLAM runtime",
+			"record SLAM-only rosbag and collect SLAM health probe",
+		},
+		HelperIDs: []string{
+			"artifacts",
+			"navlab-models",
+			"sensors",
+			"slam",
+			"slam-only",
+			"rosbag-profiles",
+		},
+	})
+	mustRegister(registry, Definition{
 		ID:          "exploration",
 		Description: "Official-maze exploration gate over Gazebo/SITL.",
 		Steps: []string{

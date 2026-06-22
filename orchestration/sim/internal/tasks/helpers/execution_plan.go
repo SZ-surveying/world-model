@@ -112,6 +112,9 @@ func BuildExecutionPlan(
 	if helperSet["slam-hover"] {
 		addSlamHoverExecution(&plan, task, durationSec)
 	}
+	if helperSet["slam-only"] {
+		addSlamOnlyExecution(&plan, task, durationSec)
+	}
 	if helperSet["scan-stabilization"] {
 		addScanStabilizationExecution(&plan, task, durationSec)
 	}
@@ -137,7 +140,29 @@ func BuildExecutionPlan(
 			Status:   "ported_basic",
 		})
 	}
+	if plan.TaskID == "hover" {
+		moveRuntimeServiceBefore(&plan, "external_nav_source_selector", "slam_backend")
+	}
 	return plan, nil
+}
+
+func moveRuntimeServiceBefore(plan *ExecutionPlan, serviceName string, beforeServiceName string) {
+	sourceIndex := -1
+	targetIndex := -1
+	for idx, service := range plan.RuntimeServices {
+		if service.ServiceName == serviceName {
+			sourceIndex = idx
+		}
+		if service.ServiceName == beforeServiceName {
+			targetIndex = idx
+		}
+	}
+	if sourceIndex < 0 || targetIndex < 0 || sourceIndex < targetIndex {
+		return
+	}
+	service := plan.RuntimeServices[sourceIndex]
+	plan.RuntimeServices = append(plan.RuntimeServices[:sourceIndex], plan.RuntimeServices[sourceIndex+1:]...)
+	plan.RuntimeServices = append(plan.RuntimeServices[:targetIndex], append([]RuntimeServicePlan{service}, plan.RuntimeServices[targetIndex:]...)...)
 }
 
 func addSensorsExecution(plan *ExecutionPlan, task config.TaskConfig) {
@@ -256,32 +281,85 @@ func addFrameContractExecution(plan *ExecutionPlan, task config.TaskConfig) {
 
 func addSlamHoverExecution(plan *ExecutionPlan, task config.TaskConfig, durationSec float64) {
 	spec := DefaultSlamHoverSpec()
+	scanReferenceSpec := DefaultScanReferenceDriftSpec()
+	scanCorrectionSpec := DefaultScanReferenceCorrectionSpec()
+	sourceSelectorSpec := DefaultExternalNavSourceSelectorSpec()
 	if value, ok := floatSectionValue(task.Sections, "slam_hover", "hover_window_sec"); ok {
 		spec.HoverWindowSec = value
 	}
 	plan.GeneratedArtifacts = append(plan.GeneratedArtifacts,
 		ArtifactPlan{HelperID: "slam-hover", Kind: "slam_hover_runtime_toml", Path: "slam_hover_runtime.toml"},
+		ArtifactPlan{HelperID: "slam-hover", Kind: "scan_reference_drift_runtime_script", Path: "scan_reference_drift_runtime.py", Inputs: []string{"navlab.sim.companion.nodes.scan_reference_drift"}},
+		ArtifactPlan{HelperID: "slam-hover", Kind: "scan_reference_cartographer_odom_runtime_script", Path: "scan_reference_cartographer_odom_runtime.py", Inputs: []string{"navlab.sim.companion.nodes.scan_reference_drift"}},
+		ArtifactPlan{HelperID: "slam-hover", Kind: "scan_reference_correction_runtime_script", Path: "scan_reference_correction_runtime.py", Inputs: []string{"navlab.sim.companion.nodes.scan_reference_correction"}},
+		ArtifactPlan{HelperID: "slam-hover", Kind: "external_nav_source_selector_runtime_script", Path: "external_nav_source_selector_runtime.py", Inputs: []string{"navlab.sim.companion.nodes.external_nav_source_selector"}},
 		ArtifactPlan{HelperID: "slam-hover", Kind: "hover_mission_runtime_script", Path: "hover_mission_runtime.py", Inputs: []string{"navlab.sim.companion.nodes.hover_mission"}},
 		ArtifactPlan{HelperID: "slam-hover", Kind: "hover_probe_script", Path: "slam_hover_probe.py"},
 		ArtifactPlan{HelperID: "slam-hover", Kind: "foxglove_notes", Path: "foxglove_notes.md"},
 	)
-	plan.RuntimeServices = append(plan.RuntimeServices, RuntimeServicePlan{
-		HelperID:      "slam-hover",
-		ServiceName:   "hover_mission",
-		ContainerName: "navlab-hover-mission",
-		ImageRef:      "images.runtime",
-		Network:       "host",
-		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/hover_mission_runtime.py > artifacts/hover_mission.runtime.log 2>&1"},
-		Env:           BaselineROSEnv(),
-		SideEffect:    true,
-		Status:        "planned_python_runtime",
-	})
+	plan.RuntimeServices = append(plan.RuntimeServices,
+		RuntimeServicePlan{
+			HelperID:      "slam-hover",
+			ServiceName:   "scan_reference_drift",
+			ContainerName: "navlab-scan-reference-drift",
+			ImageRef:      "images.runtime",
+			Network:       "host",
+			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/scan_reference_drift_runtime.py > artifacts/scan_reference_drift.runtime.log 2>&1"},
+			Env:           BaselineROSEnv(),
+			SideEffect:    true,
+			Status:        "diagnostic_only_no_control_output",
+		},
+		RuntimeServicePlan{
+			HelperID:      "slam-hover",
+			ServiceName:   "scan_reference_cartographer_odom",
+			ContainerName: "navlab-scan-reference-cartographer-odom",
+			ImageRef:      "images.runtime",
+			Network:       "host",
+			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/scan_reference_cartographer_odom_runtime.py > artifacts/scan_reference_cartographer_odom.runtime.log 2>&1"},
+			Env:           BaselineROSEnv(),
+			SideEffect:    true,
+			Status:        "scan_only_cartographer_odometry_prior_no_truth_input",
+		},
+		RuntimeServicePlan{
+			HelperID:      "slam-hover",
+			ServiceName:   "scan_reference_correction",
+			ContainerName: "navlab-scan-reference-correction",
+			ImageRef:      "images.runtime",
+			Network:       "host",
+			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/scan_reference_correction_runtime.py > artifacts/scan_reference_correction.runtime.log 2>&1"},
+			Env:           BaselineROSEnv(),
+			SideEffect:    true,
+			Status:        "fail_closed_external_nav_input_correction",
+		},
+		RuntimeServicePlan{
+			HelperID:      "slam-hover",
+			ServiceName:   "external_nav_source_selector",
+			ContainerName: "navlab-external-nav-source-selector",
+			ImageRef:      "images.runtime",
+			Network:       "host",
+			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/external_nav_source_selector_runtime.py > artifacts/external_nav_source_selector.runtime.log 2>&1"},
+			Env:           BaselineROSEnv(),
+			SideEffect:    true,
+			Status:        "fail_closed_external_nav_source_selector",
+		},
+		RuntimeServicePlan{
+			HelperID:      "slam-hover",
+			ServiceName:   "hover_mission",
+			ContainerName: "navlab-hover-mission",
+			ImageRef:      "images.runtime",
+			Network:       "host",
+			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/hover_mission_runtime.py > artifacts/hover_mission.runtime.log 2>&1"},
+			Env:           BaselineROSEnv(),
+			SideEffect:    true,
+			Status:        "planned_python_runtime",
+		},
+	)
 	plan.ROSProbes = append(plan.ROSProbes, ROSProbePlan{
 		HelperID:     "slam-hover",
 		Name:         "slam_hover_probe",
 		ScriptPath:   "slam_hover_probe.py",
 		OutputPath:   "slam_hover_probe.json",
-		Topics:       []string{spec.FCUPoseTopic, spec.SlamOdomTopic, spec.SlamStatusTopic, spec.ExternalNavStatusTopic, "/mavlink_external_nav/status", spec.HoverStatusTopic, "/navlab/landing/status"},
+		Topics:       []string{spec.FCUPoseTopic, spec.SlamOdomTopic, scanCorrectionSpec.OutputOdomTopic, scanCorrectionSpec.StatusTopic, sourceSelectorSpec.OutputOdomTopic, sourceSelectorSpec.StatusTopic, spec.SlamStatusTopic, spec.ExternalNavStatusTopic, scanReferenceSpec.OdomTopic, scanReferenceSpec.StatusTopic, CartographerOdometryInputTopic, "/navlab/scan_reference_cartographer_odom/status", "/mavlink_external_nav/status", "/sim/x2/status", spec.HoverStatusTopic, "/navlab/landing/status"},
 		RuntimeImage: "images.runtime",
 		Status:       "ported_script_generation",
 	})
@@ -290,8 +368,18 @@ func addSlamHoverExecution(plan *ExecutionPlan, task config.TaskConfig, duration
 		"hover_rosbag",
 		"configs/rosbag/hover.yaml",
 		durationSec,
-		MatureWorldSLAMReviewTopics(),
-		HoverTaskRequiredTopics(spec),
+		appendUniqueTopics(
+			MatureWorldSLAMReviewTopics(),
+			scanCorrectionSpec.OutputOdomTopic,
+			scanCorrectionSpec.StatusTopic,
+			CartographerOdometryInputTopic,
+			CartographerTFTopic,
+			"/navlab/scan_reference_cartographer_odom/status",
+			DiagnosticGazeboModelOdometryTopic,
+			DiagnosticGazeboTFTopic,
+			DiagnosticGazeboTFStaticTopic,
+		),
+		appendUniqueTopics(HoverTaskRequiredTopics(spec), scanCorrectionSpec.OutputOdomTopic, scanCorrectionSpec.StatusTopic, CartographerOdometryInputTopic, "/navlab/scan_reference_cartographer_odom/status"),
 	))
 	plan.ResultGates = append(plan.ResultGates, ResultGatePlan{
 		HelperID: "slam-hover",
@@ -300,6 +388,53 @@ func addSlamHoverExecution(plan *ExecutionPlan, task config.TaskConfig, duration
 		Outputs:  []string{"hover blockers", "summary.json"},
 		Status:   "ported_partial",
 	})
+}
+
+func addSlamOnlyExecution(plan *ExecutionPlan, task config.TaskConfig, durationSec float64) {
+	spec := DefaultSlamOnlySpec()
+	plan.ROSProbes = removeROSProbes(plan.ROSProbes, "rangefinder_probe", "imu_probe", "frame_contract_probe")
+	plan.GeneratedArtifacts = append(plan.GeneratedArtifacts,
+		ArtifactPlan{HelperID: "slam-only", Kind: "slam_only_probe_script", Path: "slam_only_probe.py"},
+	)
+	plan.ROSProbes = append(plan.ROSProbes, ROSProbePlan{
+		HelperID:     "slam-only",
+		Name:         "slam_only_probe",
+		ScriptPath:   "slam_only_probe.py",
+		OutputPath:   "slam_only_probe.json",
+		Topics:       []string{spec.ScanTopic, spec.IMUTopic, spec.SlamOdomTopic, spec.SlamStatusTopic},
+		RuntimeImage: "images.runtime",
+		Status:       "ported_script_generation",
+	})
+	plan.RosbagRecords = append(plan.RosbagRecords, BuildRosbagRecordPlanWithRequired(
+		"slam-only",
+		"slam_only_rosbag",
+		"configs/rosbag/hover_slam_only.yaml",
+		durationSec,
+		spec.RosbagTopics(),
+		spec.RequiredTopics(),
+	))
+	plan.ResultGates = append(plan.ResultGates, ResultGatePlan{
+		HelperID: "slam-only",
+		Name:     "slam_only_acceptance",
+		Inputs:   []string{"slam_only_probe.json", "rosbag_profile_summary.json", "slam_backend.runtime.log"},
+		Outputs:  []string{"slam-only blockers", "summary.json"},
+		Status:   "ported_partial",
+	})
+	_ = task
+}
+
+func removeROSProbes(probes []ROSProbePlan, names ...string) []ROSProbePlan {
+	remove := map[string]bool{}
+	for _, name := range names {
+		remove[name] = true
+	}
+	out := probes[:0]
+	for _, probe := range probes {
+		if !remove[probe.Name] {
+			out = append(out, probe)
+		}
+	}
+	return out
 }
 
 func addScanStabilizationExecution(plan *ExecutionPlan, task config.TaskConfig, durationSec float64) {

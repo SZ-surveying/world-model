@@ -83,6 +83,15 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 			if err != nil {
 				return RuntimeSpecBundle{}, err
 			}
+			volumes, err = appendArtifactVolumeIfPresent(
+				volumes,
+				artifactDir,
+				helpers.HoverCartographerConfigBasename,
+				helpers.OfficialCartographerConfigDir+"/"+helpers.HoverCartographerConfigBasename,
+			)
+			if err != nil {
+				return RuntimeSpecBundle{}, err
+			}
 		}
 		spec := simruntime.ServiceSpec{
 			Name:          service.ServiceName,
@@ -103,7 +112,7 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 		}
 		bundle.Services = append(bundle.Services, spec)
 	}
-	if usesOfficialBaseline(plan) {
+	if usesOfficialBaseline(plan) && plan.TaskID != "hover-slam-only" {
 		spec, err := mavlinkExternalNavSenderServiceSpec(project, workspaceMount, containerWorkspace, containerArtifactDir, artifactDir)
 		if err != nil {
 			return RuntimeSpecBundle{}, err
@@ -274,12 +283,17 @@ func resolveEnv(project config.ProjectConfig, values map[string]string) map[stri
 
 func baselineEnv(project config.ProjectConfig) map[string]string {
 	return map[string]string{
+		"CYCLONEDDS_URI":     cycloneDDSParticipantEnv(),
 		"DDS_ENABLE":         "1",
 		"DDS_DOMAIN_ID":      runtimeRosDomain(project),
 		"ROS_DOMAIN_ID":      runtimeRosDomain(project),
 		"ROS_DISTRO":         runtimeRosDistro(project),
 		"RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
 	}
+}
+
+func cycloneDDSParticipantEnv() string {
+	return "<CycloneDDS><Domain><Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>512</MaxAutoParticipantIndex></Discovery></Domain></CycloneDDS>"
 }
 
 func runtimeRosDomain(project config.ProjectConfig) string {
@@ -301,7 +315,7 @@ func runtimeRosDistro(project config.ProjectConfig) string {
 
 func usesOfficialBaseline(plan helpers.ExecutionPlan) bool {
 	switch plan.TaskID {
-	case "hover", "exploration", "navigation", "scan-robustness":
+	case "hover", "hover-slam-only", "exploration", "navigation", "scan-robustness":
 		return true
 	default:
 		return false
@@ -377,6 +391,8 @@ func mavlinkExternalNavSenderServiceSpec(
 		"--align-yaw-to-fcu",
 		"--local-position-pose-topic /navlab/fcu/local_position_pose",
 		"--max-local-position-age-ms 1000",
+		"--max-horizontal-speed-mps 0.25",
+		"--max-yaw-rate-radps 0.6",
 		"> " + shellQuote(containerArtifactDir+"/mavlink_external_nav.runtime.log") + " 2>&1",
 	}, " ")
 	command := strings.Join([]string{
@@ -419,6 +435,10 @@ func heightEstimatorServiceSpec(
 		"--height-topic /height/estimate",
 		"--status-topic /height/status",
 		"--source-type rangefinder_down_relative",
+		"--max-vertical-speed-mps 0.5",
+		"--max-vertical-velocity-output-mps 0.25",
+		"--velocity-smoothing-alpha 0.25",
+		"--max-filter-dt-sec 0.1",
 		"> " + shellQuote(containerArtifactDir+"/height_estimator.runtime.log") + " 2>&1",
 	}, " ")
 	command := strings.Join([]string{

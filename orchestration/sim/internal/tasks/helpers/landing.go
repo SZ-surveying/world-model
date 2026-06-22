@@ -8,6 +8,7 @@ const (
 	SimulationLandingRequiredBlocker = "simulation_landing_acceptance_not_passed"
 	GazeboTruthLandingInputBlocker   = "landing_must_not_use_gazebo_truth_as_input"
 	PolicyLandInPlace                = "land_in_place"
+	PolicyAPLandModeAfterHover       = "ap_land_mode_after_hover"
 	PolicyReturnHomeThenLand         = "return_home_then_land"
 	ClaimEvaluated                   = "evaluated"
 	ClaimNotEvaluated                = "not_evaluated"
@@ -26,6 +27,7 @@ type Config struct {
 	MaxReturnHomeDurationSec  float64 `json:"max_return_home_duration_sec"`
 	MaxLandingDurationSec     float64 `json:"max_landing_duration_sec"`
 	MaxDescentRateMPS         float64 `json:"max_descent_rate_mps"`
+	SetpointLookaheadSec      float64 `json:"landing_setpoint_lookahead_sec"`
 	TouchdownAltitudeM        float64 `json:"touchdown_altitude_m"`
 	TouchdownVerticalSpeedMPS float64 `json:"touchdown_vertical_speed_mps"`
 	RequireDisarm             bool    `json:"require_disarm"`
@@ -82,7 +84,7 @@ type Gate struct {
 
 func NormalizePolicy(policy string, defaultPolicy string) string {
 	switch policy {
-	case PolicyLandInPlace, PolicyReturnHomeThenLand:
+	case PolicyLandInPlace, PolicyAPLandModeAfterHover, PolicyReturnHomeThenLand:
 		return policy
 	}
 	if defaultPolicy == "" {
