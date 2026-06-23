@@ -183,8 +183,10 @@ func assertHoverMissionRuntimeUsesAPLandPolicy(t *testing.T, path string) {
 		`\"force_disarm_grace_sec\":3`,
 		`\"hover_settle_sec\":8`,
 		`\"max_horizontal_drift_m\":0.1`,
+		`\"max_landing_descent_rate_mps\":0.6`,
 		`\"max_wait_ready_sec\":35`,
 		`"landing-policy"`,
+		`"max-landing-descent-rate-mps"`,
 		`"force-disarm-grace-sec"`,
 		`"max-wait-ready-sec"`,
 	} {

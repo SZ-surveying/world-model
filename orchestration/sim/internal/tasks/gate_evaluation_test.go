@@ -622,7 +622,11 @@ func TestSummarizeHoverXYAlignmentComparesFourSources(t *testing.T) {
 	}
 	protocolPair := mapFromAny(pairwise["gazebo_model_odometry__external_nav_odom"])
 	if got := metricFloat(protocolPair, "direction_cosine"); math.Abs(got-1.0) > 1e-9 {
-		t.Fatalf("protocol direction cosine = %v, want 1 after ExternalNav projection: %#v", got, protocolPair)
+		t.Fatalf("protocol direction cosine = %v, want 1 in ROS topic frame: %#v", got, protocolPair)
+	}
+	passThroughPair := mapFromAny(pairwise["external_nav_odom_candidate__slam_odom_corrected"])
+	if got := metricFloat(passThroughPair, "direction_cosine"); math.Abs(got-1.0) > 1e-9 {
+		t.Fatalf("candidate/corrected direction cosine = %v, want 1 in native ROS XY: %#v", got, passThroughPair)
 	}
 	if usedTruth, _ := summary["uses_gazebo_truth_input"].(bool); usedTruth {
 		t.Fatalf("Gazebo must remain review-only, not runtime input: %#v", summary)
@@ -994,10 +998,10 @@ func writeHoverXYAlignmentMCAP(t *testing.T, path string, mismatch bool) {
 	for idx := 10; idx <= 12; idx++ {
 		dx := 0.1 * float64(idx-10)
 		dy := 0.05 * float64(idx-10)
-		externalX := -dx
+		externalX := dx
 		externalY := dy
 		if mismatch {
-			externalX = dx
+			externalX = -dx
 			externalY = -dy
 		}
 		writeMsg(1, uint64(idx), gateTestOdometryCDR(dx, dy, 0))

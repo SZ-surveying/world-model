@@ -62,9 +62,6 @@ def test_runtime_config_world_markers_follow_navlab_quad_root() -> None:
     assert config.gazebo_truth_odom.odom_topic == "/gazebo/truth/odom"
     index_flag = odom_argv.index("--transform-index")
     assert odom_argv[index_flag + 1] == "0"
-    assert config.mission.pass_x_m == 1.25
-    assert config.mission.obstacle_avoid_distance_m == 1.2
-    assert "--pass-x-m" in mission_argv
     assert "--require-external-nav" in mission_argv
     assert "--require-imu-status" in mission_argv
     assert "--require-disarm" in mission_argv
@@ -77,18 +74,30 @@ def test_runtime_config_world_markers_follow_navlab_quad_root() -> None:
     assert config.mission.landing_policy == "ap_land_mode_after_hover"
     assert config.mission.landing_setpoint_lookahead_sec == 0.5
     assert config.mission.force_disarm_grace_sec == 3.0
-    pass_x_flag = mission_argv.index("--pass-x-m")
-    avoid_distance_flag = mission_argv.index("--obstacle-avoid-distance-m")
     landing_status_flag = mission_argv.index("--landing-status-topic")
     landing_policy_flag = mission_argv.index("--landing-policy")
     landing_lookahead_flag = mission_argv.index("--landing-setpoint-lookahead-sec")
     force_disarm_grace_flag = mission_argv.index("--force-disarm-grace-sec")
-    assert mission_argv[pass_x_flag + 1] == "1.25"
-    assert mission_argv[avoid_distance_flag + 1] == "1.2"
     assert mission_argv[landing_status_flag + 1] == "/navlab/landing/status"
     assert mission_argv[landing_policy_flag + 1] == "ap_land_mode_after_hover"
     assert mission_argv[landing_lookahead_flag + 1] == "0.5"
     assert mission_argv[force_disarm_grace_flag + 1] == "3.0"
+    for obsolete in (
+        "--forward-speed-mps",
+        "--avoid-forward-speed-mps",
+        "--obstacle-detect-distance-m",
+        "--obstacle-avoid-distance-m",
+        "--scan-yaw-deg",
+        "--scan-dwell-sec",
+        "--pass-x-m",
+        "--return-y-m",
+        "--final-hold-sec",
+        "--scan-features-topic",
+        "--pose-topic",
+        "--scan-timeout-sec",
+        "--setpoint-lookahead-sec",
+    ):
+        assert obsolete not in mission_argv
 
 
 def test_companion_runtime_config_uses_structured_fields_not_args_lists() -> None:

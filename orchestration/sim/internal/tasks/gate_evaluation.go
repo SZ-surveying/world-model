@@ -971,14 +971,14 @@ func summarizeHoverXYAlignment(path string) (map[string]any, error) {
 			sourceSummary["comparison_frame"] = "ros_enu_from_mavlink_local_position_ned"
 			sourceSummary["comparison_final_x_m"] = comparisonVector[0]
 			sourceSummary["comparison_final_y_m"] = comparisonVector[1]
-		case "external_nav_odom_candidate", "external_nav_odom":
-			// The MAVLink ExternalNav sender maps ROS odometry into
-			// MAV_FRAME_LOCAL_FRD as x=odom.y, y=-odom.x. Project the
-			// outgoing candidate back into the same review frame as the
-			// FCU LOCAL_POSITION_NED mirror instead of comparing raw ROS
-			// XY against Gazebo.
-			comparisonVector = [2]float64{-comparisonVector[0], comparisonVector[1]}
-			sourceSummary["comparison_frame"] = "fcu_local_position_review_from_mavlink_external_nav_mapping"
+		case "external_nav_odom_candidate", "external_nav_odom", "slam_odom_corrected":
+			// These are ROS odometry topics. The MAVLink ExternalNav sender
+			// later projects /external_nav/odom into MAV_FRAME_LOCAL_FRD, but
+			// that protocol mapping must not be applied while comparing rosbag
+			// topic evidence. Keep them in native ROS/map XY so pass-through
+			// topics such as /external_nav/odom_candidate and /slam/odom_corrected
+			// are not falsely reported as opposite directions.
+			sourceSummary["comparison_frame"] = "ros_map_xy"
 			sourceSummary["comparison_final_x_m"] = comparisonVector[0]
 			sourceSummary["comparison_final_y_m"] = comparisonVector[1]
 		default:

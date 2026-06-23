@@ -436,15 +436,6 @@ class MissionNodeConfig(EndpointNodeConfig):
     hover_hold_sec: float = 20.0
     max_horizontal_drift_m: float = 1.0
     max_altitude_drift_m: float = 0.6
-    forward_speed_mps: float = 0.30
-    avoid_forward_speed_mps: float = 0.25
-    obstacle_detect_distance_m: float = 2.3
-    obstacle_avoid_distance_m: float = 1.2
-    scan_yaw_deg: float = 45.0
-    scan_dwell_sec: float = 1.0
-    pass_x_m: float = 1.25
-    return_y_m: float = 0.65
-    final_hold_sec: float = 2.0
     origin_lat_deg: float = -35.363262
     origin_lon_deg: float = 149.165237
     origin_alt_m: float = 584.0
@@ -454,15 +445,11 @@ class MissionNodeConfig(EndpointNodeConfig):
     landing_status_topic: str = "/navlab/landing/status"
     landing_intent_topic: str = "/navlab/landing/intent"
     sim_log_topic: str = "/sim/log"
-    scan_features_topic: str = "/scan_features"
     external_nav_status_topic: str = "/external_nav/status"
     imu_status_topic: str = "/imu/status"
-    pose_topic: str = DEFAULT_WORLD_POSE_TOPIC
     mavlink_status_topic: str = "/navlab/mavlink/status"
-    scan_timeout_sec: float = 1.0
     status_timeout_sec: float = 1.0
     setpoint_rate_hz: float = 5.0
-    setpoint_lookahead_sec: float = 2.0
     landing_policy: str = "ap_land_mode_after_hover"
     pre_land_hold_sec: float = 2.0
     max_landing_duration_sec: float = 35.0
@@ -495,15 +482,6 @@ class MissionNodeConfig(EndpointNodeConfig):
             hover_hold_sec=_float(data.get("hover_hold_sec"), 20.0),
             max_horizontal_drift_m=_float(data.get("max_horizontal_drift_m"), 1.0),
             max_altitude_drift_m=_float(data.get("max_altitude_drift_m"), 0.6),
-            forward_speed_mps=_float(data.get("forward_speed_mps"), 0.30),
-            avoid_forward_speed_mps=_float(data.get("avoid_forward_speed_mps"), 0.25),
-            obstacle_detect_distance_m=_float(data.get("obstacle_detect_distance_m"), 2.3),
-            obstacle_avoid_distance_m=_float(data.get("obstacle_avoid_distance_m"), 1.2),
-            scan_yaw_deg=_float(data.get("scan_yaw_deg"), 45.0),
-            scan_dwell_sec=_float(data.get("scan_dwell_sec"), 1.0),
-            pass_x_m=_float(data.get("pass_x_m"), 1.25),
-            return_y_m=_float(data.get("return_y_m"), 0.65),
-            final_hold_sec=_float(data.get("final_hold_sec"), 2.0),
             origin_lat_deg=_float(data.get("origin_lat_deg"), -35.363262),
             origin_lon_deg=_float(data.get("origin_lon_deg"), 149.165237),
             origin_alt_m=_float(data.get("origin_alt_m"), 584.0),
@@ -513,15 +491,11 @@ class MissionNodeConfig(EndpointNodeConfig):
             landing_status_topic=as_str(data.get("landing_status_topic"), "/navlab/landing/status"),
             landing_intent_topic=as_str(data.get("landing_intent_topic"), "/navlab/landing/intent"),
             sim_log_topic=as_str(data.get("sim_log_topic"), "/sim/log"),
-            scan_features_topic=as_str(data.get("scan_features_topic"), "/scan_features"),
             external_nav_status_topic=as_str(data.get("external_nav_status_topic"), "/external_nav/status"),
             imu_status_topic=as_str(data.get("imu_status_topic"), "/imu/status"),
-            pose_topic=as_str(data.get("pose_topic"), DEFAULT_WORLD_POSE_TOPIC),
             mavlink_status_topic=as_str(data.get("mavlink_status_topic"), "/navlab/mavlink/status"),
-            scan_timeout_sec=_float(data.get("scan_timeout_sec"), 1.0),
             status_timeout_sec=_float(data.get("status_timeout_sec"), 1.0),
             setpoint_rate_hz=_float(data.get("setpoint_rate_hz"), 5.0),
-            setpoint_lookahead_sec=_float(data.get("setpoint_lookahead_sec"), 2.0),
             landing_policy=as_str(data.get("landing_policy"), "ap_land_mode_after_hover"),
             pre_land_hold_sec=_float(data.get("pre_land_hold_sec"), 2.0),
             max_landing_duration_sec=_float(data.get("max_landing_duration_sec"), 35.0),
@@ -553,15 +527,6 @@ class MissionNodeConfig(EndpointNodeConfig):
         _append_flag(argv, "--hover-hold-sec", self.hover_hold_sec)
         _append_flag(argv, "--max-horizontal-drift-m", self.max_horizontal_drift_m)
         _append_flag(argv, "--max-altitude-drift-m", self.max_altitude_drift_m)
-        _append_flag(argv, "--forward-speed-mps", self.forward_speed_mps)
-        _append_flag(argv, "--avoid-forward-speed-mps", self.avoid_forward_speed_mps)
-        _append_flag(argv, "--obstacle-detect-distance-m", self.obstacle_detect_distance_m)
-        _append_flag(argv, "--obstacle-avoid-distance-m", self.obstacle_avoid_distance_m)
-        _append_flag(argv, "--scan-yaw-deg", self.scan_yaw_deg)
-        _append_flag(argv, "--scan-dwell-sec", self.scan_dwell_sec)
-        _append_flag(argv, "--pass-x-m", self.pass_x_m)
-        _append_flag(argv, "--return-y-m", self.return_y_m)
-        _append_flag(argv, "--final-hold-sec", self.final_hold_sec)
         _append_flag(argv, "--origin-lat-deg", self.origin_lat_deg)
         _append_flag(argv, "--origin-lon-deg", self.origin_lon_deg)
         _append_flag(argv, "--origin-alt-m", self.origin_alt_m)
@@ -571,15 +536,11 @@ class MissionNodeConfig(EndpointNodeConfig):
         _append_flag(argv, "--landing-status-topic", self.landing_status_topic)
         _append_flag(argv, "--landing-intent-topic", self.landing_intent_topic)
         _append_flag(argv, "--sim-log-topic", self.sim_log_topic)
-        _append_flag(argv, "--scan-features-topic", self.scan_features_topic)
         _append_flag(argv, "--external-nav-status-topic", self.external_nav_status_topic)
         _append_flag(argv, "--imu-status-topic", self.imu_status_topic)
-        _append_flag(argv, "--pose-topic", self.pose_topic)
         _append_flag(argv, "--mavlink-status-topic", self.mavlink_status_topic)
-        _append_flag(argv, "--scan-timeout-sec", self.scan_timeout_sec)
         _append_flag(argv, "--status-timeout-sec", self.status_timeout_sec)
         _append_flag(argv, "--setpoint-rate-hz", self.setpoint_rate_hz)
-        _append_flag(argv, "--setpoint-lookahead-sec", self.setpoint_lookahead_sec)
         _append_flag(argv, "--landing-policy", self.landing_policy)
         _append_flag(argv, "--pre-land-hold-sec", self.pre_land_hold_sec)
         _append_flag(argv, "--max-landing-duration-sec", self.max_landing_duration_sec)

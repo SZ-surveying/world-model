@@ -1,0 +1,310 @@
+"""Runtime summary adapters for the MAVLink hover mission shell."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+
+from navlab.common.companion.mission.command_adapter import MissionCommandRuntime
+from navlab.common.companion.mission.context import MissionContext
+from navlab.common.companion.mission.evidence.hover import (
+    HoverEvidenceRecorder,
+    classify_hover_drift,
+    json_safe_number,
+    summarize_hover_altitude_crosscheck,
+    summarize_hover_drift,
+)
+from navlab.common.companion.mission.evidence.landing import LandingEvidenceRecorder
+from navlab.common.companion.mission.evidence.summary import (
+    MissionSummaryBuilder,
+    MissionSummaryWriter,
+    build_landing_summary,
+)
+from navlab.common.companion.mission.fsm import MissionFsmSnapshot
+from navlab.common.companion.mission.mavlink_protocol import command_ack_accepted, mavlink
+from navlab.common.companion.mission.runtime_state import (
+    MavlinkRuntimeCollections,
+    MavlinkRuntimeState,
+    MissionRuntimeAdapterConfig,
+    MissionRuntimeStateAdapter,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class HoverMissionSummaryConfig:
+    """Static configuration needed to build hover mission summaries."""
+
+    summary_file: str
+    mode: str
+    mode_number: int
+    takeoff_alt_m: float
+    hover_altitude_tolerance_m: float
+    hover_hold_sec: float
+    hover_duration_tolerance_sec: float
+    max_horizontal_drift_m: float
+    max_altitude_drift_m: float
+    preflight_ready_sec: float
+    max_wait_ready_sec: float
+    hover_settle_sec: float
+    require_external_nav: bool
+    require_imu_status: bool
+    send_position_setpoints: bool
+    landing_policy: str
+    require_disarm: bool
+    require_motors_safe: bool
+    touchdown_confirm_sec: float
+    force_disarm_grace_sec: float
+    force_disarm_after_touchdown: bool
+    landing_setpoint_lookahead_sec: float
+    landing_slowdown_altitude_m: float
+    landing_near_ground_descent_rate_mps: float
+    max_landing_descent_rate_mps: float
+    touchdown_altitude_m: float
+
+
+class HoverMissionSummaryRuntime:
+    """Build landing and final summaries from mission state owners."""
+
+    def __init__(self, config: HoverMissionSummaryConfig) -> None:
+        """Create a summary runtime with static mission config."""
+
+        self._config = config
+
+    def landing_summary(
+        self,
+        *,
+        now_monotonic: float,
+        fsm_snapshot: MissionFsmSnapshot,
+        runtime: MavlinkRuntimeState,
+        collections: MavlinkRuntimeCollections,
+        landing_evidence: LandingEvidenceRecorder,
+        started_at_monotonic: float,
+    ) -> dict[str, object]:
+        """Build the shared landing status/summary payload."""
+
+        disarmed = not runtime.armed_seen
+        motors_safe = disarmed if self._config.require_motors_safe else True
+        return build_landing_summary(
+            fsm_snapshot=fsm_snapshot,
+            policy=self._config.landing_policy,
+            state=landing_evidence.state,
+            started=landing_evidence.started_at_monotonic is not None,
+            frozen_hover_evidence=landing_evidence.frozen_hover_evidence,
+            land_command_sent=landing_evidence.land_command_sent,
+            land_command_sent_time_sec=None
+            if landing_evidence.land_command_sent_time is None
+            else max(0.0, landing_evidence.land_command_sent_time - started_at_monotonic),
+            land_command_accepted=command_ack_accepted(
+                collections.command_acks,
+                mavlink.MAV_CMD_NAV_LAND,
+                collections.accepted_command_ids,
+            ),
+            mode_before_land=landing_evidence.mode_before_land,
+            mode_after_land=landing_evidence.mode_after_land,
+            land_mode_seen=landing_evidence.land_mode_seen,
+            land_mode_seen_elapsed_sec=landing_evidence.land_mode_seen_elapsed_sec,
+            landed_state_timeline=runtime.landed_state_timeline,
+            landing_duration_sec=None
+            if landing_evidence.started_at_monotonic is None
+            else max(0.0, now_monotonic - landing_evidence.started_at_monotonic),
+            touchdown_confirmed=landing_evidence.touchdown_confirmed,
+            touchdown_confirmed_time_sec=None
+            if landing_evidence.touchdown_confirmed_time is None
+            else max(0.0, landing_evidence.touchdown_confirmed_time - started_at_monotonic),
+            disarmed=disarmed,
+            motors_safe=motors_safe,
+            require_disarm=self._config.require_disarm,
+            require_motors_safe=self._config.require_motors_safe,
+            touchdown_confirm_sec=self._config.touchdown_confirm_sec,
+            force_disarm_grace_sec=self._config.force_disarm_grace_sec,
+            force_disarm_after_touchdown=self._config.force_disarm_after_touchdown,
+            force_disarm_used=landing_evidence.force_disarm_used,
+            landing_setpoint_lookahead_sec=self._config.landing_setpoint_lookahead_sec,
+            landing_slowdown_altitude_m=self._config.landing_slowdown_altitude_m,
+            landing_near_ground_descent_rate_mps=self._config.landing_near_ground_descent_rate_mps,
+            last_range_m=runtime.current_range_m,
+            last_rangefinder_relative_height_m=self._rangefinder_relative_height_m(runtime),
+            last_z_ned=runtime.current_z,
+            last_vz_mps=runtime.current_vz,
+            landed_state=runtime.landed_state,
+            fcu_land_params=landing_evidence.fcu_land_params,
+            descent_profile=landing_evidence.descent_profile(
+                max_descent_rate_mps=self._config.max_landing_descent_rate_mps,
+                touchdown_altitude_m=self._config.touchdown_altitude_m,
+            ),
+            landing_blockers=landing_evidence.blockers,
+        )
+
+    def build_final_summary(
+        self,
+        *,
+        ok: bool,
+        reason: str,
+        landing_ok: bool,
+        now_monotonic: float,
+        started_at_monotonic: float,
+        fsm_snapshot: MissionFsmSnapshot,
+        prefix_pipeline: Mapping[str, object],
+        status_history: Sequence[Mapping[str, object]],
+        ctx: MissionContext,
+        runtime_adapter: MissionRuntimeStateAdapter,
+        runtime_adapter_config: MissionRuntimeAdapterConfig,
+        runtime: MavlinkRuntimeState,
+        command_runtime: MissionCommandRuntime,
+        collections: MavlinkRuntimeCollections,
+        hover_evidence: HoverEvidenceRecorder,
+        landing_evidence: LandingEvidenceRecorder,
+    ) -> dict[str, object]:
+        """Build the final mission summary payload from state owners."""
+
+        hover_evidence.remember_segment()
+        hover_window = hover_evidence.selected_window()
+        hover_samples = hover_window.pose_samples
+        altitude_samples = hover_window.altitude_samples
+        drift = summarize_hover_drift(hover_samples)
+        drift_quality = classify_hover_drift(drift, max_horizontal_drift_m=self._config.max_horizontal_drift_m)
+        altitude_crosscheck = summarize_hover_altitude_crosscheck(
+            altitude_samples,
+            target_alt_m=self._config.takeoff_alt_m,
+            tolerance_m=self._config.hover_altitude_tolerance_m,
+        )
+        target_z_ned = self._target_z_ned(runtime)
+        hover_z_ned = hover_samples[-1][3] if hover_samples else runtime.current_z
+        if hover_z_ned is not None:
+            altitude_error_m = abs(float(hover_z_ned) - float(target_z_ned))
+        elif runtime.current_range_m is not None:
+            altitude_error_m = abs(float(runtime.current_range_m) - float(self._config.takeoff_alt_m))
+        else:
+            altitude_error_m = None
+        readiness = runtime_adapter.readiness_summary(
+            now_monotonic=now_monotonic,
+            config=runtime_adapter_config,
+        )
+        landing_summary = self.landing_summary(
+            now_monotonic=now_monotonic,
+            fsm_snapshot=fsm_snapshot,
+            runtime=runtime,
+            collections=collections,
+            landing_evidence=landing_evidence,
+            started_at_monotonic=started_at_monotonic,
+        )
+        return MissionSummaryBuilder().build(
+            ok=ok,
+            reason=reason,
+            fsm_snapshot=fsm_snapshot,
+            hover_body_ok=ctx.state.hover.body_ok,
+            landing_ok=landing_ok,
+            phases_seen=sorted(ctx.state.hover.phase_counts),
+            phase_counts=ctx.state.hover.phase_counts,
+            prefix_pipeline=prefix_pipeline,
+            status_history=status_history,
+            mode=self._config.mode,
+            mode_number=self._config.mode_number,
+            guided_seen=runtime.guided_seen_ever
+            or runtime.expected_mode_seen
+            or runtime_adapter.external_expected_mode_seen,
+            armed_seen=runtime.armed_seen_ever or runtime.armed_seen or runtime_adapter.external_armed_seen,
+            airborne_seen=runtime.airborne_seen,
+            takeoff_ack_ok=command_ack_accepted(
+                collections.command_acks,
+                mavlink.MAV_CMD_NAV_TAKEOFF,
+                collections.accepted_command_ids,
+            ),
+            arm_ack_ok=command_ack_accepted(
+                collections.command_acks,
+                mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                collections.accepted_command_ids,
+            ),
+            crash_detected=runtime.crash_detected,
+            setpoints_sent_count=command_runtime.setpoints_sent,
+            local_position_count=runtime.message_counts.get("LOCAL_POSITION_NED", 0),
+            rangefinder_count=self._rangefinder_count(runtime),
+            target_alt_m=self._config.takeoff_alt_m,
+            ground_z_ned=runtime.ground_z_ned,
+            target_z_ned=target_z_ned,
+            current_z_ned=hover_z_ned,
+            current_height_m=runtime.current_range_m,
+            altitude_error_m=altitude_error_m,
+            hover_altitude_crosscheck=altitude_crosscheck,
+            preflight_ready_sec=self._config.preflight_ready_sec,
+            max_wait_ready_sec=self._config.max_wait_ready_sec,
+            hover_settle_sec=self._config.hover_settle_sec,
+            hover_altitude_tolerance_m=self._config.hover_altitude_tolerance_m,
+            hover_hold_sec=self._config.hover_hold_sec,
+            hover_hold_duration_sec=drift.duration_sec,
+            hover_hold_segments_seen=hover_evidence.segment_count,
+            require_external_nav=self._config.require_external_nav,
+            external_nav_ready=readiness.external_nav_ready,
+            external_nav_status_age_sec=readiness.external_nav_status_age_sec,
+            external_nav_status_history=readiness.external_nav_status_history,
+            mavlink_external_nav_ready=readiness.mavlink_external_nav_ready,
+            fcu_local_position_ready=readiness.fcu_local_position_ready,
+            mavlink_external_nav_status_age_sec=readiness.mavlink_external_nav_status_age_sec,
+            mavlink_external_nav_status=readiness.mavlink_external_nav_status,
+            mavlink_external_nav_status_history=readiness.mavlink_external_nav_status_history,
+            require_imu_status=self._config.require_imu_status,
+            send_position_setpoints=self._config.send_position_setpoints,
+            hover_drift=self._hover_drift_payload(drift, drift_quality),
+            last_position={"x": runtime.current_x, "y": runtime.current_y, "z_ned": runtime.current_z},
+            hold_position={"x": ctx.state.hover.hold_x_m, "y": ctx.state.hover.hold_y_m},
+            last_yaw_rad=runtime.current_yaw_rad,
+            hold_yaw_rad=ctx.state.hover.hold_yaw_rad,
+            message_counts=runtime.message_counts,
+            sent_commands=command_runtime.sent_counts,
+            accepted_command_ids=sorted(collections.accepted_command_ids),
+            command_acks=collections.command_acks,
+            statustext=collections.statustext,
+            ekf_flags_seen=sorted(set(runtime.ekf_flags)),
+            gps_global_origin_seen=runtime.gps_global_origin_seen,
+            home_position_seen=runtime.home_position_seen,
+            landing_summary=landing_summary,
+        )
+
+    def write_final_summary(self, *, summary_file: str, summary: Mapping[str, object]) -> None:
+        """Write the final mission summary if a path is configured."""
+
+        if summary_file:
+            MissionSummaryWriter(summary_file).write(summary)
+
+    def _hover_drift_payload(self, drift, drift_quality: str) -> dict[str, object]:
+        """Build the legacy hover drift payload."""
+
+        return {
+            "sample_count": drift.sample_count,
+            "duration_sec": drift.duration_sec,
+            "horizontal_span_m": json_safe_number(drift.horizontal_span_m),
+            "z_span_m": json_safe_number(drift.z_span_m),
+            "horizontal_drift_m": json_safe_number(drift.horizontal_drift_m),
+            "z_drift_m": json_safe_number(drift.z_drift_m),
+            "max_horizontal_drift_m": self._config.max_horizontal_drift_m,
+            "max_altitude_drift_m": self._config.max_altitude_drift_m,
+            "duration_tolerance_sec": self._config.hover_duration_tolerance_sec,
+            "quality": drift_quality,
+            "gps_like": drift_quality == "tight" and drift.horizontal_drift_m <= 0.05 and drift.z_span_m <= 0.05,
+            "horizontal_span_ok": drift.horizontal_span_m <= self._config.max_horizontal_drift_m,
+            "horizontal_drift_ok": drift.horizontal_drift_m <= self._config.max_horizontal_drift_m,
+            "z_span_ok": drift.z_span_m <= self._config.max_altitude_drift_m,
+            "duration_ok": (
+                drift.duration_sec >= self._config.hover_hold_sec - self._config.hover_duration_tolerance_sec
+            ),
+            "ok": (
+                drift.ok
+                and drift.duration_sec >= self._config.hover_hold_sec - self._config.hover_duration_tolerance_sec
+                and drift.horizontal_drift_m <= self._config.max_horizontal_drift_m
+                and drift.z_span_m <= self._config.max_altitude_drift_m
+            ),
+        }
+
+    def _target_z_ned(self, runtime: MavlinkRuntimeState) -> float:
+        ground_z = runtime.ground_z_ned if runtime.ground_z_ned is not None else 0.0
+        return ground_z - self._config.takeoff_alt_m
+
+    @staticmethod
+    def _rangefinder_relative_height_m(runtime: MavlinkRuntimeState) -> float | None:
+        if runtime.current_range_m is None or runtime.ground_range_m is None:
+            return None
+        return max(0.0, float(runtime.current_range_m) - float(runtime.ground_range_m))
+
+    @staticmethod
+    def _rangefinder_count(runtime: MavlinkRuntimeState) -> int:
+        return runtime.message_counts.get("DISTANCE_SENSOR", 0) + runtime.message_counts.get("RANGEFINDER", 0)

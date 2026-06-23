@@ -4,48 +4,63 @@ from math import isclose
 
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
-from navlab.sim.companion.nodes.hover_mission import (
+from navlab.common.companion.mission.evidence.hover import (
+    classify_hover_drift,
+    summarize_hover_altitude_crosscheck,
+    summarize_hover_drift,
+)
+from navlab.common.companion.mission.evidence.landing import (
+    landing_descent_evidence_height_and_source_m,
+    landing_descent_evidence_height_m,
+    landing_descent_height_m,
+    landing_descent_target_z_ned,
+    landing_effective_descent_rate_mps,
+    landing_touchdown_candidate,
+    summarize_landing_descent_profile,
+)
+from navlab.common.companion.mission.fsm import (
+    MissionFsmRecorder,
+    mission_fsm_state_for_hover_phase,
+    mission_fsm_state_for_landing_state,
+)
+from navlab.common.companion.mission.runtime_state import append_bounded_statustext, statustext_indicates_crash
+from navlab.common.companion.mission.stages.hover import (
     HoverInputs,
     HoverRequirements,
-    MissionFsmRecorder,
-    _command_disarm,
-    _command_land,
-    _request_param_read,
-    append_bounded_command_ack,
-    append_bounded_statustext,
     capture_hold_anchor,
-    classify_hover_drift,
-    command_ack_accepted,
-    command_ack_success,
     decide_hover,
-    fcu_land_params_report,
     height_reaches_target,
     hold_axis_or_current,
     hold_yaw_or_current,
     hover_hold_setpoint_axes,
     independent_takeoff_height_reached,
+    should_fail_fast_wait_ready,
+    should_send_position_hold_setpoint,
+)
+from navlab.common.companion.mission.stages.landing import (
+    fcu_land_params_report,
     landing_acceptance_ok,
     landing_controller_for_state,
-    landing_descent_evidence_height_and_source_m,
-    landing_descent_evidence_height_m,
-    landing_descent_height_m,
     landing_descent_profile_enforced,
-    landing_descent_target_z_ned,
-    landing_effective_descent_rate_mps,
     landing_policy_uses_ap_land_mode,
-    landing_touchdown_candidate,
-    mavlink_param_id_to_str,
-    mission_fsm_state_for_hover_phase,
-    mission_fsm_state_for_landing_state,
     should_command_land_this_tick,
-    should_fail_fast_wait_ready,
     should_send_disarm_after_touchdown,
-    should_send_position_hold_setpoint,
     should_use_guided_descent_before_land,
-    statustext_indicates_crash,
-    summarize_hover_altitude_crosscheck,
-    summarize_hover_drift,
-    summarize_landing_descent_profile,
+)
+from navlab.sim.companion.mission.mavlink_commands import (
+    append_bounded_command_ack,
+    command_ack_accepted,
+    command_ack_success,
+    mavlink_param_id_to_str,
+)
+from navlab.sim.companion.mission.mavlink_commands import (
+    command_disarm as _command_disarm,
+)
+from navlab.sim.companion.mission.mavlink_commands import (
+    command_land as _command_land,
+)
+from navlab.sim.companion.mission.mavlink_commands import (
+    request_param_read as _request_param_read,
 )
 
 
@@ -292,17 +307,17 @@ def test_mission_fsm_recorder_tracks_entry_exit_reason_and_blocker() -> None:
 
     snapshot = recorder.snapshot(now_monotonic=15.0)
 
-    assert snapshot["state"] == "S_abort"
-    assert snapshot["state_entered_at_sec"] == 4.0
-    assert snapshot["last_transition_reason"] == "guided_mode_lost_after_airborne"
-    assert snapshot["blocker"] == "guided_mode_lost_after_airborne"
-    history = snapshot["history"]
-    assert history[0]["state"] == "S0 wait_runtime"
-    assert history[0]["exited_at_sec"] == 1.0
-    assert history[1]["state"] == "S1 wait_nav_ready"
-    assert history[1]["duration_sec"] == 2.5
-    assert history[-1]["state"] == "S_abort"
-    assert history[-1]["exited_at_sec"] is None
+    assert snapshot.state == "S_abort"
+    assert snapshot.state_entered_at_sec == 4.0
+    assert snapshot.last_transition_reason == "guided_mode_lost_after_airborne"
+    assert snapshot.blocker == "guided_mode_lost_after_airborne"
+    history = snapshot.history
+    assert history[0].state == "S0 wait_runtime"
+    assert history[0].exited_at_sec == 1.0
+    assert history[1].state == "S1 wait_nav_ready"
+    assert history[1].duration_sec == 2.5
+    assert history[-1].state == "S_abort"
+    assert history[-1].exited_at_sec is None
 
 
 def test_ap_land_mode_policy_skips_guided_descent_and_commands_land_immediately() -> None:

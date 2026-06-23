@@ -9,14 +9,24 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from navlab.sim.companion.mission.mavlink_commands import (
+    DEFAULT_ORIGIN_ALT_M,
+    DEFAULT_ORIGIN_LAT_DEG,
+    DEFAULT_ORIGIN_LON_DEG,
+    LOCAL_POSITION_YAW_TYPE_MASK,
+    command_arm,
+    command_takeoff,
+    mode_number,
+    send_gcs_heartbeat,
+    send_local_position_yaw_setpoint,
+    set_arming_check,
+    set_ekf_origin,
+    set_home_position,
+    set_mode,
+)
 from navlab.sim.companion.runtime.status import DEFAULT_SIM_LOG_TOPIC, encode_sim_log
 
 os.environ.setdefault("MAVLINK20", "1")
-
-LOCAL_POSITION_YAW_TYPE_MASK = 2552
-DEFAULT_ORIGIN_LAT_DEG = -35.363262
-DEFAULT_ORIGIN_LON_DEG = 149.165237
-DEFAULT_ORIGIN_ALT_M = 584.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,17 +293,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def mode_number(mode_name: str) -> int:
-    from pymavlink import mavutil
-
-    requested = mode_name.upper()
-    for number, name in mavutil.mode_mapping_acm.items():
-        if name == requested:
-            return int(number)
-    supported = ", ".join(sorted(mavutil.mode_mapping_acm.values()))
-    raise ValueError(f"unsupported ArduCopter mode {mode_name!r}; supported: {supported}")
-
-
 def _send_message_interval(connection, target_system: int, target_component: int, message_id: int, hz: float) -> None:
     from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
@@ -327,120 +326,6 @@ def _request_streams(connection, target_system: int, target_component: int) -> N
         _send_message_interval(connection, target_system, target_component, message_id, hz)
 
 
-def set_mode(connection, target_system: int, mode_number: int) -> None:
-    from pymavlink.dialects.v20 import ardupilotmega as mavlink
-
-    connection.mav.set_mode_send(target_system, mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, mode_number)
-    connection.mav.command_long_send(
-        target_system,
-        mavlink.MAV_COMP_ID_AUTOPILOT1,
-        mavlink.MAV_CMD_DO_SET_MODE,
-        0,
-        mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
-        mode_number,
-        0,
-        0,
-        0,
-        0,
-        0,
-    )
-
-
-def send_gcs_heartbeat(connection) -> None:
-    from pymavlink.dialects.v20 import ardupilotmega as mavlink
-
-    connection.mav.heartbeat_send(
-        mavlink.MAV_TYPE_GCS,
-        mavlink.MAV_AUTOPILOT_INVALID,
-        0,
-        0,
-        mavlink.MAV_STATE_ACTIVE,
-    )
-
-
-def set_arming_check(connection, target_system: int, target_component: int, value: int) -> None:
-    from pymavlink.dialects.v20 import ardupilotmega as mavlink
-
-    connection.mav.param_set_send(
-        target_system,
-        target_component,
-        b"ARMING_CHECK",
-        float(value),
-        mavlink.MAV_PARAM_TYPE_INT32,
-    )
-
-
-def set_ekf_origin(connection, target_system: int, lat_deg: float, lon_deg: float, alt_m: float) -> None:
-    connection.mav.set_gps_global_origin_send(
-        target_system,
-        int(lat_deg * 1e7),
-        int(lon_deg * 1e7),
-        int(alt_m * 1000.0),
-        int(time.monotonic() * 1_000_000),
-    )
-
-
-def set_home_position(
-    connection,
-    target_system: int,
-    target_component: int,
-    lat_deg: float,
-    lon_deg: float,
-    alt_m: float,
-) -> None:
-    from pymavlink.dialects.v20 import ardupilotmega as mavlink
-
-    connection.mav.command_long_send(
-        target_system,
-        target_component,
-        mavlink.MAV_CMD_DO_SET_HOME,
-        0,
-        0,
-        0,
-        0,
-        0,
-        lat_deg,
-        lon_deg,
-        alt_m,
-    )
-
-
-def command_arm(connection, target_system: int, target_component: int, force_arm: bool) -> None:
-    from pymavlink.dialects.v20 import ardupilotmega as mavlink
-
-    connection.mav.command_long_send(
-        target_system,
-        target_component,
-        mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-        0,
-        1,
-        21196 if force_arm else 0,
-        0,
-        0,
-        0,
-        0,
-        0,
-    )
-
-
-def command_takeoff(connection, target_system: int, target_component: int, altitude_m: float) -> None:
-    from pymavlink.dialects.v20 import ardupilotmega as mavlink
-
-    connection.mav.command_long_send(
-        target_system,
-        target_component,
-        mavlink.MAV_CMD_NAV_TAKEOFF,
-        0,
-        0,
-        0,
-        0,
-        math.nan,
-        0,
-        0,
-        altitude_m,
-    )
-
-
 def position_target_from_velocity(
     *,
     current_x: float | None,
@@ -452,37 +337,6 @@ def position_target_from_velocity(
     x = 0.0 if current_x is None else current_x
     y = 0.0 if current_y is None else current_y
     return x + vx_mps * lookahead_sec, y + vy_mps * lookahead_sec
-
-
-def send_local_position_yaw_setpoint(
-    connection,
-    target_system: int,
-    target_component: int,
-    x_ned_m: float,
-    y_ned_m: float,
-    z_ned_m: float,
-    yaw_rad: float,
-) -> None:
-    from pymavlink.dialects.v20 import ardupilotmega as mavlink
-
-    connection.mav.set_position_target_local_ned_send(
-        int(time.monotonic() * 1000),
-        target_system,
-        target_component,
-        mavlink.MAV_FRAME_LOCAL_NED,
-        LOCAL_POSITION_YAW_TYPE_MASK,
-        x_ned_m,
-        y_ned_m,
-        z_ned_m,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        yaw_rad,
-        0.0,
-    )
 
 
 def yaw_for_velocity(vx_mps: float, vy_mps: float, fallback_yaw_rad: float) -> float:

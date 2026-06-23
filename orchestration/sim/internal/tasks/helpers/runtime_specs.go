@@ -740,7 +740,7 @@ func DefaultHoverMissionRuntimeSpec() HoverMissionRuntimeSpec {
 		LandingDescentRateMPS:         0.09,
 		LandingLandCommandAltitudeM:   0.18,
 		LandingSetpointLookaheadSec:   0.5,
-		MaxLandingDescentRateMPS:      0.25,
+		MaxLandingDescentRateMPS:      0.60,
 		TouchdownAltitudeM:            0.12,
 		TouchdownVerticalSpeedMPS:     0.08,
 		ForceDisarmGraceSec:           3.0,

@@ -26,7 +26,7 @@ landing:
   hover_policy: ap_land_mode_after_hover
   pre_land_hold_sec: 2.0
   max_landing_duration_sec: 35.0
-  max_descent_rate_mps: 0.25
+  max_descent_rate_mps: 0.60
   landing_setpoint_lookahead_sec: 0.5
   touchdown_altitude_m: 0.12
   require_disarm: true
