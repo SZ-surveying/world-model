@@ -466,13 +466,17 @@ func hoverMissionCompletedOK(mission map[string]any) bool {
 	if !ok {
 		return false
 	}
-	if state, _ := mission["mission_fsm_state"].(string); strings.TrimSpace(state) == "S12 landing_complete" {
+	if state, _ := mission["mission_fsm_state"].(string); hoverMissionFSMCompleted(strings.TrimSpace(state)) {
 		return true
 	}
 	if reason, _ := mission["reason"].(string); strings.TrimSpace(reason) == "hover_complete" {
 		return true
 	}
 	return false
+}
+
+func hoverMissionFSMCompleted(state string) bool {
+	return state == "S12 landing_complete" || state == "S13 task_success"
 }
 
 func isAllowedExternalNavSLAMInputTopic(topic string) bool {
@@ -878,15 +882,17 @@ func summarizeHoverXYAlignment(path string) (map[string]any, error) {
 		return nil, err
 	}
 	type sourceSpec struct {
-		key   string
-		topic string
-		kind  string
+		key       string
+		topic     string
+		kind      string
+		compareXY bool
 	}
 	sources := []sourceSpec{
-		{key: "gazebo_model_odometry", topic: helpers.DiagnosticGazeboModelOdometryTopic, kind: "odometry"},
-		{key: "fcu_local_position_pose", topic: "/navlab/fcu/local_position_pose", kind: "pose_stamped"},
-		{key: "external_nav_odom", topic: "/external_nav/odom", kind: "odometry"},
-		{key: "slam_odom_corrected", topic: "/slam/odom_corrected", kind: "odometry"},
+		{key: "gazebo_model_odometry", topic: helpers.DiagnosticGazeboModelOdometryTopic, kind: "odometry", compareXY: true},
+		{key: "fcu_local_position_pose", topic: "/navlab/fcu/local_position_pose", kind: "pose_stamped", compareXY: true},
+		{key: "external_nav_odom_candidate", topic: "/external_nav/odom_candidate", kind: "odometry", compareXY: true},
+		{key: "slam_odom_corrected", topic: "/slam/odom_corrected", kind: "odometry", compareXY: true},
+		{key: "external_nav_odom", topic: "/external_nav/odom", kind: "odometry", compareXY: true},
 	}
 	byTopic := map[string]sourceSpec{}
 	rawSamples := map[string][]timedXYSample{}
@@ -955,7 +961,8 @@ func summarizeHoverXYAlignment(path string) (map[string]any, error) {
 		}
 		sourceSummary := summarizeTimedXYSamples(source.topic, rawSamples[source.key], windowed, hoverStartSec, hoverEndSec, windowSource)
 		comparisonVector := [2]float64{metricFloat(sourceSummary, "final_x_m"), metricFloat(sourceSummary, "final_y_m")}
-		if source.key == "fcu_local_position_pose" {
+		switch source.key {
+		case "fcu_local_position_pose":
 			// /navlab/fcu/local_position_pose mirrors MAVLink LOCAL_POSITION_NED
 			// as x=north,y=east, while SLAM/external_nav odometry is ROS ENU.
 			// Compare all estimator evidence in ROS ENU to avoid false x/y swap
@@ -964,7 +971,17 @@ func summarizeHoverXYAlignment(path string) (map[string]any, error) {
 			sourceSummary["comparison_frame"] = "ros_enu_from_mavlink_local_position_ned"
 			sourceSummary["comparison_final_x_m"] = comparisonVector[0]
 			sourceSummary["comparison_final_y_m"] = comparisonVector[1]
-		} else {
+		case "external_nav_odom_candidate", "external_nav_odom":
+			// The MAVLink ExternalNav sender maps ROS odometry into
+			// MAV_FRAME_LOCAL_FRD as x=odom.y, y=-odom.x. Project the
+			// outgoing candidate back into the same review frame as the
+			// FCU LOCAL_POSITION_NED mirror instead of comparing raw ROS
+			// XY against Gazebo.
+			comparisonVector = [2]float64{-comparisonVector[0], comparisonVector[1]}
+			sourceSummary["comparison_frame"] = "fcu_local_position_review_from_mavlink_external_nav_mapping"
+			sourceSummary["comparison_final_x_m"] = comparisonVector[0]
+			sourceSummary["comparison_final_y_m"] = comparisonVector[1]
+		default:
 			sourceSummary["comparison_frame"] = "native_xy"
 			sourceSummary["comparison_final_x_m"] = comparisonVector[0]
 			sourceSummary["comparison_final_y_m"] = comparisonVector[1]
@@ -974,10 +991,16 @@ func summarizeHoverXYAlignment(path string) (map[string]any, error) {
 	}
 	pairwise := map[string]any{}
 	blockers := []string{}
-	for leftIdx := 0; leftIdx < len(sources); leftIdx++ {
-		for rightIdx := leftIdx + 1; rightIdx < len(sources); rightIdx++ {
-			left := sources[leftIdx]
-			right := sources[rightIdx]
+	comparableSources := []sourceSpec{}
+	for _, source := range sources {
+		if source.compareXY {
+			comparableSources = append(comparableSources, source)
+		}
+	}
+	for leftIdx := 0; leftIdx < len(comparableSources); leftIdx++ {
+		for rightIdx := leftIdx + 1; rightIdx < len(comparableSources); rightIdx++ {
+			left := comparableSources[leftIdx]
+			right := comparableSources[rightIdx]
 			leftSummary := mapFromAny(sourceSummaries[left.key])
 			rightSummary := mapFromAny(sourceSummaries[right.key])
 			pairKey := left.key + "__" + right.key
@@ -990,6 +1013,9 @@ func summarizeHoverXYAlignment(path string) (map[string]any, error) {
 		}
 	}
 	for _, source := range sources {
+		if !source.compareXY {
+			continue
+		}
 		if metricInt(mapFromAny(sourceSummaries[source.key]), "sample_count") < 2 {
 			blockers = append(blockers, "hover_xy_evidence_disagreement")
 			blockers = append(blockers, "hover_xy_alignment_samples_missing:"+source.key)

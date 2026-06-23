@@ -385,7 +385,7 @@ func isHoverSlamRuntimeTask(taskID string) bool {
 
 func officialMazeSource(project config.ProjectConfig) (string, error) {
 	if strings.EqualFold(os.Getenv("NAVLAB_SIM_OVERLAY_SOURCE_MODE"), "fixture") || runningGoTest() {
-		return officialMazeFixture(), nil
+		return officialMazeFixture()
 	}
 	workspaceRoot := project.Paths.WorkspaceRoot
 	if workspaceRoot == "" {
@@ -401,7 +401,7 @@ func officialMazeSource(project config.ProjectConfig) (string, error) {
 
 func officialExternalNavParamSource(project config.ProjectConfig) (string, error) {
 	if strings.EqualFold(os.Getenv("NAVLAB_SIM_OVERLAY_SOURCE_MODE"), "fixture") || runningGoTest() {
-		return officialExternalNavParamFixture(), nil
+		return officialExternalNavParamFixture()
 	}
 	workspaceRoot := project.Paths.WorkspaceRoot
 	if workspaceRoot == "" {
@@ -451,79 +451,12 @@ func paramLineKey(line string) (string, bool) {
 	return fields[0], true
 }
 
-func officialMazeFixture() string {
-	return `<sdf version="1.9">
-  <world name="fixture">
-    <model name="maze">
-      <link name="north_wall">
-        <pose>0 5 0 0 0 0</pose>
-        <collision name="collision">
-          <pose>0 0 0 0 0 0</pose>
-          <geometry><box><size>10 0.2 2</size></box></geometry>
-        </collision>
-      </link>
-      <link name="west_wall">
-        <pose>-5 0 0 0 0 1.57079632679</pose>
-        <collision name="collision">
-          <pose>0 0 0 0 0 0</pose>
-          <geometry><box><size>10 0.2 2</size></box></geometry>
-        </collision>
-      </link>
-      <link name="inner_wall">
-        <pose>0 0 0 0 0 1.57079632679</pose>
-        <collision name="collision">
-          <pose>0 0 0 0 0 0</pose>
-          <geometry><box><size>5 0.2 2</size></box></geometry>
-        </collision>
-      </link>
-    </model>
-  </world>
-</sdf>
-`
+func officialMazeFixture() (string, error) {
+	return helpers.RenderStaticHelperTemplate("sdf/fixtures/official_maze.sdf.tmpl")
 }
 
-func officialExternalNavParamFixture() string {
-	return `AHRS_EKF_TYPE 3
-ARMING_CHECK 1043902
-EK3_GPS_CHECK 0
-EK3_SRC_OPTIONS 0
-GPS1_TYPE 0
-SIM_GPS1_ENABLE 0
-SIM_GPS1_TYPE 0
-SIM_GPS2_ENABLE 0
-SIM_GPS3_ENABLE 0
-SIM_GPS4_ENABLE 0
-VISO_TYPE 1
-EK3_SRC1_POSXY 6
-EK3_SRC1_POSZ 2
-EK3_SRC1_VELXY 0
-EK3_SRC1_VELZ 0
-EK3_SRC1_YAW 1
-SCR_ENABLE 1
-AHRS_ORIG_ALT 584
-AHRS_ORIG_LAT -35.363262
-AHRS_ORIG_LON 149.165237
-SERIAL7_BAUD 115
-SERIAL7_OPTIONS 0
-SERIAL7_PROTOCOL 9
-EK3_RNG_USE_HGT -1
-RNGFND1_ADDR 0
-RNGFND1_FUNCTION 0
-RNGFND1_OFFSET 0
-RNGFND1_PIN -1
-RNGFND1_PWRRNG 0
-RNGFND1_RMETRIC 1
-RNGFND1_SCALING 3
-RNGFND1_STOP_PIN -1
-RNGFND1_TYPE 20
-RNGFND1_MIN_CM 10
-RNGFND1_MAX_CM 1200
-RNGFND1_GNDCLEAR 15
-RNGFND1_ORIENT 25
-RNGFND1_POS_X 0
-RNGFND1_POS_Y 0
-RNGFND1_POS_Z 0
-`
+func officialExternalNavParamFixture() (string, error) {
+	return helpers.RenderStaticHelperTemplate("parm/official_external_nav.parm.tmpl")
 }
 
 func runtimeContainerPath(project config.ProjectConfig, hostPath string) (string, error) {
@@ -544,7 +477,7 @@ func runtimeContainerPath(project config.ProjectConfig, hostPath string) (string
 
 func officialOverlaySource(project config.ProjectConfig, sourcePath string) (string, error) {
 	if strings.EqualFold(os.Getenv("NAVLAB_SIM_OVERLAY_SOURCE_MODE"), "fixture") || runningGoTest() {
-		return officialOverlayFixture(sourcePath), nil
+		return officialOverlayFixture(sourcePath)
 	}
 	image, err := resolveImageRef(project, "images.official_baseline")
 	if err != nil {
@@ -564,22 +497,12 @@ func runningGoTest() bool {
 	return strings.HasSuffix(os.Args[0], ".test")
 }
 
-func officialOverlayFixture(sourcePath string) string {
+func officialOverlayFixture(sourcePath string) (string, error) {
 	switch sourcePath {
 	case helpers.OfficialGazeboIrisParams:
-		return "SYSID_THISMAV 1\n"
+		return helpers.RenderStaticHelperTemplate("parm/official_gazebo_iris.parm.tmpl")
 	default:
-		return `<sdf version="1.9">
-  <model name="iris_with_lidar">
-    <include merge="true">
-      <uri>model://iris_with_standoffs</uri>
-    </include>
-    <include merge="true">
-      <uri>model://lidar_3d</uri>
-    </include>
-  </model>
-</sdf>
-`
+		return helpers.RenderStaticHelperTemplate("sdf/fixtures/official_iris_with_lidar.sdf.tmpl")
 	}
 }
 

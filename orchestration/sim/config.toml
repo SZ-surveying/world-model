@@ -30,7 +30,7 @@ task_config_dir = "configs/tasks"
 
 [navlab.images]
 distro = "jazzy"
-tag_policy = "distro-git-commit"
+tag_policy = "distro-latest"
 
 [navlab.images.ros_base]
 group = "base"
@@ -68,6 +68,10 @@ dockerfile = "docker/images/runtime/companion.Dockerfile"
 context = "."
 target = "navlab-companion"
 repository = "navlab/companion"
+tag_policy = "distro-git-commit"
+
+[navlab.images.companion.build_args]
+"INFRA_TAG" = "jazzy-latest"
 
 [navlab.images.slam]
 group = "runtime"

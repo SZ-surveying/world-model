@@ -357,7 +357,7 @@ func buildArgs(image config.Image, distro string, tag string) []string {
 		"INFRA_TAG":  tag,
 	}
 	for key, value := range image.BuildArgs {
-		args[key] = value
+		args[canonicalBuildArg(key)] = value
 	}
 	keys := make([]string, 0, len(args))
 	for key := range args {
@@ -369,6 +369,17 @@ func buildArgs(image config.Image, distro string, tag string) []string {
 		values = append(values, key+"="+args[key])
 	}
 	return values
+}
+
+func canonicalBuildArg(key string) string {
+	switch {
+	case strings.EqualFold(key, "INFRA_TAG"):
+		return "INFRA_TAG"
+	case strings.EqualFold(key, "ROS_DISTRO"):
+		return "ROS_DISTRO"
+	default:
+		return key
+	}
 }
 
 func imageGroup(image config.Image) string {

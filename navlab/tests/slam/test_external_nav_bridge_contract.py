@@ -9,6 +9,9 @@ BRIDGE_PARAMS = Path(
     "navlab/common/slam/ros/bridges/navlab_external_nav_bridge/config/navlab_external_nav_bridge.params.yaml"
 )
 GO_SLAM_HELPERS = Path("orchestration/sim/internal/tasks/helpers/slam.go")
+GO_EXTERNAL_NAV_BRIDGE_TEMPLATE = Path(
+    "orchestration/sim/internal/tasks/helpers/templates/yaml/external_nav_bridge_params.yaml.tmpl"
+)
 RUNTIME_CONFIG = Path("navlab/config.toml")
 
 
@@ -33,6 +36,6 @@ def test_external_nav_bridge_reports_height_sources() -> None:
 def test_external_nav_requires_height_by_default() -> None:
     assert 'declare_parameter("require_height_for_output", true)' in BRIDGE_SOURCE.read_text(encoding="utf-8")
     assert "require_height_for_output: true" in BRIDGE_PARAMS.read_text(encoding="utf-8")
-    assert "require_height_for_output: true" in GO_SLAM_HELPERS.read_text(encoding="utf-8")
+    assert "require_height_for_output: true" in GO_EXTERNAL_NAV_BRIDGE_TEMPLATE.read_text(encoding="utf-8")
     assert '"require_height_for_external_nav":           true' in GO_SLAM_HELPERS.read_text(encoding="utf-8")
     assert "require_height_for_external_nav = true" in RUNTIME_CONFIG.read_text(encoding="utf-8")

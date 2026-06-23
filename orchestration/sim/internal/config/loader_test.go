@@ -100,8 +100,8 @@ func TestLoaderReadsProjectAndYAMLTasks(t *testing.T) {
 	if len(project.AirframeDisturbanceGate.RequiredProfiles) != 2 {
 		t.Fatalf("airframe required profiles = %#v", project.AirframeDisturbanceGate.RequiredProfiles)
 	}
-	if project.Navlab.Images.TagPolicy != "distro-git-commit" {
-		t.Fatalf("image tag policy = %q, want distro-git-commit", project.Navlab.Images.TagPolicy)
+	if project.Navlab.Images.TagPolicy != "distro-latest" {
+		t.Fatalf("image tag policy = %q, want distro-latest", project.Navlab.Images.TagPolicy)
 	}
 	if project.Navlab.Images.Distro != "jazzy" {
 		t.Fatalf("image distro = %q, want jazzy", project.Navlab.Images.Distro)
@@ -111,6 +111,15 @@ func TestLoaderReadsProjectAndYAMLTasks(t *testing.T) {
 	}
 	if project.Images["official_baseline"].Repository != "navlab/official-baseline" {
 		t.Fatalf("official baseline image = %#v", project.Images["official_baseline"])
+	}
+	if project.Images["companion"].TagPolicy != "distro-git-commit" {
+		t.Fatalf("companion tag policy = %q, want distro-git-commit", project.Images["companion"].TagPolicy)
+	}
+	if project.Images["companion"].BuildArgs["infra_tag"] != "jazzy-latest" {
+		t.Fatalf("companion infra_tag = %q, want jazzy-latest", project.Images["companion"].BuildArgs["infra_tag"])
+	}
+	if project.Images["official_baseline"].TagPolicy != "" {
+		t.Fatalf("official baseline tag policy override = %q, want empty", project.Images["official_baseline"].TagPolicy)
 	}
 
 	tasks, err := loader.LoadTasks(project)

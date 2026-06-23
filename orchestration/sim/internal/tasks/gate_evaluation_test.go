@@ -283,45 +283,47 @@ func TestHoverMissionBlockersRejectMissingAltitudeEvidence(t *testing.T) {
 }
 
 func TestHoverMissionBlockersAllowPostLandingExternalNavReadyDropWhenMissionCompleted(t *testing.T) {
-	mission := map[string]any{
-		"ok":                   true,
-		"reason":               "hover_complete",
-		"mission_fsm_state":    "S12 landing_complete",
-		"require_external_nav": true,
-		"external_nav_ready":   false,
-		"phases_seen":          []any{"guided", "arm", "takeoff", "hover_hold", "complete"},
-		"guided_seen":          true,
-		"armed_seen":           true,
-		"airborne_seen":        true,
-		"local_position_count": float64(10),
-		"setpoints_sent_count": float64(10),
-		"target_alt_m":         float64(0.5),
-		"current_z_ned":        float64(-0.45),
-		"altitude_error_m":     float64(0.01),
-		"hover_altitude_crosscheck": map[string]any{
-			"sample_count": float64(3),
-			"ok":           true,
-		},
-		"takeoff_ack_ok": true,
-		"hover_hold_sec": float64(18),
-		"hover_drift": map[string]any{
-			"sample_count": float64(3),
-			"duration_sec": float64(18),
-			"ok":           true,
-			"quality":      "tight",
-		},
-		"hover_body_ok": true,
-		"landing_ok":    true,
-		"landing": map[string]any{
-			"ok":                    true,
-			"land_command_accepted": true,
-			"touchdown_confirmed":   true,
-			"disarmed":              true,
-			"motors_safe":           true,
-		},
-	}
-	if blockers := hoverMissionBlockers(mission); len(blockers) != 0 {
-		t.Fatalf("blockers = %#v, want none for completed mission with post-landing external_nav_ready=false", blockers)
+	for _, fsmState := range []string{"S12 landing_complete", "S13 task_success"} {
+		mission := map[string]any{
+			"ok":                   true,
+			"reason":               "hover_complete",
+			"mission_fsm_state":    fsmState,
+			"require_external_nav": true,
+			"external_nav_ready":   false,
+			"phases_seen":          []any{"guided", "arm", "takeoff", "hover_hold", "complete"},
+			"guided_seen":          true,
+			"armed_seen":           true,
+			"airborne_seen":        true,
+			"local_position_count": float64(10),
+			"setpoints_sent_count": float64(10),
+			"target_alt_m":         float64(0.5),
+			"current_z_ned":        float64(-0.45),
+			"altitude_error_m":     float64(0.01),
+			"hover_altitude_crosscheck": map[string]any{
+				"sample_count": float64(3),
+				"ok":           true,
+			},
+			"takeoff_ack_ok": true,
+			"hover_hold_sec": float64(18),
+			"hover_drift": map[string]any{
+				"sample_count": float64(3),
+				"duration_sec": float64(18),
+				"ok":           true,
+				"quality":      "tight",
+			},
+			"hover_body_ok": true,
+			"landing_ok":    true,
+			"landing": map[string]any{
+				"ok":                    true,
+				"land_command_accepted": true,
+				"touchdown_confirmed":   true,
+				"disarmed":              true,
+				"motors_safe":           true,
+			},
+		}
+		if blockers := hoverMissionBlockers(mission); len(blockers) != 0 {
+			t.Fatalf("state=%q blockers = %#v, want none for completed mission with post-landing external_nav_ready=false", fsmState, blockers)
+		}
 	}
 }
 
@@ -607,16 +609,20 @@ func TestSummarizeHoverXYAlignmentComparesFourSources(t *testing.T) {
 		t.Fatalf("xy alignment = %#v, want ok", summary)
 	}
 	sources := mapFromAny(summary["sources"])
-	for _, key := range []string{"gazebo_model_odometry", "fcu_local_position_pose", "external_nav_odom", "slam_odom_corrected"} {
+	for _, key := range []string{"gazebo_model_odometry", "fcu_local_position_pose", "external_nav_odom_candidate", "slam_odom_corrected", "external_nav_odom"} {
 		source := mapFromAny(sources[key])
 		if got := metricInt(source, "sample_count"); got != 3 {
 			t.Fatalf("%s sample_count = %d, want 3: %#v", key, got, source)
 		}
 	}
 	pairwise := mapFromAny(summary["pairwise"])
-	pair := mapFromAny(pairwise["gazebo_model_odometry__external_nav_odom"])
+	pair := mapFromAny(pairwise["gazebo_model_odometry__external_nav_odom_candidate"])
 	if got := metricFloat(pair, "direction_cosine"); math.Abs(got-1.0) > 1e-9 {
 		t.Fatalf("direction cosine = %v, want 1: %#v", got, pair)
+	}
+	protocolPair := mapFromAny(pairwise["gazebo_model_odometry__external_nav_odom"])
+	if got := metricFloat(protocolPair, "direction_cosine"); math.Abs(got-1.0) > 1e-9 {
+		t.Fatalf("protocol direction cosine = %v, want 1 after ExternalNav projection: %#v", got, protocolPair)
 	}
 	if usedTruth, _ := summary["uses_gazebo_truth_input"].(bool); usedTruth {
 		t.Fatalf("Gazebo must remain review-only, not runtime input: %#v", summary)
@@ -705,8 +711,8 @@ func TestSummarizeHoverXYAlignmentFlagsDirectionMismatch(t *testing.T) {
 		t.Fatalf("xy alignment = %#v, want mismatch", summary)
 	}
 	blockers := testStringSliceFromAny(summary["blockers"])
-	if !stringSliceContains(blockers, "hover_xy_alignment_direction_mismatch:gazebo_model_odometry__external_nav_odom") {
-		t.Fatalf("blockers = %#v, want external nav mismatch", blockers)
+	if !stringSliceContains(blockers, "hover_xy_alignment_direction_mismatch:gazebo_model_odometry__external_nav_odom_candidate") {
+		t.Fatalf("blockers = %#v, want external nav candidate mismatch", blockers)
 	}
 }
 
@@ -715,13 +721,13 @@ func TestHoverXYAlignmentBlockersPromoteEvidenceDisagreement(t *testing.T) {
 		"ok": false,
 		"blockers": []any{
 			"hover_xy_evidence_disagreement",
-			"hover_xy_alignment_direction_mismatch:gazebo_model_odometry__external_nav_odom",
+			"hover_xy_alignment_direction_mismatch:gazebo_model_odometry__external_nav_odom_candidate",
 		},
 	})
 
 	for _, want := range []string{
 		"hover_xy_evidence_disagreement",
-		"hover_xy_alignment_direction_mismatch:gazebo_model_odometry__external_nav_odom",
+		"hover_xy_alignment_direction_mismatch:gazebo_model_odometry__external_nav_odom_candidate",
 	} {
 		if !stringSliceContains(blockers, want) {
 			t.Fatalf("blockers = %#v, want %s", blockers, want)
@@ -970,6 +976,7 @@ func writeHoverXYAlignmentMCAP(t *testing.T, path string, mismatch bool) {
 		{ID: 3, SchemaID: 3, Topic: "/navlab/fcu/local_position_pose", MessageEncoding: "cdr"},
 		{ID: 4, SchemaID: 1, Topic: "/external_nav/odom", MessageEncoding: "cdr"},
 		{ID: 5, SchemaID: 1, Topic: "/slam/odom_corrected", MessageEncoding: "cdr"},
+		{ID: 6, SchemaID: 1, Topic: "/external_nav/odom_candidate", MessageEncoding: "cdr"},
 	}
 	for _, channel := range channels {
 		if err := writer.WriteChannel(channel); err != nil {
@@ -987,16 +994,17 @@ func writeHoverXYAlignmentMCAP(t *testing.T, path string, mismatch bool) {
 	for idx := 10; idx <= 12; idx++ {
 		dx := 0.1 * float64(idx-10)
 		dy := 0.05 * float64(idx-10)
-		externalX := dx
+		externalX := -dx
 		externalY := dy
 		if mismatch {
-			externalX = -dx
+			externalX = dx
 			externalY = -dy
 		}
 		writeMsg(1, uint64(idx), gateTestOdometryCDR(dx, dy, 0))
 		writeMsg(3, uint64(idx), gateTestPoseStampedCDR(dx*0.98, dy*0.98, 0))
 		writeMsg(4, uint64(idx), gateTestOdometryCDR(externalX, externalY, 0))
 		writeMsg(5, uint64(idx), gateTestOdometryCDR(dx*1.02, dy*1.02, 0))
+		writeMsg(6, uint64(idx), gateTestOdometryCDR(externalX, externalY, 0))
 	}
 	writeMsg(2, 12, gateTestStringCDR(`{"phase":"hover_hold"}`))
 	if err := writer.Close(); err != nil {

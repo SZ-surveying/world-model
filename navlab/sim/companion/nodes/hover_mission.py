@@ -1744,7 +1744,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                 command_due=now >= self._next_land_command,
             ):
                 self._landing_state = "land_command_sent"
-                if not self._land_command_sent:
+                first_land_command = not self._land_command_sent
+                if first_land_command:
                     self._land_command_sent_time = now
                     self._mode_before_land = self._current_custom_mode
                     self._request_fcu_land_params()
@@ -1752,6 +1753,13 @@ def run(argv: Sequence[str] | None = None) -> int:
                 self._count_sent_command("land")
                 self._land_command_sent = True
                 self._next_land_command = now + 2.0
+                if first_land_command:
+                    self._record_mission_fsm(
+                        now,
+                        mission_fsm_state_for_landing_state(self._landing_state),
+                        "command_land",
+                        guard=self._landing_state,
+                    )
             if command_ack_rejected(self._command_acks, mavlink.MAV_CMD_NAV_LAND):
                 self._landing_blockers.append("landing_command_rejected")
                 self._record_mission_fsm(
@@ -1820,9 +1828,15 @@ def run(argv: Sequence[str] | None = None) -> int:
                     "landing_complete",
                     guard=self._landing_state,
                 )
-                self.write_summary(
-                    ok=self._hover_body_ok and landing_ok, reason=self._hover_body_reason, landing_ok=True
-                )
+                final_ok = self._hover_body_ok and landing_ok
+                if final_ok:
+                    self._record_mission_fsm(
+                        now,
+                        "S13 task_success",
+                        "task_success",
+                        guard="task_success",
+                    )
+                self.write_summary(ok=final_ok, reason=self._hover_body_reason, landing_ok=True)
                 rclpy.try_shutdown()
 
         def _send_hold_setpoint(self, now: float) -> None:

@@ -62,60 +62,18 @@ func ExternalNavBridgeParamsOverride(spec SlamRuntimeSpec) string {
 	if externalNavInputOdomTopic == "" {
 		externalNavInputOdomTopic = spec.SlamOdomTopic
 	}
-	return fmt.Sprintf(`navlab_external_nav_bridge_node:
-  ros__parameters:
-    odom_timeout_ms: 500
-    imu_timeout_ms: 500
-    scan_timeout_ms: 1000
-    height_timeout_ms: 2000
-    require_imu_for_output: false
-    require_height_for_output: true
-    require_imu_for_quality: %t
-    require_scan_for_quality: %t
-    slam_quality_gate_enabled: true
-    low_observability_mode: %t
-    input_odom_topic: %s
-    imu_topic: %s
-    scan_topic: %s
-    height_topic: /height/estimate
-    max_height_covariance: 4.0
-    min_odom_rate_hz: 4.0
-    min_imu_rate_hz: 4.0
-    min_scan_rate_hz: 2.0
-    max_position_jump_m: 0.75
-    max_yaw_jump_rad: 0.75
-    jump_hold_ms: 2000
-    min_observable_horizontal_span_m: 0.10
-    min_scan_valid_ratio_for_quality: 0.50
-    min_scan_hit_ratio_for_quality: 0.25
-    min_scan_range_span_m_for_quality: 1.0
-    min_scan_range_stddev_m_for_quality: 0.20
-    min_scan_observed_quadrants_for_quality: 3
-    scan_max_range_hit_margin_m: 0.05
-    output_odom_topic: /external_nav/odom
-    status_topic: %s
-    output_frame_id: external_nav
-    output_child_frame_id: %s
-    ap_tf_topic: /ap/tf
-    ap_tf_parent_frame: %s
-    ap_tf_child_frame: %s
-    expected_odom_frame_id: %s
-    expected_odom_child_frame_id: %s
-    coordinate_mode: pass_through_enu_flu
-`,
-		spec.RequireIMUForQuality,
-		spec.RequireScanForQuality,
-		spec.LowObservabilityMode,
-		externalNavInputOdomTopic,
-		spec.IMUTopic,
-		spec.ScanTopic,
-		spec.ExternalNavStatusTopic,
-		spec.BaseFrameID,
-		spec.OdomFrameID,
-		spec.BaseFrameID,
-		spec.MapFrameID,
-		spec.BaseFrameID,
-	)
+	return mustRenderHelperTemplate("yaml/external_nav_bridge_params.yaml.tmpl", map[string]any{
+		"RequireIMUForQuality":  spec.RequireIMUForQuality,
+		"RequireScanForQuality": spec.RequireScanForQuality,
+		"LowObservabilityMode":  spec.LowObservabilityMode,
+		"InputOdomTopic":        externalNavInputOdomTopic,
+		"IMUTopic":              spec.IMUTopic,
+		"ScanTopic":             spec.ScanTopic,
+		"StatusTopic":           spec.ExternalNavStatusTopic,
+		"BaseFrameID":           spec.BaseFrameID,
+		"OdomFrameID":           spec.OdomFrameID,
+		"MapFrameID":            spec.MapFrameID,
+	})
 }
 
 type SlamContainerSpec struct {
