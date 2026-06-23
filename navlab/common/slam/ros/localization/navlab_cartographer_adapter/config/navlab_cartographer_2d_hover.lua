@@ -38,7 +38,10 @@ MAP_BUILDER.use_trajectory_builder_2d = true
 
 TRAJECTORY_BUILDER_2D.min_range = 0.05
 TRAJECTORY_BUILDER_2D.max_range = 8
-TRAJECTORY_BUILDER_2D.missing_data_ray_length = 8
+-- Hover uses a simulated X2 scan stream with explicit no-return beams. Letting
+-- Cartographer clear 8 m for every no-return creates impossible free-space
+-- wedges behind nearby maze walls, so no-return rays only clear the near field.
+TRAJECTORY_BUILDER_2D.missing_data_ray_length = 0.1
 TRAJECTORY_BUILDER_2D.use_imu_data = true
 -- Keep the hover profile scan-led: a high prior weight can let the
 -- extrapolator hold pose nearly fixed while the LiDAR ranges visibly change.

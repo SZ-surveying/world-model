@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import threading
 import time
 from pathlib import Path
@@ -22,6 +23,7 @@ from navlab.sim.gazebo_sensor.scan_time_normalizer import (
     DEFAULT_STATUS_TOPIC,
     build_status_payload,
     monotonic_scan_stamp_ns,
+    normalize_no_return_ranges,
     select_scan_stamp_ns,
     should_zero_scan_time_increment,
 )
@@ -246,6 +248,18 @@ def test_scan_time_normalizer_zeroes_time_increment_for_trusted_anchors() -> Non
     assert should_zero_scan_time_increment("clock")
     assert should_zero_scan_time_increment("input_scan_stamp")
     assert not should_zero_scan_time_increment("wall_elapsed_fallback")
+
+
+def test_scan_time_normalizer_marks_max_range_returns_as_no_return() -> None:
+    ranges = normalize_no_return_ranges([0.2, 7.94, 7.95, 8.0, 8.1, math.inf, math.nan], range_max=8.0)
+
+    assert ranges[0] == 0.2
+    assert ranges[1] == 7.94
+    assert math.isinf(ranges[2])
+    assert math.isinf(ranges[3])
+    assert math.isinf(ranges[4])
+    assert math.isinf(ranges[5])
+    assert math.isnan(ranges[6])
 
 
 def test_scan_time_normalizer_advances_by_scan_duration_when_clock_repeats() -> None:

@@ -40,9 +40,6 @@ func GenerateRuntimeArtifacts(
 		}
 		path := filepath.Join(artifactDir, "official_maze_overlay_runtime.py")
 		mazeOverlaySpec := helpers.DefaultOfficialMazeOverlaySpec()
-		if plan.TaskID == "hover" {
-			mazeOverlaySpec.AliasTopics = []string{"/map"}
-		}
 		if err := helpers.WriteOfficialMazeOverlayRuntimeScript(path, mazeSource, mazeOverlaySpec); err != nil {
 			return nil, err
 		}

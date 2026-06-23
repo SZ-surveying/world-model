@@ -153,6 +153,41 @@ func TestUploadForcesLiteSelection(t *testing.T) {
 	}
 }
 
+func TestPrintTargetsUsesReadableSections(t *testing.T) {
+	var stdout strings.Builder
+	printTargets(&stdout, "Foxglove Upload Targets", Result{
+		RunID:  "20260622T123922Z",
+		TaskID: "hover",
+		RunDir: "/tmp/navlab/run",
+		Lite:   true,
+		Files: []UploadTarget{{
+			Kind:     "mcap",
+			Path:     "/tmp/navlab/run/rosbag_foxglove/rosbag_foxglove_0.mcap",
+			Filename: "navlab_hover_20260622T123922Z_lite_8a9ece543cbc.mcap",
+			Key:      "navlab/sim/hover/20260622T123922Z/rosbag_foxglove_0_8a9ece543cbc.mcap",
+			Bytes:    2_575_812,
+		}},
+	})
+	output := stdout.String()
+	for _, want := range []string{
+		"Foxglove Upload Targets",
+		"run_id=20260622T123922Z",
+		"mode=lite",
+		"Files",
+		"- mcap",
+		"2.5 MiB",
+		"key=navlab/sim/hover/20260622T123922Z/rosbag_foxglove_0_8a9ece543cbc.mcap",
+		"path=/tmp/navlab/run/rosbag_foxglove/rosbag_foxglove_0.mcap",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("formatted upload targets missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "\tmcap\t") || strings.Contains(output, "\t2575812\t") {
+		t.Fatalf("formatted upload targets still look like a tab table:\n%s", output)
+	}
+}
+
 func TestUploadWritesFailureSummaryOnUploadError(t *testing.T) {
 	repoRoot := t.TempDir()
 	runDir := filepath.Join(repoRoot, "artifacts", "sim", "hover", "20260614T010000Z")

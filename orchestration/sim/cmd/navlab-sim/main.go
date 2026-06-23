@@ -413,13 +413,29 @@ func foxgloveUpload(
 	if err != nil {
 		return err
 	}
-	fmt.Println(ui.Title("Foxglove Upload"))
-	fmt.Println(ui.KeyValue("state", result.State))
+	fmt.Println()
+	fmt.Println(ui.Title("Foxglove Upload Result"))
+	if result.State == "uploaded" {
+		fmt.Println(ui.StatusOK("uploaded to Foxglove"))
+	} else {
+		fmt.Println(ui.KeyValue("state", result.State))
+	}
 	fmt.Println(ui.KeyValue("run_id", result.RunID))
 	fmt.Println(ui.KeyValue("task_id", result.TaskID))
-	fmt.Println(ui.KeyValue("lite", result.Lite))
-	fmt.Println(ui.KeyValue("files", len(result.Files)))
+	fmt.Println(ui.KeyValue("mode", uploadModeLabel(result.Lite)))
+	if len(result.Uploaded) > 0 {
+		fmt.Println(ui.KeyValue("uploaded_files", len(result.Uploaded)))
+	} else {
+		fmt.Println(ui.KeyValue("target_files", len(result.Files)))
+	}
 	return nil
+}
+
+func uploadModeLabel(lite bool) string {
+	if lite {
+		return "lite"
+	}
+	return "raw"
 }
 
 func foxgloveBuildReplay(

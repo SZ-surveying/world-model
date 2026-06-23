@@ -89,20 +89,22 @@ type CropSummary struct {
 }
 
 type ReplayMCAPSummary struct {
-	Path                  string               `json:"path"`
-	RawMCAPPath           string               `json:"raw_mcap_path"`
-	RawMCAPSizeBytes      int64                `json:"raw_mcap_size_bytes"`
-	FoxgloveMCAPSizeBytes int64                `json:"foxglove_mcap_size_bytes"`
-	SizeReductionRatio    float64              `json:"size_reduction_ratio"`
-	RequiredTopics        []string             `json:"required_topics"`
-	MissingTopics         []string             `json:"missing_topics"`
-	PresentTopics         []string             `json:"present_topics"`
-	MessageCounts         map[string]int       `json:"message_counts"`
-	ConfiguredDropTopics  []string             `json:"configured_drop_topics"`
-	RetainedTopics        []string             `json:"retained_topics"`
-	DerivedTopics         []derivedScanProfile `json:"derived_topics,omitempty"`
-	DerivedDisplayTFs     []derivedTFProfile   `json:"derived_display_tfs,omitempty"`
-	DownsampledTopics     map[string]any       `json:"downsampled_topics"`
+	Path                  string                `json:"path"`
+	RawMCAPPath           string                `json:"raw_mcap_path"`
+	RawMCAPSizeBytes      int64                 `json:"raw_mcap_size_bytes"`
+	FoxgloveMCAPSizeBytes int64                 `json:"foxglove_mcap_size_bytes"`
+	SizeReductionRatio    float64               `json:"size_reduction_ratio"`
+	RequiredTopics        []string              `json:"required_topics"`
+	MissingTopics         []string              `json:"missing_topics"`
+	PresentTopics         []string              `json:"present_topics"`
+	MessageCounts         map[string]int        `json:"message_counts"`
+	ConfiguredDropTopics  []string              `json:"configured_drop_topics"`
+	RetainedTopics        []string              `json:"retained_topics"`
+	FrameRewrites         []frameRewriteProfile `json:"frame_rewrites,omitempty"`
+	DerivedTopics         []derivedScanProfile  `json:"derived_topics,omitempty"`
+	DerivedDisplayTFs     []derivedTFProfile    `json:"derived_display_tfs,omitempty"`
+	DerivedMapTFs         []derivedMapTFProfile `json:"derived_map_tfs,omitempty"`
+	DownsampledTopics     map[string]any        `json:"downsampled_topics"`
 }
 
 type TruthBoundary struct {
@@ -133,6 +135,17 @@ func (gate TaskSummaryGate) reason() string {
 type replayInputScan struct {
 	RawCounts     map[string]int
 	PresentTopics []string
+}
+
+type occupancyGridInfo struct {
+	FrameID    string
+	Width      uint32
+	Height     uint32
+	Resolution float32
+	OriginX    float64
+	OriginY    float64
+	DataHash   string
+	Occupied   int
 }
 
 type mcapReadCloser struct {
@@ -315,12 +328,14 @@ func buildReplayUnchecked(result ReplayResult, profile liteTopicProfile, options
 		if err := os.MkdirAll(filepath.Dir(result.ReplayMCAP), 0o755); err != nil {
 			return result, err
 		}
-		derivedTopics, derivedTFs, err := writeLiteMCAP(result.RawMCAP, result.ReplayMCAP, profile)
+		derivedTopics, derivedTFs, derivedMapTFs, err := writeLiteMCAP(result.RawMCAP, result.ReplayMCAP, profile)
 		if err != nil {
 			return result, err
 		}
+		result.ReplayMCAPInfo.FrameRewrites = profile.FrameRewrites
 		result.ReplayMCAPInfo.DerivedTopics = derivedTopics
 		result.ReplayMCAPInfo.DerivedDisplayTFs = derivedTFs
+		result.ReplayMCAPInfo.DerivedMapTFs = derivedMapTFs
 	}
 
 	var counts map[string]int
@@ -390,63 +405,162 @@ func inspectOverlayOccupancyGrid(path string, topic string) (OverlaySummary, err
 		if channel.Topic != topic {
 			continue
 		}
-		width, height, resolution, occupied, err := parseOccupancyGridCDR(message.Data)
+		grid, err := parseOccupancyGridInfoCDR(message.Data)
 		if err != nil {
 			return OverlaySummary{}, err
 		}
 		return OverlaySummary{
 			Topic:         topic,
-			FrameID:       "map",
+			FrameID:       grid.FrameID,
 			Role:          "visualization_only",
 			Scale:         1,
-			ResolutionM:   float64(resolution),
-			Width:         int(width),
-			Height:        int(height),
-			OccupiedCells: occupied,
+			ResolutionM:   float64(grid.Resolution),
+			Width:         int(grid.Width),
+			Height:        int(grid.Height),
+			OccupiedCells: grid.Occupied,
 		}, nil
 	}
 	return OverlaySummary{}, fmt.Errorf("overlay topic not found: %s", topic)
 }
 
-func parseOccupancyGridCDR(data []byte) (uint32, uint32, float32, int, error) {
+func parseOccupancyGridInfoCDR(data []byte) (occupancyGridInfo, error) {
 	cursor := cdrCursor{data: data}
 	if err := cursor.skip(4); err != nil {
-		return 0, 0, 0, 0, err
+		return occupancyGridInfo{}, err
 	}
 	if _, err := cursor.int32(); err != nil {
-		return 0, 0, 0, 0, err
+		return occupancyGridInfo{}, err
 	}
 	if _, err := cursor.uint32(); err != nil {
-		return 0, 0, 0, 0, err
+		return occupancyGridInfo{}, err
 	}
-	if err := cursor.string(); err != nil {
-		return 0, 0, 0, 0, err
+	frameID, err := cursor.stringValue()
+	if err != nil {
+		return occupancyGridInfo{}, err
 	}
-	for candidate := cursor.off; candidate <= cursor.off+32 && candidate+72 <= len(data); candidate += 4 {
-		resolution := math.Float32frombits(binary.LittleEndian.Uint32(data[candidate : candidate+4]))
-		width := binary.LittleEndian.Uint32(data[candidate+4 : candidate+8])
-		height := binary.LittleEndian.Uint32(data[candidate+8 : candidate+12])
-		dataLenOffset := alignCDROffset(candidate+12, 8) + 56
-		dataLen := binary.LittleEndian.Uint32(data[dataLenOffset : dataLenOffset+4])
-		dataStart := dataLenOffset + 4
-		if resolution <= 0 || resolution > 10 || width == 0 || height == 0 {
+	if _, err := cursor.int32(); err != nil {
+		return occupancyGridInfo{}, err
+	}
+	if _, err := cursor.uint32(); err != nil {
+		return occupancyGridInfo{}, err
+	}
+	resolution, err := cursor.float32()
+	if err != nil {
+		return occupancyGridInfo{}, err
+	}
+	width, err := cursor.uint32()
+	if err != nil {
+		return occupancyGridInfo{}, err
+	}
+	height, err := cursor.uint32()
+	if err != nil {
+		return occupancyGridInfo{}, err
+	}
+	originX, err := cursor.float64()
+	if err != nil {
+		return occupancyGridInfo{}, err
+	}
+	originY, err := cursor.float64()
+	if err != nil {
+		return occupancyGridInfo{}, err
+	}
+	if _, err := cursor.float64(); err != nil {
+		return occupancyGridInfo{}, err
+	}
+	for index := 0; index < 4; index++ {
+		if _, err := cursor.float64(); err != nil {
+			return occupancyGridInfo{}, err
+		}
+	}
+	dataLen, err := cursor.uint32()
+	if err != nil {
+		return occupancyGridInfo{}, err
+	}
+	if dataLen != width*height {
+		return occupancyGridInfo{}, fmt.Errorf("occupancy grid data length %d does not match %dx%d", dataLen, width, height)
+	}
+	if int(dataLen) > cursor.remaining() {
+		return occupancyGridInfo{}, io.ErrUnexpectedEOF
+	}
+	cells := cursor.data[cursor.off : cursor.off+int(dataLen)]
+	occupied := 0
+	for _, value := range cells {
+		if int8(value) > 50 {
+			occupied++
+		}
+	}
+	digest := sha256.Sum256(cells)
+	return occupancyGridInfo{
+		FrameID:    frameID,
+		Width:      width,
+		Height:     height,
+		Resolution: resolution,
+		OriginX:    originX,
+		OriginY:    originY,
+		DataHash:   hex.EncodeToString(digest[:]),
+		Occupied:   occupied,
+	}, nil
+}
+
+func collectOverlayGridFingerprints(rawPath string, topics []string) map[string]bool {
+	topicSet := map[string]bool{}
+	for _, topic := range topics {
+		topicSet[topic] = true
+	}
+	if len(topicSet) == 0 {
+		return nil
+	}
+	source, err := openMCAP(rawPath)
+	if err != nil {
+		return nil
+	}
+	defer source.close()
+	fingerprints := map[string]bool{}
+	it, err := source.reader.Messages(mcap.UsingIndex(false))
+	if err != nil {
+		return nil
+	}
+	for {
+		_, channel, message, err := it.Next(nil) //nolint:staticcheck
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fingerprints
+		}
+		if channel == nil || !topicSet[channel.Topic] {
 			continue
 		}
-		if int(dataLen) > len(data)-dataStart {
+		grid, err := parseOccupancyGridInfoCDR(message.Data)
+		if err != nil {
 			continue
 		}
-		if dataLen != width*height {
-			continue
-		}
-		occupied := 0
-		for _, value := range data[dataStart : dataStart+int(dataLen)] {
-			if int8(value) > 50 {
-				occupied++
-			}
-		}
-		return width, height, resolution, occupied, nil
+		fingerprints[occupancyGridFingerprint(grid)] = true
 	}
-	return 0, 0, 0, 0, errors.New("nav_msgs/OccupancyGrid CDR metadata not found")
+	return fingerprints
+}
+
+func isOfficialMapAlias(topic string, data []byte, overlayGridFingerprints map[string]bool) bool {
+	if topic != "/map" || len(overlayGridFingerprints) == 0 {
+		return false
+	}
+	grid, err := parseOccupancyGridInfoCDR(data)
+	if err != nil {
+		return false
+	}
+	return overlayGridFingerprints[occupancyGridFingerprint(grid)]
+}
+
+func occupancyGridFingerprint(grid occupancyGridInfo) string {
+	return fmt.Sprintf("%s|%d|%d|%.9g|%.6f|%.6f|%s",
+		grid.FrameID,
+		grid.Width,
+		grid.Height,
+		grid.Resolution,
+		grid.OriginX,
+		grid.OriginY,
+		grid.DataHash,
+	)
 }
 
 func alignCDROffset(offset int, size int) int {
@@ -528,41 +642,46 @@ func (cursor *cdrCursor) stringValue() (string, error) {
 	return string(raw), nil
 }
 
-func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) ([]derivedScanProfile, []derivedTFProfile, error) {
+func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) ([]derivedScanProfile, []derivedTFProfile, []derivedMapTFProfile, error) {
+	overlayGridFingerprints := collectOverlayGridFingerprints(rawPath, profile.Overlay)
 	source, err := openMCAP(rawPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer source.close()
 	dst, err := os.Create(outputPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer func() { _ = dst.Close() }()
 	writer, err := mcap.NewWriter(dst, &mcap.WriterOptions{Chunked: true, Compression: mcap.CompressionLZ4})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	header := source.reader.Header()
 	if header == nil {
 		header = &mcap.Header{}
 	}
 	if err := writer.WriteHeader(&mcap.Header{Profile: header.Profile, Library: "navlab-sim foxglove-lite"}); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	retain := retainIntervals(profile)
 	derivedStates := newDerivedScanStates(profile)
 	derivedTFStates := newDerivedTFStates(profile)
+	derivedMapTFStates := newDerivedMapTFStates(profile)
+	frameRewrites := frameRewriteMap(profile.FrameRewrites)
 	replaceEdges := derivedTFReplaceEdges(derivedTFStates)
 	writtenSchemas := map[uint16]bool{}
 	writtenChannels := map[uint16]bool{}
 	lastWritten := map[string]uint64{}
+	var latestScan *laserScanCDR
+	var latestSlamBase *decodedTransform
 	var maxSchemaID uint16
 	var maxChannelID uint16
 	it, err := source.reader.Messages(mcap.UsingIndex(false))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	for {
 		schema, channel, message, err := it.Next(nil) //nolint:staticcheck
@@ -570,7 +689,7 @@ func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) 
 			break
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if schema != nil && schema.ID > maxSchemaID {
 			maxSchemaID = schema.ID
@@ -580,7 +699,29 @@ func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) 
 		}
 		for _, state := range derivedTFStates {
 			if err := state.maybeCollect(channel, message); err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
+			}
+		}
+		for _, state := range derivedMapTFStates {
+			if err := state.maybeCollect(channel, message); err != nil {
+				return nil, nil, nil, err
+			}
+		}
+		if channel.Topic == "/scan" {
+			scan, err := parseLaserScanCDR(message.Data)
+			if err == nil {
+				latestScan = &scan
+			}
+		}
+		if channel.Topic == "/navlab/slam/tf" {
+			transforms, err := decodeTFMessageCDR(message.Data)
+			if err == nil {
+				for _, transform := range transforms {
+					if transform.Parent == "map" && transform.Child == "base_link" {
+						current := transform
+						latestSlamBase = &current
+					}
+				}
 			}
 		}
 		interval, ok := retain[channel.Topic]
@@ -593,10 +734,20 @@ func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) 
 			}
 		}
 		data := append([]byte(nil), message.Data...)
+		if isOfficialMapAlias(channel.Topic, data, overlayGridFingerprints) {
+			continue
+		}
+		if rewrite, ok := frameRewrites[channel.Topic]; ok {
+			rewritten, err := rewriteFrameData(data, rewrite, latestScan, latestSlamBase)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("rewrite frame for %s: %w", channel.Topic, err)
+			}
+			data = rewritten
+		}
 		if edges := replaceEdges[channel.Topic]; len(edges) > 0 {
 			filtered, keep, err := filterTFMessageCDR(data, edges)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			if !keep {
 				continue
@@ -605,13 +756,13 @@ func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) 
 		}
 		if schema != nil && !writtenSchemas[schema.ID] {
 			if err := writer.WriteSchema(copySchema(schema, schema.ID)); err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			writtenSchemas[schema.ID] = true
 		}
 		if !writtenChannels[channel.ID] {
 			if err := writer.WriteChannel(copyChannel(channel, channel.ID)); err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			writtenChannels[channel.ID] = true
 		}
@@ -622,24 +773,371 @@ func writeLiteMCAP(rawPath string, outputPath string, profile liteTopicProfile) 
 			PublishTime: message.PublishTime,
 			Data:        data,
 		}); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		for _, state := range derivedStates {
 			if err := state.maybeCollect(schema, channel, message); err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 		}
 		lastWritten[channel.Topic] = message.LogTime
 	}
 	derivedTopics, nextSchemaID, nextChannelID, err := writeDerivedScanOutputs(writer, derivedStates, maxSchemaID+1, maxChannelID+1)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	derivedTFs, err := writeDerivedTFOutputs(writer, derivedTFStates, nextSchemaID, nextChannelID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return derivedTopics, derivedTFs, writer.Close()
+	derivedMapTFs, err := writeDerivedMapTFOutputs(writer, derivedMapTFStates, nextSchemaID+uint16(len(derivedTFStates)), nextChannelID+uint16(len(derivedTFStates)))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return derivedTopics, derivedTFs, derivedMapTFs, writer.Close()
+}
+
+func frameRewriteMap(rewrites []frameRewriteProfile) map[string]frameRewriteProfile {
+	values := map[string]frameRewriteProfile{}
+	for _, rewrite := range rewrites {
+		if rewrite.Topic != "" && (rewrite.FrameID != "" || rewrite.FlipX || rewrite.FlipY || rewrite.ScanFreeSpace) {
+			values[rewrite.Topic] = rewrite
+		}
+	}
+	return values
+}
+
+func rewriteFrameData(data []byte, rewrite frameRewriteProfile, scan *laserScanCDR, slamBase *decodedTransform) ([]byte, error) {
+	if rewrite.FlipX || rewrite.FlipY || rewrite.ScanFreeSpace || rewrite.ScanCrop || rewrite.CropToKnown {
+		return rewriteOccupancyGridFrameAndData(data, rewrite, scan, slamBase)
+	}
+	if rewrite.FrameID == "" {
+		return data, nil
+	}
+	return replaceROS2HeaderFrameID(data, rewrite.FrameID)
+}
+
+func rewriteOccupancyGridFrameAndData(data []byte, rewrite frameRewriteProfile, scan *laserScanCDR, slamBase *decodedTransform) ([]byte, error) {
+	out := append([]byte(nil), data...)
+	var err error
+	if rewrite.FrameID != "" {
+		out, err = replaceROS2HeaderFrameID(out, rewrite.FrameID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	cursor := cdrCursor{data: out}
+	if err := cursor.skip(4); err != nil {
+		return nil, err
+	}
+	if _, err := cursor.int32(); err != nil {
+		return nil, err
+	}
+	if _, err := cursor.uint32(); err != nil {
+		return nil, err
+	}
+	if _, err := cursor.stringValue(); err != nil {
+		return nil, err
+	}
+	if _, err := cursor.int32(); err != nil {
+		return nil, err
+	}
+	if _, err := cursor.uint32(); err != nil {
+		return nil, err
+	}
+	cursor.align(4)
+	resolution, err := cursor.float32()
+	if err != nil {
+		return nil, err
+	}
+	cursor.align(4)
+	widthOffset := cursor.off
+	width, err := cursor.uint32()
+	if err != nil {
+		return nil, err
+	}
+	cursor.align(4)
+	heightOffset := cursor.off
+	height, err := cursor.uint32()
+	if err != nil {
+		return nil, err
+	}
+	cursor.align(8)
+	originXOffset := cursor.off
+	originX, err := cursor.float64()
+	if err != nil {
+		return nil, err
+	}
+	originYOffset := cursor.off
+	originY, err := cursor.float64()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := cursor.float64(); err != nil {
+		return nil, err
+	}
+	for index := 0; index < 4; index++ {
+		if _, err := cursor.float64(); err != nil {
+			return nil, err
+		}
+	}
+	cursor.align(4)
+	dataLenOffset := cursor.off
+	dataLen, err := cursor.uint32()
+	if err != nil {
+		return nil, err
+	}
+	dataStart := cursor.off
+	if dataLen != width*height {
+		return nil, fmt.Errorf("occupancy grid data length %d does not match %dx%d", dataLen, width, height)
+	}
+	if int(dataLen) > cursor.remaining() {
+		return nil, io.ErrUnexpectedEOF
+	}
+	cells := cursor.data[dataStart : dataStart+int(dataLen)]
+	rewritten := append([]byte(nil), cells...)
+	for y := uint32(0); y < height; y++ {
+		for x := uint32(0); x < width; x++ {
+			sourceX, sourceY := x, y
+			if rewrite.FlipX {
+				sourceX = width - 1 - sourceX
+			}
+			if rewrite.FlipY {
+				sourceY = height - 1 - sourceY
+			}
+			rewritten[y*width+x] = cells[sourceY*width+sourceX]
+		}
+	}
+	copy(cells, rewritten)
+	if rewrite.FlipX {
+		originX = -originX - float64(width)*float64(resolution)
+		binary.LittleEndian.PutUint64(out[originXOffset:originXOffset+8], math.Float64bits(originX))
+	}
+	if rewrite.FlipY {
+		originY = -originY - float64(height)*float64(resolution)
+		binary.LittleEndian.PutUint64(out[originYOffset:originYOffset+8], math.Float64bits(originY))
+	}
+	if rewrite.ScanFreeSpace && scan != nil && slamBase != nil {
+		applyScanFreeSpaceToGrid(cells, width, height, float64(resolution), originX, originY, *scan, *slamBase)
+	}
+	if rewrite.ScanCrop && scan != nil && slamBase != nil {
+		applyScanCropToGrid(cells, width, height, float64(resolution), originX, originY, *scan, *slamBase, rewrite.CropMarginM)
+	}
+	if rewrite.CropToKnown {
+		cropped, croppedWidth, croppedHeight, croppedOriginX, croppedOriginY, changed := cropGridToKnown(cells, width, height, float64(resolution), originX, originY, rewrite.CropMarginM)
+		if changed {
+			binary.LittleEndian.PutUint32(out[widthOffset:widthOffset+4], croppedWidth)
+			binary.LittleEndian.PutUint32(out[heightOffset:heightOffset+4], croppedHeight)
+			binary.LittleEndian.PutUint64(out[originXOffset:originXOffset+8], math.Float64bits(croppedOriginX))
+			binary.LittleEndian.PutUint64(out[originYOffset:originYOffset+8], math.Float64bits(croppedOriginY))
+			binary.LittleEndian.PutUint32(out[dataLenOffset:dataLenOffset+4], uint32(len(cropped)))
+			next := append([]byte(nil), out[:dataStart]...)
+			next = append(next, cropped...)
+			out = next
+		}
+	}
+	return out, nil
+}
+
+func applyScanFreeSpaceToGrid(cells []byte, width uint32, height uint32, resolution float64, originX float64, originY float64, scan laserScanCDR, slamBase decodedTransform) {
+	for index, value := range cells {
+		if int8(value) >= 0 && int8(value) <= 50 {
+			cells[index] = 0xff
+		}
+	}
+	if width == 0 || height == 0 || resolution <= 0 {
+		return
+	}
+	yaw := yawFromQuaternion(slamBase.QX, slamBase.QY, slamBase.QZ, slamBase.QW)
+	c, s := math.Cos(yaw), math.Sin(yaw)
+	originGX, originGY, ok := gridCellForPoint(slamBase.X, slamBase.Y, originX, originY, resolution, width, height)
+	if !ok {
+		return
+	}
+	rangeMin := math.Max(float64(scan.RangeMin), 0.05)
+	rangeMax := float64(scan.RangeMax) - 0.05
+	for index, raw := range scan.Ranges {
+		distance := float64(raw)
+		if math.IsNaN(distance) || math.IsInf(distance, 0) || distance < rangeMin || distance >= rangeMax {
+			continue
+		}
+		angle := float64(scan.AngleMin) + float64(index)*float64(scan.AngleIncrement)
+		localX := distance * math.Cos(angle)
+		localY := distance * math.Sin(angle)
+		hitX := slamBase.X + c*localX - s*localY
+		hitY := slamBase.Y + s*localX + c*localY
+		hitGX, hitGY, ok := gridCellForPoint(hitX, hitY, originX, originY, resolution, width, height)
+		if !ok {
+			continue
+		}
+		markFreeRay(cells, width, height, originGX, originGY, hitGX, hitGY)
+	}
+}
+
+func applyScanCropToGrid(cells []byte, width uint32, height uint32, resolution float64, originX float64, originY float64, scan laserScanCDR, slamBase decodedTransform, marginM float64) {
+	if width == 0 || height == 0 || resolution <= 0 {
+		return
+	}
+	yaw := yawFromQuaternion(slamBase.QX, slamBase.QY, slamBase.QZ, slamBase.QW)
+	c, s := math.Cos(yaw), math.Sin(yaw)
+	minX, maxX := slamBase.X, slamBase.X
+	minY, maxY := slamBase.Y, slamBase.Y
+	found := false
+	rangeMin := math.Max(float64(scan.RangeMin), 0.05)
+	rangeMax := float64(scan.RangeMax) - 0.05
+	for index, raw := range scan.Ranges {
+		distance := float64(raw)
+		if math.IsNaN(distance) || math.IsInf(distance, 0) || distance < rangeMin || distance >= rangeMax {
+			continue
+		}
+		angle := float64(scan.AngleMin) + float64(index)*float64(scan.AngleIncrement)
+		localX := distance * math.Cos(angle)
+		localY := distance * math.Sin(angle)
+		hitX := slamBase.X + c*localX - s*localY
+		hitY := slamBase.Y + s*localX + c*localY
+		minX = math.Min(minX, hitX)
+		maxX = math.Max(maxX, hitX)
+		minY = math.Min(minY, hitY)
+		maxY = math.Max(maxY, hitY)
+		found = true
+	}
+	if !found {
+		return
+	}
+	marginCells := int(math.Ceil(math.Max(marginM, 0) / resolution))
+	minGX := int(math.Floor((minX-originX)/resolution)) - marginCells
+	maxGX := int(math.Floor((maxX-originX)/resolution)) + marginCells
+	minGY := int(math.Floor((minY-originY)/resolution)) - marginCells
+	maxGY := int(math.Floor((maxY-originY)/resolution)) + marginCells
+	if minGX < 0 {
+		minGX = 0
+	}
+	if minGY < 0 {
+		minGY = 0
+	}
+	if maxGX >= int(width) {
+		maxGX = int(width) - 1
+	}
+	if maxGY >= int(height) {
+		maxGY = int(height) - 1
+	}
+	for y := 0; y < int(height); y++ {
+		for x := 0; x < int(width); x++ {
+			if x < minGX || x > maxGX || y < minGY || y > maxGY {
+				cells[y*int(width)+x] = 0xff
+			}
+		}
+	}
+}
+
+func cropGridToKnown(cells []byte, width uint32, height uint32, resolution float64, originX float64, originY float64, marginM float64) ([]byte, uint32, uint32, float64, float64, bool) {
+	if width == 0 || height == 0 || resolution <= 0 {
+		return cells, width, height, originX, originY, false
+	}
+	minX, minY := int(width), int(height)
+	maxX, maxY := -1, -1
+	for y := 0; y < int(height); y++ {
+		for x := 0; x < int(width); x++ {
+			if cells[y*int(width)+x] == 0xff {
+				continue
+			}
+			if x < minX {
+				minX = x
+			}
+			if x > maxX {
+				maxX = x
+			}
+			if y < minY {
+				minY = y
+			}
+			if y > maxY {
+				maxY = y
+			}
+		}
+	}
+	if maxX < minX || maxY < minY {
+		return cells, width, height, originX, originY, false
+	}
+	marginCells := int(math.Ceil(math.Max(marginM, 0) / resolution))
+	minX = intMax(0, minX-marginCells)
+	minY = intMax(0, minY-marginCells)
+	maxX = intMin(int(width)-1, maxX+marginCells)
+	maxY = intMin(int(height)-1, maxY+marginCells)
+	newWidth := maxX - minX + 1
+	newHeight := maxY - minY + 1
+	if newWidth == int(width) && newHeight == int(height) {
+		return cells, width, height, originX, originY, false
+	}
+	cropped := make([]byte, newWidth*newHeight)
+	for y := 0; y < newHeight; y++ {
+		copy(cropped[y*newWidth:(y+1)*newWidth], cells[(minY+y)*int(width)+minX:(minY+y)*int(width)+minX+newWidth])
+	}
+	return cropped, uint32(newWidth), uint32(newHeight), originX + float64(minX)*resolution, originY + float64(minY)*resolution, true
+}
+
+func gridCellForPoint(x float64, y float64, originX float64, originY float64, resolution float64, width uint32, height uint32) (int, int, bool) {
+	gx := int(math.Floor((x - originX) / resolution))
+	gy := int(math.Floor((y - originY) / resolution))
+	if gx < 0 || gy < 0 || gx >= int(width) || gy >= int(height) {
+		return 0, 0, false
+	}
+	return gx, gy, true
+}
+
+func markFreeRay(cells []byte, width uint32, height uint32, x0 int, y0 int, x1 int, y1 int) {
+	dx := intAbs(x1 - x0)
+	dy := -intAbs(y1 - y0)
+	sx := -1
+	if x0 < x1 {
+		sx = 1
+	}
+	sy := -1
+	if y0 < y1 {
+		sy = 1
+	}
+	err := dx + dy
+	x, y := x0, y0
+	for {
+		if x == x1 && y == y1 {
+			return
+		}
+		if x >= 0 && y >= 0 && x < int(width) && y < int(height) {
+			offset := y*int(width) + x
+			if int8(cells[offset]) <= 50 {
+				cells[offset] = 0
+			}
+		}
+		e2 := 2 * err
+		if e2 >= dy {
+			err += dy
+			x += sx
+		}
+		if e2 <= dx {
+			err += dx
+			y += sy
+		}
+	}
+}
+
+func intAbs(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func intMin(left int, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func intMax(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func scanRawMCAP(path string) (replayInputScan, error) {

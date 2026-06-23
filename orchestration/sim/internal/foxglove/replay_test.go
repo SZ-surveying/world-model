@@ -232,13 +232,56 @@ derive_display_tf /tf source=/gazebo/model/odometry parent=map child=base_link m
 	}
 }
 
+func TestLiteProfileParsesMapFrameSeparation(t *testing.T) {
+	runDir := makeRun(t, "hover", "20260615T056000Z")
+	mustWriteLiteProfile(t, runDir, "hover", `
+overlay /navlab/official_maze/map
+required /tf interval=all
+required /map interval=all
+required /slam/odom interval=all
+rewrite_frame /map frame=cartographer_map flip_y=true scan_free_space=true scan_crop=true crop_to_known=true crop_margin_m=0.25 role=visualization_only
+rewrite_frame /slam/odom frame=cartographer_map role=visualization_only
+derive_map_tf /tf display_source=/gazebo/model/odometry slam_source=/navlab/slam/tf parent=map child=cartographer_map display_parent=map display_child=base_link slam_parent=map slam_child=base_link coordinate_mode=gazebo_xyz_to_ned role=visualization_only
+`)
+
+	profile, err := readLiteTopicProfile(liteProfileFilename(t, runDir, "hover"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.FrameRewrites) != 2 {
+		t.Fatalf("frame rewrites = %#v", profile.FrameRewrites)
+	}
+	if profile.FrameRewrites[0].Topic != "/map" ||
+		profile.FrameRewrites[0].FrameID != "cartographer_map" ||
+		!profile.FrameRewrites[0].FlipY ||
+		!profile.FrameRewrites[0].ScanFreeSpace ||
+		!profile.FrameRewrites[0].ScanCrop ||
+		!profile.FrameRewrites[0].CropToKnown ||
+		profile.FrameRewrites[0].CropMarginM != 0.25 {
+		t.Fatalf("map rewrite = %#v", profile.FrameRewrites[0])
+	}
+	if len(profile.DerivedMapTFs) != 1 {
+		t.Fatalf("derived map TFs = %#v", profile.DerivedMapTFs)
+	}
+	derived := profile.DerivedMapTFs[0]
+	if derived.Topic != "/tf" ||
+		derived.DisplaySource != "/gazebo/model/odometry" ||
+		derived.SlamSource != "/navlab/slam/tf" ||
+		derived.Parent != "map" ||
+		derived.Child != "cartographer_map" ||
+		derived.CoordinateMode != "gazebo_xyz_to_ned" ||
+		derived.Role != "visualization_only" {
+		t.Fatalf("derived map TF = %#v", derived)
+	}
+}
+
 func TestWriteLiteMCAPGeneratesReplayOnlyAlignedScanFrame(t *testing.T) {
 	dir := t.TempDir()
 	rawPath := filepath.Join(dir, "raw.mcap")
 	outputPath := filepath.Join(dir, "lite.mcap")
 	writeScanReplaySourceMCAP(t, rawPath)
 
-	derived, derivedTFs, err := writeLiteMCAP(rawPath, outputPath, liteTopicProfile{
+	derived, derivedTFs, derivedMapTFs, err := writeLiteMCAP(rawPath, outputPath, liteTopicProfile{
 		Required: []string{"/scan", "/tf"},
 		Interval: map[string]float64{
 			"/scan": 0,
@@ -262,6 +305,9 @@ func TestWriteLiteMCAPGeneratesReplayOnlyAlignedScanFrame(t *testing.T) {
 	if len(derivedTFs) != 0 {
 		t.Fatalf("derived TFs = %#v", derivedTFs)
 	}
+	if len(derivedMapTFs) != 0 {
+		t.Fatalf("derived map TFs = %#v", derivedMapTFs)
+	}
 
 	evidence := inspectReplayAlignedEvidence(t, outputPath)
 	if evidence.scanFrame != "base_scan" {
@@ -284,7 +330,7 @@ func TestWriteLiteMCAPReplacesOnlyMapBaseLinkAndKeepsVehicleChildTF(t *testing.T
 	outputPath := filepath.Join(dir, "lite.mcap")
 	writeDisplayTFReplaySourceMCAP(t, rawPath)
 
-	derivedScans, derivedTFs, err := writeLiteMCAP(rawPath, outputPath, liteTopicProfile{
+	derivedScans, derivedTFs, derivedMapTFs, err := writeLiteMCAP(rawPath, outputPath, liteTopicProfile{
 		Required: []string{"/tf", "/scan"},
 		Optional: []string{"/gazebo/model/odometry"},
 		Interval: map[string]float64{
@@ -311,6 +357,9 @@ func TestWriteLiteMCAPReplacesOnlyMapBaseLinkAndKeepsVehicleChildTF(t *testing.T
 	if len(derivedTFs) != 1 || derivedTFs[0].Source != "/gazebo/model/odometry" {
 		t.Fatalf("derived TFs = %#v", derivedTFs)
 	}
+	if len(derivedMapTFs) != 0 {
+		t.Fatalf("derived map TFs = %#v", derivedMapTFs)
+	}
 
 	pairs := inspectTFPairsByTopic(t, outputPath)
 	if !containsTFPair(pairs["/tf"], [2]string{"raw_parent", "raw_child"}) {
@@ -335,8 +384,143 @@ func TestWriteLiteMCAPReplacesOnlyMapBaseLinkAndKeepsVehicleChildTF(t *testing.T
 	if math.Abs(mapped.X-(-0.5)) > 1e-9 || math.Abs(mapped.Y-(-1.25)) > 1e-9 || math.Abs(mapped.Z-0.2) > 1e-9 {
 		t.Fatalf("display TF did not apply Gazebo XYZ to NED projection: %#v", mapped)
 	}
-	if math.Abs(yawFromQuaternion(mapped.QX, mapped.QY, mapped.QZ, mapped.QW)-(-math.Pi/2)) > 1e-9 {
-		t.Fatalf("display TF yaw was not rotated with Gazebo projection: %#v", mapped)
+	if math.Abs(yawFromQuaternion(mapped.QX, mapped.QY, mapped.QZ, mapped.QW)-math.Pi/4) > 1e-9 {
+		t.Fatalf("display TF yaw should preserve source body yaw so /scan is not over-rotated: %#v", mapped)
+	}
+}
+
+func TestWriteLiteMCAPSeparatesCartographerMapFrame(t *testing.T) {
+	dir := t.TempDir()
+	rawPath := filepath.Join(dir, "raw.mcap")
+	outputPath := filepath.Join(dir, "lite.mcap")
+	writeMapFrameSeparationReplaySourceMCAP(t, rawPath)
+
+	derivedScans, derivedTFs, derivedMapTFs, err := writeLiteMCAP(rawPath, outputPath, liteTopicProfile{
+		Required: []string{"/tf", "/map", "/slam/odom"},
+		Optional: []string{"/gazebo/model/odometry"},
+		Interval: map[string]float64{
+			"/tf":                    0,
+			"/map":                   0,
+			"/slam/odom":             0,
+			"/gazebo/model/odometry": 0,
+		},
+		FrameRewrites: []frameRewriteProfile{
+			{Topic: "/map", FrameID: "cartographer_map", FlipY: true, Role: "visualization_only"},
+			{Topic: "/slam/odom", FrameID: "cartographer_map", Role: "visualization_only"},
+		},
+		DerivedMapTFs: []derivedMapTFProfile{{
+			Topic:          "/tf",
+			DisplaySource:  "/gazebo/model/odometry",
+			SlamSource:     "/navlab/slam/tf",
+			Parent:         "map",
+			Child:          "cartographer_map",
+			DisplayParent:  "map",
+			DisplayChild:   "base_link",
+			SlamParent:     "map",
+			SlamChild:      "base_link",
+			CoordinateMode: "gazebo_xyz_to_ned",
+			Role:           "visualization_only",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(derivedScans) != 0 || len(derivedTFs) != 0 || len(derivedMapTFs) != 1 {
+		t.Fatalf("derived scans=%#v TFs=%#v mapTFs=%#v", derivedScans, derivedTFs, derivedMapTFs)
+	}
+
+	grids := inspectOccupancyGridsByTopic(t, outputPath)
+	if len(grids["/map"]) != 1 || grids["/map"][0].FrameID != "cartographer_map" {
+		t.Fatalf("/map frame rewrite failed: %#v", grids["/map"])
+	}
+	if math.Abs(grids["/map"][0].OriginY-0.9) > 1e-6 {
+		t.Fatalf("/map flip_y origin_y = %.6f, want 0.9", grids["/map"][0].OriginY)
+	}
+	if got := inspectTopicHeaderFrame(t, outputPath, "/slam/odom"); got != "cartographer_map" {
+		t.Fatalf("/slam/odom frame = %q, want cartographer_map", got)
+	}
+	var mapped *decodedTransform
+	for _, transform := range inspectTransformsByTopic(t, outputPath)["/tf"] {
+		if transform.Parent == "map" && transform.Child == "cartographer_map" {
+			current := transform
+			mapped = &current
+		}
+	}
+	if mapped == nil {
+		t.Fatal("missing derived map -> cartographer_map TF")
+	}
+	if math.Abs(mapped.X-(-2.0)) > 1e-9 || math.Abs(mapped.Y-0.0) > 1e-9 {
+		t.Fatalf("derived map frame translation = %#v, want x=-2 y=0", mapped)
+	}
+	if math.Abs(yawFromQuaternion(mapped.QX, mapped.QY, mapped.QZ, mapped.QW)) > 1e-9 {
+		t.Fatalf("derived map frame yaw = %#v, want 0", mapped)
+	}
+}
+
+func TestRewriteOccupancyGridCropsKnownCanvas(t *testing.T) {
+	cells := bytes.Repeat([]byte{0xff}, 8*6)
+	cells[1*8+2] = 100
+	cells[2*8+3] = 0
+	cells[3*8+4] = 100
+	grid := testOccupancyGridCellsCDR("map", 8, 6, 0.10, -1.2, -1.2, cells)
+
+	rewritten, err := rewriteOccupancyGridFrameAndData(grid, frameRewriteProfile{
+		FrameID:     "cartographer_map",
+		CropToKnown: true,
+		Role:        "visualization_only",
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := parseOccupancyGridInfoCDR(rewritten)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.FrameID != "cartographer_map" {
+		t.Fatalf("frame = %q, want cartographer_map", info.FrameID)
+	}
+	if info.Width != 3 || info.Height != 3 {
+		t.Fatalf("cropped size = %dx%d, want 3x3", info.Width, info.Height)
+	}
+	if math.Abs(info.OriginX-(-1.0)) > 1e-6 || math.Abs(info.OriginY-(-1.1)) > 1e-6 {
+		t.Fatalf("cropped origin = %.3f %.3f, want -1.000 -1.100", info.OriginX, info.OriginY)
+	}
+	if info.Occupied != 2 {
+		t.Fatalf("occupied = %d, want 2", info.Occupied)
+	}
+}
+
+func TestWriteLiteMCAPDropsOfficialMazeMapAlias(t *testing.T) {
+	dir := t.TempDir()
+	rawPath := filepath.Join(dir, "raw.mcap")
+	outputPath := filepath.Join(dir, "lite.mcap")
+	writeMapAliasReplaySourceMCAP(t, rawPath)
+
+	derivedScans, derivedTFs, derivedMapTFs, err := writeLiteMCAP(rawPath, outputPath, liteTopicProfile{
+		Overlay:  []string{"/navlab/official_maze/map"},
+		Required: []string{"/map"},
+		Interval: map[string]float64{
+			"/navlab/official_maze/map": 0,
+			"/map":                      0,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(derivedScans) != 0 || len(derivedTFs) != 0 || len(derivedMapTFs) != 0 {
+		t.Fatalf("derived scans=%#v derived TFs=%#v derived map TFs=%#v", derivedScans, derivedTFs, derivedMapTFs)
+	}
+
+	grids := inspectOccupancyGridsByTopic(t, outputPath)
+	if len(grids["/navlab/official_maze/map"]) != 1 {
+		t.Fatalf("official overlay count = %d, want 1", len(grids["/navlab/official_maze/map"]))
+	}
+	mapGrids := grids["/map"]
+	if len(mapGrids) != 1 {
+		t.Fatalf("/map should keep only Cartographer grid, got %#v", mapGrids)
+	}
+	if mapGrids[0].Resolution != 0.05 || mapGrids[0].Width != 80 || mapGrids[0].Height != 60 {
+		t.Fatalf("/map retained wrong grid: %#v", mapGrids[0])
 	}
 }
 
@@ -484,7 +668,107 @@ func writeDisplayTFReplaySourceMCAP(t *testing.T, path string) {
 	if err := writer.WriteChannel(&mcap.Channel{ID: 3, SchemaID: odomSchema.ID, Topic: "/gazebo/model/odometry", MessageEncoding: "cdr"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.WriteMessage(&mcap.Message{ChannelID: 3, LogTime: 3_000_000, PublishTime: 3_000_000, Data: testOdometryCDR("odom", "base_link", 1.25, -0.5, 0.2)}); err != nil {
+	if err := writer.WriteMessage(&mcap.Message{ChannelID: 3, LogTime: 3_000_000, PublishTime: 3_000_000, Data: testOdometryCDR("odom", "base_link", 1.25, -0.5, 0.2, math.Pi/4)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeMapFrameSeparationReplaySourceMCAP(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	writer, err := mcap.NewWriter(file, &mcap.WriterOptions{Chunked: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteHeader(&mcap.Header{Profile: "ros2", Library: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	tfSchema := tfMessageSchema(1)
+	gridSchema := occupancyGridSchema(2)
+	odomSchema := odometrySchema(3)
+	for _, schema := range []*mcap.Schema{tfSchema, gridSchema, odomSchema} {
+		if err := writer.WriteSchema(schema); err != nil {
+			t.Fatal(err)
+		}
+	}
+	channels := []*mcap.Channel{
+		{ID: 1, SchemaID: tfSchema.ID, Topic: "/tf", MessageEncoding: "cdr"},
+		{ID: 2, SchemaID: tfSchema.ID, Topic: "/navlab/slam/tf", MessageEncoding: "cdr"},
+		{ID: 3, SchemaID: gridSchema.ID, Topic: "/map", MessageEncoding: "cdr"},
+		{ID: 4, SchemaID: odomSchema.ID, Topic: "/slam/odom", MessageEncoding: "cdr"},
+		{ID: 5, SchemaID: odomSchema.ID, Topic: "/gazebo/model/odometry", MessageEncoding: "cdr"},
+	}
+	for _, channel := range channels {
+		if err := writer.WriteChannel(channel); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.WriteMessage(&mcap.Message{ChannelID: 1, LogTime: 1_000_000, PublishTime: 1_000_000, Data: encodeTransformTFMessage("raw_parent", "raw_child", 0, 0, 0, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteMessage(&mcap.Message{ChannelID: 2, LogTime: 2_000_000, PublishTime: 2_000_000, Data: encodeTransformTFMessage("map", "base_link", 2, 0, 0, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteMessage(&mcap.Message{ChannelID: 3, LogTime: 3_000_000, PublishTime: 3_000_000, Data: testOccupancyGridCDR("map", 8, 6, 0.05, -1.2, -1.2, 6)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteMessage(&mcap.Message{ChannelID: 4, LogTime: 4_000_000, PublishTime: 4_000_000, Data: testOdometryCDR("map", "base_link", 2, 0, 0, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteMessage(&mcap.Message{ChannelID: 5, LogTime: 5_000_000, PublishTime: 5_000_000, Data: testOdometryCDR("odom", "base_link", 0, 0, 0, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeMapAliasReplaySourceMCAP(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	writer, err := mcap.NewWriter(file, &mcap.WriterOptions{Chunked: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteHeader(&mcap.Header{Profile: "ros2", Library: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	gridSchema := occupancyGridSchema(1)
+	if err := writer.WriteSchema(gridSchema); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteChannel(&mcap.Channel{ID: 1, SchemaID: gridSchema.ID, Topic: "/navlab/official_maze/map", MessageEncoding: "cdr"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteChannel(&mcap.Channel{ID: 2, SchemaID: gridSchema.ID, Topic: "/map", MessageEncoding: "cdr"}); err != nil {
+		t.Fatal(err)
+	}
+	official := testOccupancyGridCDR("map", 206, 206, 0.10, -10.3, -10.3, 3321)
+	if err := writer.WriteMessage(&mcap.Message{ChannelID: 1, LogTime: 1_000_000, PublishTime: 1_000_000, Data: official}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteMessage(&mcap.Message{ChannelID: 2, LogTime: 2_000_000, PublishTime: 2_000_000, Data: official}); err != nil {
+		t.Fatal(err)
+	}
+	slam := testOccupancyGridCDR("map", 80, 60, 0.05, -1.2, -1.2, 258)
+	if err := writer.WriteMessage(&mcap.Message{ChannelID: 2, LogTime: 3_000_000, PublishTime: 3_000_000, Data: slam}); err != nil {
 		t.Fatal(err)
 	}
 	if err := writer.Close(); err != nil {
@@ -512,8 +796,41 @@ func testLaserScanCDR(frameID string) []byte {
 	return builder.data
 }
 
-func testOdometryCDR(frameID string, childFrameID string, x float64, y float64, z float64) []byte {
-	qz, qw := yawQuaternion(0)
+func testOccupancyGridCDR(frameID string, width uint32, height uint32, resolution float64, originX float64, originY float64, occupied int) []byte {
+	cellCount := int(width * height)
+	cells := make([]byte, cellCount)
+	for index := 0; index < cellCount; index++ {
+		if index < occupied {
+			cells[index] = 100
+		}
+	}
+	return testOccupancyGridCellsCDR(frameID, width, height, resolution, originX, originY, cells)
+}
+
+func testOccupancyGridCellsCDR(frameID string, width uint32, height uint32, resolution float64, originX float64, originY float64, cells []byte) []byte {
+	builder := testCDRBuilder{data: []byte{0, 1, 0, 0}}
+	builder.int32(0)
+	builder.uint32(0)
+	builder.string(frameID)
+	builder.int32(0)
+	builder.uint32(0)
+	builder.float32(resolution)
+	builder.uint32(width)
+	builder.uint32(height)
+	builder.float64(originX)
+	builder.float64(originY)
+	builder.float64(0)
+	builder.float64(0)
+	builder.float64(0)
+	builder.float64(0)
+	builder.float64(1)
+	builder.uint32(uint32(len(cells)))
+	builder.data = append(builder.data, cells...)
+	return builder.data
+}
+
+func testOdometryCDR(frameID string, childFrameID string, x float64, y float64, z float64, yaw float64) []byte {
+	qz, qw := yawQuaternion(yaw)
 	builder := testCDRBuilder{data: []byte{0, 1, 0, 0}}
 	builder.int32(1)
 	builder.uint32(2)
@@ -540,6 +857,10 @@ func testOdometryCDR(frameID string, childFrameID string, x float64, y float64, 
 
 func odometrySchema(id uint16) *mcap.Schema {
 	return &mcap.Schema{ID: id, Name: "nav_msgs/msg/Odometry", Encoding: "ros2msg", Data: []byte("std_msgs/Header header\nstring child_frame_id\n")}
+}
+
+func occupancyGridSchema(id uint16) *mcap.Schema {
+	return &mcap.Schema{ID: id, Name: "nav_msgs/msg/OccupancyGrid", Encoding: "ros2msg", Data: []byte("std_msgs/Header header\nnav_msgs/MapMetaData info\nint8[] data\n")}
 }
 
 type testCDRBuilder struct{ data []byte }
@@ -719,6 +1040,75 @@ func inspectTransformsByTopic(t *testing.T, path string) map[string][]decodedTra
 		}
 	}
 	return transforms
+}
+
+func inspectOccupancyGridsByTopic(t *testing.T, path string) map[string][]occupancyGridInfo {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	reader, err := mcap.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	it, err := reader.Messages(mcap.UsingIndex(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grids := map[string][]occupancyGridInfo{}
+	for {
+		_, channel, message, err := it.Next(nil) //nolint:staticcheck
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if channel.Topic != "/map" && channel.Topic != "/navlab/official_maze/map" {
+			continue
+		}
+		grid, err := parseOccupancyGridInfoCDR(message.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		grids[channel.Topic] = append(grids[channel.Topic], grid)
+	}
+	return grids
+}
+
+func inspectTopicHeaderFrame(t *testing.T, path string, topic string) string {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	reader, err := mcap.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	it, err := reader.Messages(mcap.UsingIndex(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		_, channel, message, err := it.Next(nil) //nolint:staticcheck
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if channel.Topic == topic {
+			return testHeaderFrameID(t, message.Data)
+		}
+	}
+	t.Fatalf("topic not found: %s", topic)
+	return ""
 }
 
 func containsTFPair(values [][2]string, want [2]string) bool {

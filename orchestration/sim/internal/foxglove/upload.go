@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"navlab/orchestration-sim/internal/ui"
 )
 
 const (
@@ -85,14 +87,16 @@ var liteProfileFilenameByTask = map[string]string{
 }
 
 type liteTopicProfile struct {
-	Path         string
-	Overlay      []string
-	Required     []string
-	Optional     []string
-	Drop         []string
-	DerivedScans []derivedScanProfile
-	DerivedTFs   []derivedTFProfile
-	Interval     map[string]float64
+	Path          string
+	Overlay       []string
+	Required      []string
+	Optional      []string
+	Drop          []string
+	FrameRewrites []frameRewriteProfile
+	DerivedScans  []derivedScanProfile
+	DerivedTFs    []derivedTFProfile
+	DerivedMapTFs []derivedMapTFProfile
+	Interval      map[string]float64
 }
 
 type Options struct {
@@ -242,7 +246,8 @@ func writeUploadSummary(runDir string, stdout io.Writer, result Result) error {
 	if err := writeJSON(summaryPath, result); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(stdout, "uploaded_summary=%s\n", summaryPath)
+	_, _ = fmt.Fprintf(stdout, "\n%s\n", ui.Subtitle("Summary"))
+	_, _ = fmt.Fprintf(stdout, "  %s\n", ui.KeyValue("upload_summary", summaryPath))
 	return nil
 }
 
@@ -450,6 +455,59 @@ func readLiteTopicProfile(path string) (liteTopicProfile, error) {
 			profile.Interval[topic] = interval
 		case "drop":
 			profile.Drop = append(profile.Drop, topic)
+		case "rewrite_frame":
+			spec := frameRewriteProfile{Topic: topic}
+			for _, field := range fields[2:] {
+				key, value, ok := strings.Cut(field, "=")
+				if !ok || value == "" {
+					return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: rewrite_frame fields must be key=value", index+1, path)
+				}
+				switch key {
+				case "frame":
+					spec.FrameID = value
+				case "flip_x":
+					enabled, err := strconv.ParseBool(value)
+					if err != nil {
+						return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: flip_x must be bool", index+1, path)
+					}
+					spec.FlipX = enabled
+				case "flip_y":
+					enabled, err := strconv.ParseBool(value)
+					if err != nil {
+						return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: flip_y must be bool", index+1, path)
+					}
+					spec.FlipY = enabled
+				case "scan_free_space":
+					enabled, err := strconv.ParseBool(value)
+					if err != nil {
+						return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: scan_free_space must be bool", index+1, path)
+					}
+					spec.ScanFreeSpace = enabled
+				case "scan_crop":
+					enabled, err := strconv.ParseBool(value)
+					if err != nil {
+						return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: scan_crop must be bool", index+1, path)
+					}
+					spec.ScanCrop = enabled
+				case "crop_to_known":
+					enabled, err := strconv.ParseBool(value)
+					if err != nil {
+						return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: crop_to_known must be bool", index+1, path)
+					}
+					spec.CropToKnown = enabled
+				case "crop_margin_m":
+					margin, err := strconv.ParseFloat(value, 64)
+					if err != nil || margin < 0 {
+						return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: crop_margin_m must be a non-negative number", index+1, path)
+					}
+					spec.CropMarginM = margin
+				case "role":
+					spec.Role = value
+				default:
+					return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: unknown rewrite_frame field %q", index+1, path, key)
+				}
+			}
+			profile.FrameRewrites = append(profile.FrameRewrites, normalizeFrameRewriteProfile(spec))
 		case "derive_scan":
 			spec := derivedScanProfile{Topic: topic}
 			for _, field := range fields[2:] {
@@ -498,6 +556,39 @@ func readLiteTopicProfile(path string) (liteTopicProfile, error) {
 				}
 			}
 			profile.DerivedTFs = append(profile.DerivedTFs, normalizeDerivedTFProfile(spec))
+		case "derive_map_tf":
+			spec := derivedMapTFProfile{Topic: topic}
+			for _, field := range fields[2:] {
+				key, value, ok := strings.Cut(field, "=")
+				if !ok || value == "" {
+					return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: derive_map_tf fields must be key=value", index+1, path)
+				}
+				switch key {
+				case "display_source":
+					spec.DisplaySource = value
+				case "slam_source":
+					spec.SlamSource = value
+				case "parent":
+					spec.Parent = value
+				case "child":
+					spec.Child = value
+				case "display_parent":
+					spec.DisplayParent = value
+				case "display_child":
+					spec.DisplayChild = value
+				case "slam_parent":
+					spec.SlamParent = value
+				case "slam_child":
+					spec.SlamChild = value
+				case "coordinate_mode":
+					spec.CoordinateMode = value
+				case "role":
+					spec.Role = value
+				default:
+					return liteTopicProfile{}, fmt.Errorf("malformed lite topic profile line %d in %s: unknown derive_map_tf field %q", index+1, path, key)
+				}
+			}
+			profile.DerivedMapTFs = append(profile.DerivedMapTFs, normalizeDerivedMapTFProfile(spec))
 		default:
 			return liteTopicProfile{}, fmt.Errorf("unknown lite topic profile directive %q on line %d in %s", fields[0], index+1, path)
 		}
@@ -853,14 +944,42 @@ func shortFileSHA256(path string, length int) (string, error) {
 }
 
 func printTargets(writer io.Writer, title string, result Result) {
-	_, _ = fmt.Fprintln(writer, title)
-	_, _ = fmt.Fprintf(writer, "run_id=%s\n", result.RunID)
-	_, _ = fmt.Fprintf(writer, "task_id=%s\n", result.TaskID)
-	_, _ = fmt.Fprintf(writer, "run_dir=%s\n", result.RunDir)
-	_, _ = fmt.Fprintf(writer, "lite=%t\n", result.Lite)
+	_, _ = fmt.Fprintln(writer, ui.Title(title))
+	_, _ = fmt.Fprintf(writer, "  %s\n", ui.KeyValue("run_id", result.RunID))
+	_, _ = fmt.Fprintf(writer, "  %s\n", ui.KeyValue("task_id", result.TaskID))
+	_, _ = fmt.Fprintf(writer, "  %s\n", ui.KeyValue("run_dir", result.RunDir))
+	_, _ = fmt.Fprintf(writer, "  %s\n", ui.KeyValue("mode", uploadMode(result.Lite)))
+	_, _ = fmt.Fprintf(writer, "\n%s\n", ui.Subtitle("Files"))
 	for _, target := range result.Files {
-		_, _ = fmt.Fprintf(writer, "%s\t%s\t%d\t%s\t%s\n", target.Kind, target.Filename, target.Bytes, target.Path, target.Key)
+		_, _ = fmt.Fprintf(writer, "  - %s  %s  %s\n", target.Kind, target.Filename, formatUploadBytes(target.Bytes))
+		_, _ = fmt.Fprintf(writer, "    %s\n", ui.KeyValue("key", target.Key))
+		_, _ = fmt.Fprintf(writer, "    %s\n", ui.KeyValue("path", target.Path))
 	}
+}
+
+func uploadMode(lite bool) string {
+	if lite {
+		return "lite"
+	}
+	return "raw"
+}
+
+func formatUploadBytes(bytes int64) string {
+	const unit = 1024.0
+	if bytes < 0 {
+		return "unknown"
+	}
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	value := float64(bytes)
+	for _, suffix := range []string{"KiB", "MiB", "GiB"} {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.1f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.1f TiB", value/unit)
 }
 
 func loadDotenv(path string) error {

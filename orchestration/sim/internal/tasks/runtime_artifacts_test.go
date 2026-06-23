@@ -152,7 +152,7 @@ func TestGenerateRuntimeArtifactsFromConfiguredTasks(t *testing.T) {
 				assertHoverExternalNavUsesCartographerAdapter(t, filepath.Join(artifactDir, "external_nav_bridge_params.yaml"))
 				assertCopiedHoverCartographerConfig(t, filepath.Join(artifactDir, helpers.HoverCartographerConfigBasename))
 				assertScanReferenceCartographerOdomRuntime(t, filepath.Join(artifactDir, "scan_reference_cartographer_odom_runtime.py"))
-				assertHoverOfficialMazeOverlayPublishesMapAlias(t, filepath.Join(artifactDir, "official_maze_overlay_runtime.py"))
+				assertHoverOfficialMazeOverlayAvoidsMapAlias(t, filepath.Join(artifactDir, "official_maze_overlay_runtime.py"))
 				assertFileMissing(t, filepath.Join(artifactDir, "hover_cartographer_odom_prior.py"))
 				assertProbeScriptRetriesTopicEcho(t, filepath.Join(artifactDir, "frame_contract_probe.py"))
 				assertProbeScriptRetriesTopicEcho(t, filepath.Join(artifactDir, "slam_hover_probe.py"))
@@ -278,6 +278,7 @@ func assertCopiedHoverCartographerConfig(t *testing.T, path string) {
 		"use_odometry = true",
 		"scan-reference odometry prior derived only from /scan",
 		"TRAJECTORY_BUILDER_2D.use_imu_data = true",
+		"TRAJECTORY_BUILDER_2D.missing_data_ray_length = 0.1",
 		"TRAJECTORY_BUILDER_2D.ceres_scan_matcher.translation_weight = 1.",
 		"TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.linear_search_window = 0.50",
 		"POSE_GRAPH.optimization_problem.odometry_translation_weight = 1e4",
@@ -311,7 +312,7 @@ func assertScanReferenceCartographerOdomRuntime(t *testing.T, path string) {
 	}
 }
 
-func assertHoverOfficialMazeOverlayPublishesMapAlias(t *testing.T, path string) {
+func assertHoverOfficialMazeOverlayAvoidsMapAlias(t *testing.T, path string) {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -320,12 +321,14 @@ func assertHoverOfficialMazeOverlayPublishesMapAlias(t *testing.T, path string) 
 	text := string(data)
 	for _, want := range []string{
 		`/navlab/official_maze/map`,
-		`/map`,
 		`publishers = [node.create_publisher`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("hover official maze overlay script missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, `"/map"`) {
+		t.Fatalf("official maze overlay must not publish the Cartographer /map topic:\n%s", text)
 	}
 }
 

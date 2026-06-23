@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import time
 from dataclasses import dataclass
 
@@ -11,6 +12,7 @@ from navlab.sim.gazebo_sensor.config import X2SensorRuntimeConfig
 DEFAULT_STATUS_TOPIC = "/navlab/x2/scan_time_normalizer/status"
 MAX_TIME_ANCHOR_AGE_SEC = 1.0
 CARTOGRAPHER_TIME_TICK_NS = 100
+MAX_RANGE_NO_RETURN_EPSILON_M = 0.05
 
 
 def stamp_to_nanoseconds(stamp: object) -> int:
@@ -78,6 +80,18 @@ def select_scan_stamp_ns(
 
 def should_zero_scan_time_increment(stamp_source: str) -> bool:
     return stamp_source in {"ideal_scan_stamp", "clock", "input_scan_stamp"}
+
+
+def normalize_no_return_ranges(
+    ranges: list[float],
+    *,
+    range_max: float,
+    epsilon_m: float = MAX_RANGE_NO_RETURN_EPSILON_M,
+) -> list[float]:
+    if not math.isfinite(range_max) or range_max <= 0:
+        return ranges
+    threshold = max(0.0, range_max - max(0.0, epsilon_m))
+    return [float("inf") if math.isfinite(float(value)) and float(value) >= threshold else value for value in ranges]
 
 
 def build_status_payload(
@@ -217,6 +231,7 @@ def run() -> int:
             stamp_ns = decision.stamp_ns
             output.header.stamp.sec = int(stamp_ns // 1_000_000_000)
             output.header.stamp.nanosec = int(stamp_ns % 1_000_000_000)
+            output.ranges = normalize_no_return_ranges(list(output.ranges), range_max=float(output.range_max))
             if should_zero_scan_time_increment(decision.source):
                 output.time_increment = 0.0
                 self._time_increment_zeroed_count += 1

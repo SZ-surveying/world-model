@@ -6,6 +6,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 sim_cmd := "cd orchestration/sim && go run ./cmd/navlab-sim"
 real_cmd := "cd orchestration/real && cargo run --quiet --"
 command_cmd := "uv run --project scripts/command python scripts/command/main.py"
+direct_net_env := "env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY -u http_proxy -u https_proxy -u all_proxy -u no_proxy"
 
 default:
     @just --list
@@ -63,6 +64,10 @@ navlab-real-run task *args='':
 # Upload an existing Foxglove-lite sim MCAP. Generate it first with `navlab-sim foxglove build-replay`.
 foxglove-upload date='' *args='':
     {{sim_cmd}} foxglove upload {{date}} --force {{args}}
+
+# Upload an existing Foxglove-lite sim MCAP while ignoring HTTP proxy environment variables.
+foxglove-upload-direct date='' *args='':
+    cd orchestration/sim && {{direct_net_env}} go run ./cmd/navlab-sim foxglove upload {{date}} --force {{args}}
 
 # Run the serial bridge from the scripts/command Python 3.11 project.
 serial-bridge *args='':

@@ -29,10 +29,45 @@ type derivedTFProfile struct {
 	Role           string `json:"role"`
 }
 
+type frameRewriteProfile struct {
+	Topic         string  `json:"topic"`
+	FrameID       string  `json:"frame_id"`
+	FlipX         bool    `json:"flip_x,omitempty"`
+	FlipY         bool    `json:"flip_y,omitempty"`
+	ScanFreeSpace bool    `json:"scan_free_space,omitempty"`
+	ScanCrop      bool    `json:"scan_crop,omitempty"`
+	CropToKnown   bool    `json:"crop_to_known,omitempty"`
+	CropMarginM   float64 `json:"crop_margin_m,omitempty"`
+	Role          string  `json:"role"`
+}
+
+type derivedMapTFProfile struct {
+	Topic          string `json:"topic"`
+	DisplaySource  string `json:"display_source"`
+	SlamSource     string `json:"slam_source"`
+	Parent         string `json:"parent"`
+	Child          string `json:"child"`
+	DisplayParent  string `json:"display_parent"`
+	DisplayChild   string `json:"display_child"`
+	SlamParent     string `json:"slam_parent"`
+	SlamChild      string `json:"slam_child"`
+	CoordinateMode string `json:"coordinate_mode,omitempty"`
+	Role           string `json:"role"`
+}
+
 type derivedTFState struct {
 	Spec           derivedTFProfile
 	Messages       []derivedTFMessage
 	SourceCount    int
+	GeneratedCount int
+}
+
+type derivedMapTFState struct {
+	Spec           derivedMapTFProfile
+	Display        []derivedTFMessage
+	Slam           []decodedTransform
+	DisplayCount   int
+	SlamCount      int
 	GeneratedCount int
 }
 
@@ -80,10 +115,62 @@ func normalizeDerivedTFProfile(spec derivedTFProfile) derivedTFProfile {
 	return spec
 }
 
+func normalizeFrameRewriteProfile(spec frameRewriteProfile) frameRewriteProfile {
+	if spec.Role == "" {
+		spec.Role = "visualization_only"
+	}
+	return spec
+}
+
+func normalizeDerivedMapTFProfile(spec derivedMapTFProfile) derivedMapTFProfile {
+	if spec.DisplaySource == "" {
+		spec.DisplaySource = defaultDisplayTFSourceTopic
+	}
+	if spec.SlamSource == "" {
+		spec.SlamSource = "/navlab/slam/tf"
+	}
+	if spec.Topic == "" {
+		spec.Topic = defaultDisplayTFOutputTopic
+	}
+	if spec.Parent == "" {
+		spec.Parent = "map"
+	}
+	if spec.Child == "" {
+		spec.Child = "cartographer_map"
+	}
+	if spec.DisplayParent == "" {
+		spec.DisplayParent = "map"
+	}
+	if spec.DisplayChild == "" {
+		spec.DisplayChild = "base_link"
+	}
+	if spec.SlamParent == "" {
+		spec.SlamParent = "map"
+	}
+	if spec.SlamChild == "" {
+		spec.SlamChild = "base_link"
+	}
+	if spec.CoordinateMode == "" {
+		spec.CoordinateMode = displayTFCoordinateRaw
+	}
+	if spec.Role == "" {
+		spec.Role = "visualization_only"
+	}
+	return spec
+}
+
 func newDerivedTFStates(profile liteTopicProfile) []*derivedTFState {
 	states := make([]*derivedTFState, 0, len(profile.DerivedTFs))
 	for _, spec := range profile.DerivedTFs {
 		states = append(states, &derivedTFState{Spec: normalizeDerivedTFProfile(spec)})
+	}
+	return states
+}
+
+func newDerivedMapTFStates(profile liteTopicProfile) []*derivedMapTFState {
+	states := make([]*derivedMapTFState, 0, len(profile.DerivedMapTFs))
+	for _, spec := range profile.DerivedMapTFs {
+		states = append(states, &derivedMapTFState{Spec: normalizeDerivedMapTFProfile(spec)})
 	}
 	return states
 }
@@ -115,6 +202,43 @@ func (state *derivedTFState) maybeCollect(channel *mcap.Channel, message *mcap.M
 		StampNsec:   stampNsec,
 		Pose:        pose,
 	})
+	return nil
+}
+
+func (state *derivedMapTFState) maybeCollect(channel *mcap.Channel, message *mcap.Message) error {
+	if state == nil || channel == nil || message == nil {
+		return nil
+	}
+	switch channel.Topic {
+	case state.Spec.DisplaySource:
+		state.DisplayCount++
+		pose, stampSec, stampNsec, err := parseOdometryPoseCDR(message.Data)
+		if err != nil {
+			return fmt.Errorf("parse map TF display source %s: %w", state.Spec.DisplaySource, err)
+		}
+		state.Display = append(state.Display, derivedTFMessage{
+			LogTime:     message.LogTime,
+			PublishTime: message.PublishTime,
+			Sequence:    message.Sequence,
+			StampSec:    stampSec,
+			StampNsec:   stampNsec,
+			Pose:        pose,
+		})
+	case state.Spec.SlamSource:
+		transforms, err := decodeTFMessageCDR(message.Data)
+		if err != nil {
+			return fmt.Errorf("parse map TF slam source %s: %w", state.Spec.SlamSource, err)
+		}
+		for _, transform := range transforms {
+			if transform.Parent == state.Spec.SlamParent && transform.Child == state.Spec.SlamChild {
+				transform.LogTime = message.LogTime
+				transform.PublishTime = message.PublishTime
+				transform.Sequence = message.Sequence
+				state.Slam = append(state.Slam, transform)
+				state.SlamCount++
+			}
+		}
+	}
 	return nil
 }
 
@@ -158,13 +282,104 @@ func writeDerivedTFOutputs(writer *mcap.Writer, states []*derivedTFState, nextSc
 	return summaries, nil
 }
 
+func writeDerivedMapTFOutputs(writer *mcap.Writer, states []*derivedMapTFState, nextSchemaID uint16, nextChannelID uint16) ([]derivedMapTFProfile, error) {
+	var summaries []derivedMapTFProfile
+	for _, state := range states {
+		if state.DisplayCount == 0 {
+			return nil, fmt.Errorf("derived map TF display source missing: %s", state.Spec.DisplaySource)
+		}
+		if state.SlamCount == 0 {
+			return nil, fmt.Errorf("derived map TF slam source missing: %s", state.Spec.SlamSource)
+		}
+		schemaID := nextSchemaID
+		channelID := nextChannelID
+		if err := writer.WriteSchema(tfMessageSchema(schemaID)); err != nil {
+			return nil, err
+		}
+		if err := writer.WriteChannel(&mcap.Channel{ID: channelID, SchemaID: schemaID, Topic: state.Spec.Topic, MessageEncoding: "cdr"}); err != nil {
+			return nil, err
+		}
+		nextSchemaID++
+		nextChannelID++
+		for _, display := range state.Display {
+			displayPose, err := transformDerivedTFPose(display.Pose, state.Spec.CoordinateMode)
+			if err != nil {
+				return nil, err
+			}
+			slam, ok := nearestSlamTransform(display.LogTime, state.Slam)
+			if !ok {
+				continue
+			}
+			pose := composeWorldToSlamMap(displayPose, slam)
+			if err := writer.WriteMessage(&mcap.Message{
+				ChannelID:   channelID,
+				Sequence:    display.Sequence,
+				LogTime:     display.LogTime,
+				PublishTime: display.PublishTime,
+				Data:        encodeTransformTFMessagePose(state.Spec.Parent, state.Spec.Child, pose, display.StampSec, display.StampNsec),
+			}); err != nil {
+				return nil, err
+			}
+			state.GeneratedCount++
+		}
+		if state.GeneratedCount == 0 {
+			return nil, fmt.Errorf("derived map TF generated no transforms for %s", state.Spec.Topic)
+		}
+		summaries = append(summaries, state.Spec)
+	}
+	return summaries, nil
+}
+
+func nearestSlamTransform(logTime uint64, transforms []decodedTransform) (decodedTransform, bool) {
+	if len(transforms) == 0 {
+		return decodedTransform{}, false
+	}
+	best := transforms[0]
+	bestDelta := uint64AbsDiff(logTime, best.LogTime)
+	for _, transform := range transforms[1:] {
+		if delta := uint64AbsDiff(logTime, transform.LogTime); delta < bestDelta {
+			best = transform
+			bestDelta = delta
+		}
+	}
+	return best, true
+}
+
+func uint64AbsDiff(a uint64, b uint64) uint64 {
+	if a >= b {
+		return a - b
+	}
+	return b - a
+}
+
+func composeWorldToSlamMap(worldToBase odometryPose, slamMapToBase decodedTransform) odometryPose {
+	worldYaw := yawFromQuaternion(worldToBase.QX, worldToBase.QY, worldToBase.QZ, worldToBase.QW)
+	slamYaw := yawFromQuaternion(slamMapToBase.QX, slamMapToBase.QY, slamMapToBase.QZ, slamMapToBase.QW)
+	yaw := normalizeYaw(worldYaw - slamYaw)
+	c, s := math.Cos(yaw), math.Sin(yaw)
+	x := worldToBase.X - (c*slamMapToBase.X - s*slamMapToBase.Y)
+	y := worldToBase.Y - (s*slamMapToBase.X + c*slamMapToBase.Y)
+	qz, qw := yawQuaternion(yaw)
+	return odometryPose{X: x, Y: y, Z: 0, QX: 0, QY: 0, QZ: qz, QW: qw}
+}
+
+func normalizeYaw(value float64) float64 {
+	for value > math.Pi {
+		value -= 2 * math.Pi
+	}
+	for value <= -math.Pi {
+		value += 2 * math.Pi
+	}
+	return value
+}
+
 func transformDerivedTFPose(pose odometryPose, mode string) (odometryPose, error) {
 	switch mode {
 	case "", displayTFCoordinateRaw:
 		return pose, nil
 	case displayTFGazeboXYZToNED:
 		yaw := yawFromQuaternion(pose.QX, pose.QY, pose.QZ, pose.QW)
-		mappedYaw := yaw - math.Pi/2
+		mappedYaw := yaw
 		qz, qw := yawQuaternion(mappedYaw)
 		return odometryPose{
 			X:  pose.Y,
@@ -279,17 +494,20 @@ func encodeTransformTFMessagePose(parent string, child string, pose odometryPose
 }
 
 type decodedTransform struct {
-	StampSec  int32
-	StampNsec uint32
-	Parent    string
-	Child     string
-	X         float64
-	Y         float64
-	Z         float64
-	QX        float64
-	QY        float64
-	QZ        float64
-	QW        float64
+	LogTime     uint64
+	PublishTime uint64
+	Sequence    uint32
+	StampSec    int32
+	StampNsec   uint32
+	Parent      string
+	Child       string
+	X           float64
+	Y           float64
+	Z           float64
+	QX          float64
+	QY          float64
+	QZ          float64
+	QW          float64
 }
 
 func filterTFMessageCDR(data []byte, replaceEdges [][2]string) ([]byte, bool, error) {

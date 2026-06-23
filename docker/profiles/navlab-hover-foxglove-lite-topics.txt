@@ -4,7 +4,9 @@
 #   required TOPIC interval=SECONDS|all
 #   optional TOPIC interval=SECONDS|all
 #   drop TOPIC
+#   rewrite_frame TOPIC frame=FRAME flip_x=BOOL flip_y=BOOL scan_free_space=BOOL scan_crop=BOOL crop_to_known=BOOL crop_margin_m=METERS role=visualization_only
 #   derive_display_tf TOPIC source=TOPIC parent=FRAME child=FRAME mode=replace coordinate_mode=raw|gazebo_xyz_to_ned role=visualization_only
+#   derive_map_tf TOPIC display_source=TOPIC slam_source=TOPIC parent=FRAME child=FRAME display_parent=FRAME display_child=FRAME slam_parent=FRAME slam_child=FRAME coordinate_mode=raw|gazebo_xyz_to_ned role=visualization_only
 
 overlay /navlab/official_maze/map
 
@@ -44,4 +46,7 @@ drop /navlab/x2/vendor_scan
 drop /rangefinder/down/scan_ideal
 drop /rangefinder/down/status
 
+rewrite_frame /map frame=cartographer_map flip_y=true scan_free_space=true scan_crop=true crop_to_known=true crop_margin_m=0.25 role=visualization_only
+rewrite_frame /slam/odom frame=cartographer_map role=visualization_only
 derive_display_tf /tf source=/gazebo/model/odometry parent=map child=base_link mode=replace coordinate_mode=gazebo_xyz_to_ned role=visualization_only
+derive_map_tf /tf display_source=/gazebo/model/odometry slam_source=/navlab/slam/tf parent=map child=cartographer_map display_parent=map display_child=base_link slam_parent=map slam_child=base_link coordinate_mode=gazebo_xyz_to_ned role=visualization_only
