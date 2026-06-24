@@ -115,10 +115,6 @@ func Build(ctx context.Context, project config.ProjectConfig, options BuildOptio
 	return result, nil
 }
 
-func ResolveBuildSpecs(project config.ProjectConfig, kind string, tagOverride string) ([]BuildSpec, error) {
-	return ResolveBuildSpecsWithOptions(project, BuildOptions{Kind: kind, Tag: tagOverride})
-}
-
 func ResolveBuildSpecsWithOptions(project config.ProjectConfig, options BuildOptions) ([]BuildSpec, error) {
 	normalizedKind := strings.TrimSpace(options.Kind)
 	if normalizedKind == "" {

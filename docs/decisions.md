@@ -2326,3 +2326,36 @@ navigation evidence means wait; after takeoff, missing navigation evidence
 means stop the task body, record the reason, and hand control to landing. This
 keeps hover from masking estimator dropouts as a timeout or a generic unstable
 hold.
+
+## 2026-06-24: Trim unreachable Go sim helper surface after hover audit split
+
+Decision: remove Go sim helpers that are unreachable even when tests are included,
+and also remove older helper APIs that were only kept alive by tests while the
+runtime now uses generated runtime specs, artifacts, probes, and thin CLI
+wrappers.
+
+Basis: `go run golang.org/x/tools/cmd/deadcode@latest -test ./...` is clean
+after the cleanup. The removed surfaces were direct Docker helper wrappers,
+motion doctor summary helpers, convenience wrappers around newer option-based
+APIs, and legacy official-stack / scan-integrity helpers that were no longer
+referenced by production paths.
+
+Reason: the sim orchestrator should expose one active path per responsibility:
+runtime specs for execution, artifact/probe files for Go/Python boundaries, and
+`internal/audits/hover` for hover audit analysis. Keeping test-only legacy
+surfaces makes future hover/runtime reviews harder and increases the chance of
+fixing the wrong path.
+
+## 2026-06-24: Consolidate hover audit CLIs under navlab-sim
+
+Decision: remove the standalone Go hover audit command packages and expose the
+same artifact audits through `navlab-sim audit hover ...` subcommands.
+
+Basis: after moving audit logic to `internal/audits/hover`, the old
+`cmd/hover-*-audit` packages were only thin JSON wrappers. Keeping many small
+entrypoints made future audit additions likely to duplicate flags, output
+handling, and error handling.
+
+Reason: `navlab-sim` should be the single simulation control-plane CLI. A
+breaking CLI cleanup is acceptable here because it prevents another compatibility
+layer while preserving the audit JSON schemas and default output artifacts.

@@ -138,10 +138,12 @@ func TestRenderReplayIncludesDashboardSections(t *testing.T) {
 		Artifacts: []ArtifactFile{{Type: "task_request", Status: "ok"}},
 	}
 
-	view := RenderReplay(state, 100)
+	model := NewReplayModel(state)
+	model.width = 100
+	view := model.View()
 	for _, want := range []string{"NavLab Sim TUI", "Runtime", "Gates / Blockers", "Artifacts", "services=1 probes=2 rosbags=1"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("RenderReplay() missing %q:\n%s", want, view)
+			t.Fatalf("ReplayModel.View() missing %q:\n%s", want, view)
 		}
 	}
 }

@@ -1,13 +1,10 @@
 package helpers
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -16,29 +13,6 @@ const (
 	CartographerContainer      = "navlab-official-maze-x2-cartographer"
 	OfficialIris3DBridgeConfig = "/opt/navlab_official_ws/install/ardupilot_gz_bringup/share/ardupilot_gz_bringup/config/iris_3Dlidar_bridge.yaml"
 )
-
-type CommandRunner interface {
-	Run(ctx context.Context, command string, args ...string) (string, error)
-}
-
-type ExecCommandRunner struct{}
-
-func (ExecCommandRunner) Run(ctx context.Context, command string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, command, args...)
-	output, err := cmd.CombinedOutput()
-	return string(output), err
-}
-
-type GazeboSensorRunSpec struct {
-	Image                  string
-	SessionID              string
-	RosDomainID            string
-	RMWImplementation      string
-	SensorConfigPath       string
-	RuntimeLogPath         string
-	WorkspaceHostPath      string
-	WorkspaceContainerPath string
-}
 
 func WriteBridgeOverride(path string) error {
 	return writeBridgeOverride(path, "imu")
@@ -117,118 +91,11 @@ func missingParamLines(source string, defaults map[string]string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func RemoveContainer(ctx context.Context, runner CommandRunner, name string) error {
-	if runner == nil {
-		runner = ExecCommandRunner{}
-	}
-	_, err := runner.Run(ctx, "docker", "rm", "-f", name)
-	return err
-}
-
-func CaptureContainerLog(ctx context.Context, runner CommandRunner, container string, tail int) (string, error) {
-	if runner == nil {
-		runner = ExecCommandRunner{}
-	}
-	if tail <= 0 {
-		tail = 2000
-	}
-	return runner.Run(ctx, "docker", "logs", "--tail", strconv.Itoa(tail), container)
-}
-
-func GazeboSensorDockerArgs(spec GazeboSensorRunSpec) ([]string, error) {
-	if strings.TrimSpace(spec.Image) == "" {
-		return nil, errors.New("gazebo sensor image is required")
-	}
-	workspaceHostPath := spec.WorkspaceHostPath
-	if workspaceHostPath == "" {
-		workspaceHostPath = "."
-	}
-	workspaceContainerPath := spec.WorkspaceContainerPath
-	if workspaceContainerPath == "" {
-		workspaceContainerPath = "/workspace"
-	}
-	command := "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && " +
-		"source /opt/navlab_sensor_ws/install/setup.bash && " +
-		"exec /opt/gazebo-sensor-venv/bin/python -m navlab.sim.gazebo_sensor.cli --runtime --log-file " +
-		shellQuote(spec.RuntimeLogPath)
-	args := []string{
-		"run",
-		"--detach",
-		"--name", GazeboSensorContainer,
-		"--network", "host",
-		"--volume", fmt.Sprintf("%s:%s", workspaceHostPath, workspaceContainerPath),
-		"--workdir", workspaceContainerPath,
-		"--env", "SESSION_ID=" + spec.SessionID,
-		"--env", "ROS_DOMAIN_ID=" + spec.RosDomainID,
-		"--env", "RMW_IMPLEMENTATION=" + spec.RMWImplementation,
-		"--env", "PYTHONPATH=" + workspaceContainerPath,
-		"--env", "NAVLAB_CONFIG=" + spec.SensorConfigPath,
-		spec.Image,
-		"bash",
-		"-lc",
-		command,
-	}
-	return args, nil
-}
-
-func StartGazeboSensorContainer(ctx context.Context, runner CommandRunner, spec GazeboSensorRunSpec) error {
-	if runner == nil {
-		runner = ExecCommandRunner{}
-	}
-	_ = RemoveContainer(ctx, runner, GazeboSensorContainer)
-	args, err := GazeboSensorDockerArgs(spec)
-	if err != nil {
-		return err
-	}
-	_, err = runner.Run(ctx, "docker", args...)
-	return err
-}
-
-func PublisherNodesFromTopicInfo(output string) []string {
-	return nodesFromTopicInfoSection(output, "Publisher count:", "Subscription count:")
-}
-
-func SubscriptionNodesFromTopicInfo(output string) []string {
-	return nodesFromTopicInfoSection(output, "Subscription count:", "")
-}
-
-func TopicInfoArtifactName(topic string) string {
-	cleaned := strings.Trim(topic, "/")
-	if cleaned == "" {
-		cleaned = "root"
-	}
-	cleaned = strings.ReplaceAll(cleaned, "/", "_")
-	return "topic_info_" + cleaned + ".txt"
-}
-
 func writeText(path string, text string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, []byte(text), 0o644)
-}
-
-func nodesFromTopicInfoSection(output string, startMarker string, stopMarker string) []string {
-	var nodes []string
-	inSection := false
-	for _, line := range strings.Split(output, "\n") {
-		stripped := strings.TrimSpace(line)
-		if strings.HasPrefix(stripped, startMarker) {
-			inSection = true
-			continue
-		}
-		if stopMarker != "" && strings.HasPrefix(stripped, stopMarker) {
-			inSection = false
-			continue
-		}
-		if inSection && strings.HasPrefix(stripped, "Node name:") {
-			parts := strings.SplitN(stripped, ":", 2)
-			if len(parts) == 2 {
-				nodes = append(nodes, strings.TrimSpace(parts[1]))
-			}
-		}
-	}
-	return nodes
 }
 
 func shellQuote(value string) string {

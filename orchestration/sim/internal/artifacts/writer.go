@@ -68,14 +68,6 @@ func NewRunID(now time.Time) string {
 	return now.UTC().Format("20060102T150405Z")
 }
 
-func (writer Writer) WriteDryRunPlan(
-	project config.ProjectConfig,
-	plan tasks.Plan,
-	now time.Time,
-) (DryRunResult, error) {
-	return writer.WriteRunPlan(project, plan, now, RunPlanOptions{DryRun: true})
-}
-
 func (writer Writer) WriteRunPlan(
 	project config.ProjectConfig,
 	plan tasks.Plan,

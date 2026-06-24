@@ -1,4 +1,4 @@
-package tasks
+package hover
 
 import (
 	"encoding/json"
@@ -80,63 +80,6 @@ func TestBuildHoverHealthCohortAggregatesRunBandsAndMetrics(t *testing.T) {
 	}
 	if len(cohort.Metrics) == 0 {
 		t.Fatalf("cohort metrics missing: %#v", cohort)
-	}
-}
-
-func TestAttachHoverHealthToLiveRunSummaryAddsGatePayloadFields(t *testing.T) {
-	dir := writeHoverHealthArtifact(t, []map[string]any{{"code": "hover_gazebo_model_horizontal_drift"}})
-	health, path, err := BuildAndWriteHoverHealthSummaryArtifact(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("health summary artifact missing: %v", err)
-	}
-	summary := LiveRunSummary{ArtifactDir: dir, Metrics: map[string]any{}, Evidence: map[string]any{}}
-	AttachHoverHealthToLiveRunSummary(&summary, health)
-	if summary.HoverHealthBand != string(HoverHealthYellow) {
-		t.Fatalf("summary hover health band = %q", summary.HoverHealthBand)
-	}
-	if summary.HoverHealthProceed == nil || summary.HoverHealthProceed.SimAutoContinueAllowed {
-		t.Fatalf("hover health proceed = %#v", summary.HoverHealthProceed)
-	}
-	if summary.PostrunHoverHealthAudit == nil || summary.PostrunHoverHealthAudit.ControlsRuntimeProceed {
-		t.Fatalf("postrun hover health audit missing/says it controls runtime: %#v", summary.PostrunHoverHealthAudit)
-	}
-	if summary.GateEvaluation.Metrics.HoverHealth["band"] != HoverHealthYellow {
-		t.Fatalf("gate hover health metric missing: %#v", summary.GateEvaluation.Metrics.HoverHealth)
-	}
-	if summary.Metrics["hover_health"] == nil || summary.Evidence["hoverHealth"] == nil {
-		t.Fatalf("summary hover health fields missing: metrics=%#v evidence=%#v", summary.Metrics, summary.Evidence)
-	}
-}
-
-func TestAttachRuntimeHoverHealthFromMissionSummaryAddsRuntimeSchema(t *testing.T) {
-	dir := t.TempDir()
-	mission := map[string]any{
-		"runtime_hover_health_final": map[string]any{
-			"schema":                    "navlab.runtime_hover_health.v1",
-			"phase":                     "sim_auto_continue",
-			"band":                      "green",
-			"sim_auto_continue_allowed": true,
-		},
-	}
-	data, err := json.Marshal(mission)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "mission_summary.json"), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	summary := LiveRunSummary{ArtifactDir: dir, Metrics: map[string]any{}, Evidence: map[string]any{}}
-
-	AttachRuntimeHoverHealthFromMissionSummary(&summary)
-
-	if summary.RuntimeHoverHealthFinal["phase"] != "sim_auto_continue" {
-		t.Fatalf("runtime hover health final missing: %#v", summary.RuntimeHoverHealthFinal)
-	}
-	if summary.Metrics["runtime_hover_health"] == nil || summary.Evidence["runtimeHoverHealth"] == nil {
-		t.Fatalf("runtime health summary fields missing: metrics=%#v evidence=%#v", summary.Metrics, summary.Evidence)
 	}
 }
 

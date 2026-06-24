@@ -9,63 +9,65 @@ import (
 	"time"
 
 	"navlab/orchestration-sim/internal/config"
+
+	hoveraudit "navlab/orchestration-sim/internal/audits/hover"
 )
 
 type LiveRunSummary struct {
-	SchemaVersion             string                     `json:"schemaVersion"`
-	OK                        bool                       `json:"ok"`
-	Blocked                   bool                       `json:"blocked"`
-	Status                    string                     `json:"status"`
-	ExitCode                  int                        `json:"exitCode"`
-	SummaryPath               string                     `json:"summaryPath,omitempty"`
-	Blockers                  []TaskResultBlocker        `json:"blockers"`
-	BlockerCodes              []string                   `json:"blockerCodes"`
-	Warnings                  []string                   `json:"warnings"`
-	AcceptanceStage           string                     `json:"acceptance_stage"`
-	TaskID                    string                     `json:"task_id"`
-	RunID                     string                     `json:"run_id"`
-	ArtifactDir               string                     `json:"artifact_dir"`
-	SourceEvidence            map[string]any             `json:"sourceEvidence"`
-	Metrics                   map[string]any             `json:"metrics"`
-	Evidence                  map[string]any             `json:"evidence"`
-	Details                   map[string]any             `json:"details"`
-	StartedAt                 string                     `json:"startedAt"`
-	FinishedAt                string                     `json:"finishedAt"`
-	DurationSec               float64                    `json:"duration_sec"`
-	SimulationProfile         string                     `json:"simulation_profile"`
-	Stage1ProfileResult       Stage1ProfileResult        `json:"stage1_profile_result"`
-	RuntimeMode               string                     `json:"runtime_mode"`
-	Backend                   string                     `json:"backend"`
-	GeneratedRuntimeArtifacts []GeneratedRuntimeArtifact `json:"generated_runtime_artifacts"`
-	RuntimeSpecCounts         RuntimeSpecCounts          `json:"runtime_spec_counts"`
-	RuntimeExecution          RuntimeExecutionResult     `json:"runtime_execution"`
-	RuntimeError              string                     `json:"runtime_error,omitempty"`
-	ResultGates               []ResultGateSummary        `json:"result_gates"`
-	GateParity                GateParitySummary          `json:"gate_parity"`
-	GateEvaluation            GateEvaluation             `json:"gate_evaluation"`
-	RuntimeHoverHealthFinal   map[string]any             `json:"runtime_hover_health_final,omitempty"`
-	PostrunHoverHealthAudit   *PostrunHoverHealthAudit   `json:"postrun_hover_health_audit,omitempty"`
-	CohortHoverHealth         map[string]any             `json:"cohort_hover_health,omitempty"`
-	HoverHealthBand           string                     `json:"hover_health_band,omitempty"`
-	HoverHealthHardBlockers   []HoverHealthFinding       `json:"hover_health_hard_blockers,omitempty"`
-	HoverHealthWarnings       []HoverHealthFinding       `json:"hover_health_statistical_warnings,omitempty"`
-	HoverHealthReviewOnly     []HoverHealthFinding       `json:"hover_health_review_only_findings,omitempty"`
-	HoverHealthProceed        *HoverHealthProceed        `json:"hover_health_proceed,omitempty"`
-	CreatedAt                 string                     `json:"created_at"`
+	SchemaVersion             string                          `json:"schemaVersion"`
+	OK                        bool                            `json:"ok"`
+	Blocked                   bool                            `json:"blocked"`
+	Status                    string                          `json:"status"`
+	ExitCode                  int                             `json:"exitCode"`
+	SummaryPath               string                          `json:"summaryPath,omitempty"`
+	Blockers                  []TaskResultBlocker             `json:"blockers"`
+	BlockerCodes              []string                        `json:"blockerCodes"`
+	Warnings                  []string                        `json:"warnings"`
+	AcceptanceStage           string                          `json:"acceptance_stage"`
+	TaskID                    string                          `json:"task_id"`
+	RunID                     string                          `json:"run_id"`
+	ArtifactDir               string                          `json:"artifact_dir"`
+	SourceEvidence            map[string]any                  `json:"sourceEvidence"`
+	Metrics                   map[string]any                  `json:"metrics"`
+	Evidence                  map[string]any                  `json:"evidence"`
+	Details                   map[string]any                  `json:"details"`
+	StartedAt                 string                          `json:"startedAt"`
+	FinishedAt                string                          `json:"finishedAt"`
+	DurationSec               float64                         `json:"duration_sec"`
+	SimulationProfile         string                          `json:"simulation_profile"`
+	Stage1ProfileResult       Stage1ProfileResult             `json:"stage1_profile_result"`
+	RuntimeMode               string                          `json:"runtime_mode"`
+	Backend                   string                          `json:"backend"`
+	GeneratedRuntimeArtifacts []GeneratedRuntimeArtifact      `json:"generated_runtime_artifacts"`
+	RuntimeSpecCounts         RuntimeSpecCounts               `json:"runtime_spec_counts"`
+	RuntimeExecution          RuntimeExecutionResult          `json:"runtime_execution"`
+	RuntimeError              string                          `json:"runtime_error,omitempty"`
+	ResultGates               []ResultGateSummary             `json:"result_gates"`
+	GateParity                GateParitySummary               `json:"gate_parity"`
+	GateEvaluation            GateEvaluation                  `json:"gate_evaluation"`
+	RuntimeHoverHealthFinal   map[string]any                  `json:"runtime_hover_health_final,omitempty"`
+	PostrunHoverHealthAudit   *PostrunHoverHealthAudit        `json:"postrun_hover_health_audit,omitempty"`
+	CohortHoverHealth         map[string]any                  `json:"cohort_hover_health,omitempty"`
+	HoverHealthBand           string                          `json:"hover_health_band,omitempty"`
+	HoverHealthHardBlockers   []hoveraudit.HoverHealthFinding `json:"hover_health_hard_blockers,omitempty"`
+	HoverHealthWarnings       []hoveraudit.HoverHealthFinding `json:"hover_health_statistical_warnings,omitempty"`
+	HoverHealthReviewOnly     []hoveraudit.HoverHealthFinding `json:"hover_health_review_only_findings,omitempty"`
+	HoverHealthProceed        *hoveraudit.HoverHealthProceed  `json:"hover_health_proceed,omitempty"`
+	CreatedAt                 string                          `json:"created_at"`
 }
 
 type PostrunHoverHealthAudit struct {
-	Schema                   string               `json:"schema"`
-	Artifact                 string               `json:"artifact"`
-	HealthBand               HoverHealthBand      `json:"health_band"`
-	Proceed                  HoverHealthProceed   `json:"proceed"`
-	HardBlockers             []HoverHealthFinding `json:"hard_blockers"`
-	StatisticalWarnings      []HoverHealthFinding `json:"statistical_warnings"`
-	ReviewOnlyFindings       []HoverHealthFinding `json:"review_only_findings"`
-	DiagnosticOnly           bool                 `json:"diagnostic_only"`
-	ControlsRuntimeProceed   bool                 `json:"controls_runtime_proceed"`
-	RuntimeProceedTruth      bool                 `json:"runtime_proceed_truth"`
-	RuntimeHealthArtifactKey string               `json:"runtime_health_artifact_key"`
+	Schema                   string                          `json:"schema"`
+	Artifact                 string                          `json:"artifact"`
+	HealthBand               hoveraudit.HoverHealthBand      `json:"health_band"`
+	Proceed                  hoveraudit.HoverHealthProceed   `json:"proceed"`
+	HardBlockers             []hoveraudit.HoverHealthFinding `json:"hard_blockers"`
+	StatisticalWarnings      []hoveraudit.HoverHealthFinding `json:"statistical_warnings"`
+	ReviewOnlyFindings       []hoveraudit.HoverHealthFinding `json:"review_only_findings"`
+	DiagnosticOnly           bool                            `json:"diagnostic_only"`
+	ControlsRuntimeProceed   bool                            `json:"controls_runtime_proceed"`
+	RuntimeProceedTruth      bool                            `json:"runtime_proceed_truth"`
+	RuntimeHealthArtifactKey string                          `json:"runtime_health_artifact_key"`
 }
 
 type TaskResultBlocker struct {
@@ -277,8 +279,8 @@ func liveEvidence(gateEvaluation GateEvaluation, execution RuntimeExecutionResul
 	}
 }
 
-func BuildAndWriteHoverHealthSummaryArtifact(artifactDir string) (*HoverHealthSummary, string, error) {
-	health, err := BuildHoverHealthAudit(artifactDir)
+func BuildAndWriteHoverHealthSummaryArtifact(artifactDir string) (*hoveraudit.HoverHealthSummary, string, error) {
+	health, err := hoveraudit.BuildHoverHealthAudit(artifactDir)
 	if err != nil {
 		return nil, "", err
 	}
@@ -294,14 +296,14 @@ func BuildAndWriteHoverHealthSummaryArtifact(artifactDir string) (*HoverHealthSu
 	return health, path, nil
 }
 
-func AttachHoverHealthToLiveRunSummary(summary *LiveRunSummary, health *HoverHealthSummary) {
+func AttachHoverHealthToLiveRunSummary(summary *LiveRunSummary, health *hoveraudit.HoverHealthSummary) {
 	if summary == nil || health == nil {
 		return
 	}
 	summary.HoverHealthBand = string(health.HealthBand)
-	summary.HoverHealthHardBlockers = append([]HoverHealthFinding(nil), health.HardBlockers...)
-	summary.HoverHealthWarnings = append([]HoverHealthFinding(nil), health.StatisticalWarnings...)
-	summary.HoverHealthReviewOnly = append([]HoverHealthFinding(nil), health.ReviewOnlyFindings...)
+	summary.HoverHealthHardBlockers = append([]hoveraudit.HoverHealthFinding(nil), health.HardBlockers...)
+	summary.HoverHealthWarnings = append([]hoveraudit.HoverHealthFinding(nil), health.StatisticalWarnings...)
+	summary.HoverHealthReviewOnly = append([]hoveraudit.HoverHealthFinding(nil), health.ReviewOnlyFindings...)
 	proceed := health.Proceed
 	summary.HoverHealthProceed = &proceed
 	summary.PostrunHoverHealthAudit = &PostrunHoverHealthAudit{
@@ -309,9 +311,9 @@ func AttachHoverHealthToLiveRunSummary(summary *LiveRunSummary, health *HoverHea
 		Artifact:                 filepath.Join(summary.ArtifactDir, "hover_health_summary.json"),
 		HealthBand:               health.HealthBand,
 		Proceed:                  proceed,
-		HardBlockers:             append([]HoverHealthFinding{}, health.HardBlockers...),
-		StatisticalWarnings:      append([]HoverHealthFinding{}, health.StatisticalWarnings...),
-		ReviewOnlyFindings:       append([]HoverHealthFinding{}, health.ReviewOnlyFindings...),
+		HardBlockers:             append([]hoveraudit.HoverHealthFinding{}, health.HardBlockers...),
+		StatisticalWarnings:      append([]hoveraudit.HoverHealthFinding{}, health.StatisticalWarnings...),
+		ReviewOnlyFindings:       append([]hoveraudit.HoverHealthFinding{}, health.ReviewOnlyFindings...),
 		DiagnosticOnly:           health.DiagnosticOnly,
 		ControlsRuntimeProceed:   false,
 		RuntimeProceedTruth:      false,

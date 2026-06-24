@@ -26,7 +26,7 @@ func TestResolveBuildSpecsAllUsesConfiguredImages(t *testing.T) {
 	t.Setenv("NAVLAB_SIM_DISTRO", "")
 	project := testProject()
 
-	specs, err := ResolveBuildSpecs(project, KindAll, "test-tag")
+	specs, err := ResolveBuildSpecsWithOptions(project, BuildOptions{Kind: KindAll, Tag: "test-tag"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestResolveBuildSpecsAllUsesConfiguredImages(t *testing.T) {
 
 func TestResolveBuildSpecsRuntimeGroupUsesRuntimeImages(t *testing.T) {
 	t.Setenv("NAVLAB_SIM_DISTRO", "")
-	specs, err := ResolveBuildSpecs(testProject(), KindRuntime, "local")
+	specs, err := ResolveBuildSpecsWithOptions(testProject(), BuildOptions{Kind: KindRuntime, Tag: "local"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestResolveBuildSpecsRuntimeGroupUsesRuntimeImages(t *testing.T) {
 
 func TestResolveBuildSpecsInfraGroupExcludesBase(t *testing.T) {
 	t.Setenv("NAVLAB_SIM_DISTRO", "")
-	specs, err := ResolveBuildSpecs(testProject(), KindInfra, "local")
+	specs, err := ResolveBuildSpecsWithOptions(testProject(), BuildOptions{Kind: KindInfra, Tag: "local"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestResolveBuildSpecsRejectsImageWithBaseGroup(t *testing.T) {
 
 func TestResolveBuildSpecsRejectsImageAsBuildGroup(t *testing.T) {
 	t.Setenv("NAVLAB_SIM_DISTRO", "")
-	_, err := ResolveBuildSpecs(testProject(), KindRosBase, "local")
+	_, err := ResolveBuildSpecsWithOptions(testProject(), BuildOptions{Kind: KindRosBase, Tag: "local"})
 	if err == nil || !strings.Contains(err.Error(), "invalid image group") {
 		t.Fatalf("err = %v", err)
 	}
@@ -273,7 +273,7 @@ func TestBuildReturnsRunnerError(t *testing.T) {
 
 func TestResolveBuildSpecsRejectsInvalidKind(t *testing.T) {
 	t.Setenv("NAVLAB_SIM_DISTRO", "")
-	_, err := ResolveBuildSpecs(testProject(), "bad", "")
+	_, err := ResolveBuildSpecsWithOptions(testProject(), BuildOptions{Kind: "bad"})
 	if err == nil || !strings.Contains(err.Error(), "invalid image group") {
 		t.Fatalf("err = %v", err)
 	}

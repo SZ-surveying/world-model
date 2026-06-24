@@ -127,12 +127,6 @@ func (model ReplayModel) View() string {
 	)
 }
 
-func RenderReplay(state ReplayState, width int) string {
-	model := NewReplayModel(state)
-	model.width = width
-	return model.View()
-}
-
 func runtimeLines(state ReplayState) []string {
 	lines := []string{
 		fmt.Sprintf("services=%d probes=%d rosbags=%d", state.RuntimeCounts.Services, state.RuntimeCounts.Probes, state.RuntimeCounts.Rosbags),

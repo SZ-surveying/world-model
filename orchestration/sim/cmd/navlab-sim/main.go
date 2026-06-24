@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"navlab/orchestration-sim/internal/artifacts"
+	hoveraudit "navlab/orchestration-sim/internal/audits/hover"
 	"navlab/orchestration-sim/internal/config"
 	simfoxglove "navlab/orchestration-sim/internal/foxglove"
 	simimages "navlab/orchestration-sim/internal/images"
@@ -77,6 +80,7 @@ func newRootCommand() *cobra.Command {
 		newStage1MatrixCommand(ctx),
 		newTUICommand(),
 		newBuildCommand(ctx),
+		newAuditCommand(ctx),
 		newFoxgloveCommand(ctx),
 	)
 	return root
@@ -224,6 +228,155 @@ func newBuildCommand(ctx *appContext) *cobra.Command {
 	return cmd
 }
 
+func newAuditCommand(ctx *appContext) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "audit",
+		Short: "Run artifact audits for sim runs",
+	}
+	cmd.AddCommand(newAuditHoverCommand(ctx))
+	return cmd
+}
+
+func newAuditHoverCommand(ctx *appContext) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "hover",
+		Short: "Run hover artifact audits",
+	}
+	cmd.AddCommand(
+		newAuditHoverSingleCommand(
+			"contract",
+			"Build Phase 43 hover topic-contract audit JSON",
+			"contract_audit.json",
+			hoveraudit.BuildHoverContractAudit,
+		),
+		newAuditHoverHealthCommand(),
+		newAuditHoverInitCommand(),
+		newAuditHoverSingleCommand(
+			"source",
+			"Build hover raw-source pairwise audit JSON",
+			"raw_source_audit.json",
+			hoveraudit.BuildHoverRawSourceAudit,
+		),
+		newAuditHoverSingleCommand(
+			"trajectory",
+			"Build hover time-aligned trajectory audit JSON",
+			"trajectory_audit.json",
+			hoveraudit.BuildHoverTrajectoryAudit,
+		),
+		newAuditHoverGateReplayCommand(ctx),
+	)
+	return cmd
+}
+
+func newAuditHoverSingleCommand(name string, short string, defaultOutput string, build func(string) (map[string]any, error)) *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:   name + " <artifact-dir>",
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			artifactDir := args[0]
+			audit, err := build(artifactDir)
+			if err != nil {
+				return err
+			}
+			if output == "" {
+				output = filepath.Join(artifactDir, defaultOutput)
+			}
+			return writeAuditJSON(output, audit)
+		},
+	}
+	cmd.Flags().StringVar(&output, "output", "", "output JSON path; defaults to <artifact-dir>/"+defaultOutput)
+	return cmd
+}
+
+func newAuditHoverHealthCommand() *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:   "health <artifact-dir> [<artifact-dir>...]",
+		Short: "Build hover health audit JSON for one run or a cohort",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var payload any
+			if len(args) == 1 {
+				artifactDir := args[0]
+				audit, err := hoveraudit.BuildHoverHealthAudit(artifactDir)
+				if err != nil {
+					return err
+				}
+				payload = audit
+				if output == "" {
+					output = filepath.Join(artifactDir, "hover_health_summary.json")
+				}
+			} else {
+				cohort, err := hoveraudit.BuildHoverHealthCohort(args)
+				if err != nil {
+					return err
+				}
+				payload = cohort
+			}
+			return writeAuditJSON(output, payload)
+		},
+	}
+	cmd.Flags().StringVar(&output, "output", "", "output JSON path; defaults to <artifact-dir>/hover_health_summary.json for one run, stdout for cohorts")
+	return cmd
+}
+
+func newAuditHoverInitCommand() *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:   "init <artifact-dir> [<artifact-dir>...]",
+		Short: "Build hover initialization audit JSON for one run or a comparison",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			audits := make([]map[string]any, 0, len(args))
+			for _, artifactDir := range args {
+				audit, err := hoveraudit.BuildHoverInitializationAudit(artifactDir)
+				if err != nil {
+					return err
+				}
+				audit["artifact_dir"] = artifactDir
+				audits = append(audits, audit)
+				if len(args) == 1 && output == "" {
+					output = filepath.Join(artifactDir, "initialization_audit.json")
+				}
+			}
+			var payload any
+			if len(audits) == 1 {
+				payload = audits[0]
+			} else {
+				payload = map[string]any{
+					"schema":                    "navlab.hover_initialization_audit.comparison.v1",
+					"diagnostic_only":           true,
+					"runtime_control_unchanged": true,
+					"runs":                      audits,
+				}
+			}
+			return writeAuditJSON(output, payload)
+		},
+	}
+	cmd.Flags().StringVar(&output, "output", "", "output JSON path; defaults to <artifact-dir>/initialization_audit.json for one run, stdout for multiple")
+	return cmd
+}
+
+func newAuditHoverGateReplayCommand(ctx *appContext) *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:   "gate-replay <artifact-dir>",
+		Short: "Replay hover result-gate evaluation from saved artifacts",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			payload, err := buildHoverGateReplay(ctx.loader(), args[0])
+			if err != nil {
+				return err
+			}
+			return writeAuditJSON(output, payload)
+		},
+	}
+	cmd.Flags().StringVar(&output, "output", "", "write replay JSON to this path instead of stdout")
+	return cmd
+}
+
 func newFoxgloveCommand(ctx *appContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "foxglove",
@@ -287,6 +440,98 @@ func newFoxgloveUploadCommand(ctx *appContext) *cobra.Command {
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Foxglove API URL")
 	cmd.Flags().StringVar(&deviceName, "device-name", "", "Foxglove device name when FOXGLOVE_DEVICE_ID is not set")
 	return cmd
+}
+
+type taskPlanFile struct {
+	Plan tasks.Plan `json:"plan"`
+}
+
+type hoverGateReplayOutput struct {
+	SchemaVersion  string               `json:"schemaVersion"`
+	ArtifactDir    string               `json:"artifact_dir"`
+	TaskID         string               `json:"task_id"`
+	RunID          string               `json:"run_id"`
+	GateEvaluation tasks.GateEvaluation `json:"gate_evaluation"`
+}
+
+func buildHoverGateReplay(loader config.Loader, artifactDir string) (hoverGateReplayOutput, error) {
+	artifactDir = filepath.Clean(artifactDir)
+	summary, err := readAuditJSON[tasks.LiveRunSummary](filepath.Join(artifactDir, "summary.json"))
+	if err != nil {
+		return hoverGateReplayOutput{}, err
+	}
+	taskPlan, err := readAuditJSON[taskPlanFile](filepath.Join(artifactDir, "task_plan.json"))
+	if err != nil {
+		return hoverGateReplayOutput{}, err
+	}
+	runtimeSpecs, err := readAuditJSON[tasks.RuntimeSpecBundle](filepath.Join(artifactDir, "runtime_plan.json"))
+	if err != nil {
+		return hoverGateReplayOutput{}, err
+	}
+	project, err := loader.LoadProject()
+	if err != nil {
+		return hoverGateReplayOutput{}, fmt.Errorf("load project config: %w", err)
+	}
+	taskConfig, err := loader.LoadTask(project, taskPlan.Plan.TaskID)
+	if err != nil {
+		return hoverGateReplayOutput{}, fmt.Errorf("load task config %q: %w", taskPlan.Plan.TaskID, err)
+	}
+	runtimeConfig, err := config.BuildTaskRuntimeConfig(project, taskConfig)
+	if err != nil {
+		return hoverGateReplayOutput{}, fmt.Errorf("build runtime config: %w", err)
+	}
+	runtimeConfig, err = tasks.ApplySimulationProfile(runtimeConfig, taskPlan.Plan)
+	if err != nil {
+		return hoverGateReplayOutput{}, fmt.Errorf("apply simulation profile: %w", err)
+	}
+	var executionErr error
+	if summary.RuntimeError != "" {
+		executionErr = errors.New(summary.RuntimeError)
+	}
+	return hoverGateReplayOutput{
+		SchemaVersion: "navlab.orchestration.gate_replay.v1",
+		ArtifactDir:   artifactDir,
+		TaskID:        taskPlan.Plan.TaskID,
+		RunID:         summary.RunID,
+		GateEvaluation: tasks.EvaluateResultGates(
+			project,
+			runtimeConfig,
+			taskPlan.Plan,
+			artifactDir,
+			runtimeSpecs,
+			summary.RuntimeExecution,
+			executionErr,
+		),
+	}, nil
+}
+
+func writeAuditJSON(outputPath string, payload any) error {
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if outputPath == "" {
+		_, err = os.Stdout.Write(data)
+		return err
+	}
+	if err := os.WriteFile(outputPath, data, 0o644); err != nil {
+		return err
+	}
+	fmt.Println(outputPath)
+	return nil
+}
+
+func readAuditJSON[T any](path string) (T, error) {
+	var value T
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return value, fmt.Errorf("read %s: %w", path, err)
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return value, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return value, nil
 }
 
 func doctor(loader config.Loader) error {

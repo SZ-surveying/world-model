@@ -1,8 +1,6 @@
 package helpers
 
 import (
-	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -77,18 +75,6 @@ func ExternalNavBridgeParamsOverride(spec SlamRuntimeSpec) string {
 	})
 }
 
-type SlamContainerSpec struct {
-	Image                  string
-	RuntimeConfigPath      string
-	Backend                string
-	SessionID              string
-	RosDomainID            string
-	RMWImplementation      string
-	WorkspaceHostPath      string
-	WorkspaceContainerPath string
-	User                   string
-}
-
 func DefaultSlamRuntimeSpec() SlamRuntimeSpec {
 	return SlamRuntimeSpec{
 		Backend:                            "cartographer",
@@ -116,17 +102,6 @@ func DefaultSlamRuntimeSpec() SlamRuntimeSpec {
 		IMUFrameID:                         "imu_link",
 		LaserFrameID:                       "base_scan",
 	}
-}
-
-func HoverSlamRuntimeSpec(spec SlamRuntimeSpec) SlamRuntimeSpec {
-	if spec.Backend == "" {
-		spec = DefaultSlamRuntimeSpec()
-	}
-	spec.CartographerConfigurationBasename = HoverCartographerConfigBasename
-	spec.IMUSourceTopic = "/imu"
-	spec.IMUTopic = "/navlab/slam/imu"
-	spec.OdometryTopic = CartographerOdometryInputTopic
-	return spec
 }
 
 func WriteSlamRuntimeConfig(path string, spec SlamRuntimeSpec) error {
@@ -199,57 +174,4 @@ func WriteSlamRuntimeConfig(path string, spec SlamRuntimeSpec) error {
 		return err
 	}
 	return os.WriteFile(path, encoded, 0o644)
-}
-
-func SlamDockerArgs(spec SlamContainerSpec) ([]string, error) {
-	if spec.Image == "" {
-		return nil, fmt.Errorf("slam image is required")
-	}
-	workspaceHostPath := spec.WorkspaceHostPath
-	if workspaceHostPath == "" {
-		workspaceHostPath = "."
-	}
-	workspaceContainerPath := spec.WorkspaceContainerPath
-	if workspaceContainerPath == "" {
-		workspaceContainerPath = "/workspace"
-	}
-	backend := spec.Backend
-	if backend == "" {
-		backend = "cartographer"
-	}
-	command := "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && " +
-		"source /opt/navlab_ws/install/setup.bash && " +
-		"exec python3 -m navlab.common.slam.cli launch --config " + shellQuote(spec.RuntimeConfigPath) +
-		" --backend " + shellQuote(backend)
-	args := []string{
-		"run",
-		"--detach",
-		"--name", SlamBackendContainer,
-		"--network", "host",
-		"--volume", workspaceHostPath + ":" + workspaceContainerPath,
-		"--workdir", workspaceContainerPath,
-		"--env", "SESSION_ID=" + spec.SessionID,
-		"--env", "ROS_DOMAIN_ID=" + spec.RosDomainID,
-		"--env", "RMW_IMPLEMENTATION=" + spec.RMWImplementation,
-		"--env", "PYTHONPATH=" + workspaceContainerPath,
-		"--env", "NAVLAB_SLAM_RUNTIME_CONFIG=" + spec.RuntimeConfigPath,
-	}
-	if spec.User != "" {
-		args = append(args, "--user", spec.User)
-	}
-	args = append(args, spec.Image, "bash", "-lc", command)
-	return args, nil
-}
-
-func StartSlamContainer(ctx context.Context, runner CommandRunner, spec SlamContainerSpec) error {
-	if runner == nil {
-		runner = ExecCommandRunner{}
-	}
-	_ = RemoveContainer(ctx, runner, SlamBackendContainer)
-	args, err := SlamDockerArgs(spec)
-	if err != nil {
-		return err
-	}
-	_, err = runner.Run(ctx, "docker", args...)
-	return err
 }

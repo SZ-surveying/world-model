@@ -1892,6 +1892,110 @@ Non-goals:
 - [ ] Do not introduce direct Go/Python library calls.
 - [ ] Do not make Gazebo review-only findings into real-flight hard blockers without a separate contract-promotion phase.
 
+### Phase 45 [hover-audit-package-split]: move hover audit logic out of tasks root
+
+目标：Phase 43/44 已经把 hover runtime gate、post-run audit、summary split 跑通；Phase 45 只做 Go 代码结构整理，把已经成型的 hover 审计子域从 `orchestration/sim/internal/tasks` 根目录移到独立 package，避免 `tasks` 继续平铺膨胀。
+
+Decision:
+
+- [x] Hover 审计逻辑本质是 artifact/probe 的分析器，不是 task runner 本身。
+- [x] 采用独立审计包结构，而不是继续放在 `tasks` 根目录：
+
+```text
+orchestration/sim/internal/audits/hover/
+  health.go
+  health_test.go
+  metrics.go
+  contract.go
+  contract_test.go
+  initialization.go
+  initialization_test.go
+  raw_source.go
+  raw_source_test.go
+  trajectory.go
+  trajectory_test.go
+```
+
+- [x] `orchestration/sim/internal/tasks` 只保留 task orchestration、runtime spec、artifact/gate 接入的薄适配层。
+- [x] `cmd/hover-*-audit` CLI 入口只调用 `internal/audits/hover`，不再承载审计实现细节。
+- [x] 本 phase 是纯结构重构，不改变 hover 审计阈值、FSM 行为、runtime gate 策略或 summary schema。
+
+Why this is the right split:
+
+- [x] `tasks` 当前职责是“调度任务并接 artifact/gate”，而 hover audit 文件职责是“解释 hover artifact/probe evidence”。
+- [x] 多个审计文件已经形成稳定族群：health、metrics、contract、initialization、raw source、trajectory。
+- [x] 后续如果增加 landing、takeoff、external-nav 审计，可以自然扩展为：
+
+```text
+orchestration/sim/internal/audits/
+  hover/
+  landing/
+  externalnav/
+```
+
+- [x] 迁移后 review 时可以更快区分“runtime 流程变更”和“审计指标/统计逻辑变更”。
+
+Implementation tasks:
+
+1. Package move:
+   - [x] Create `orchestration/sim/internal/audits/hover`.
+   - [x] Move hover audit implementation files from `orchestration/sim/internal/tasks`:
+     - [x] `hover_health_audit.go` -> `audits/hover/health.go`
+     - [x] `hover_health_metrics.go` -> `audits/hover/metrics.go`
+     - [x] `hover_contract_audit.go` -> `audits/hover/contract.go`
+     - [x] `hover_initialization_audit.go` -> `audits/hover/initialization.go`
+     - [x] `hover_raw_source_audit.go` -> `audits/hover/raw_source.go`
+     - [x] `hover_trajectory_audit.go` -> `audits/hover/trajectory.go`
+   - [x] Move matching tests with the same naming pattern.
+   - [x] Rename package from `tasks` to `hover` or `hoveraudit`; prefer `hover` under `audits/hover` because the import path already carries the audit context.
+2. Public API boundary:
+   - [x] Export only the functions/types needed by Go CLI commands and task artifact wiring.
+   - [x] Keep internal helper structs/functions unexported inside the package.
+   - [x] Avoid leaking task-runner concepts into the audit package unless they are already stable artifact contracts.
+   - [x] If a type is shared only for JSON/artifact schema, keep the name schema-oriented, not task-oriented.
+3. Tasks integration:
+   - [x] Update `runtime_artifacts.go`, `gate_evaluation.go`, or related task wiring to call `audits/hover`.
+   - [x] Keep `tasks` responsible for deciding when an audit runs and where artifacts are written.
+   - [x] Keep `audits/hover` responsible for reading evidence and producing audit results.
+   - [x] Do not introduce direct Go/Python calls; keep cross-language interaction through generated files, CLI args, env, ROS status/probe JSON, and artifact JSON.
+4. CLI integration:
+   - [x] Break the standalone `cmd/hover-*-audit` entrypoints and move them under `navlab-sim audit hover ...`.
+   - [x] Keep `navlab-sim` as the single Go CLI surface for hover audits.
+   - [x] Preserve audit flags, default output paths, JSON schema, and exit behavior on the new subcommands.
+5. Tests and verification:
+   - [x] Run package-local tests for the new audit package.
+   - [x] Run affected task tests to prove artifact/gate wiring still works.
+   - [x] Run all Go checks from the hook.
+   - [x] Run pre-commit after staging because hook checks staged files.
+
+45 execution result:
+
+- [x] Created `orchestration/sim/internal/audits/hover` and moved hover audit implementation into package `hover`.
+- [x] Kept `tasks` as the artifact/summary adapter via `BuildAndWriteHoverHealthSummaryArtifact` and `AttachHoverHealthToLiveRunSummary`.
+- [x] Updated hover audit CLIs to import `navlab/orchestration-sim/internal/audits/hover` directly.
+- [x] Consolidated standalone hover audit commands into `navlab-sim audit hover {health,contract,init,source,trajectory,gate-replay}` and removed the old command packages.
+- [x] Split live-summary attachment tests back into `tasks` so the new audit package does not import the task package.
+- [x] Added local CDR/test helpers inside the hover audit package to avoid depending on `tasks` test internals.
+- [x] Targeted Go verification passed: `go test ./internal/audits/... ./internal/tasks ./cmd/navlab-sim`.
+- [x] `.git/hooks/pre-commit` passed after staging the package split.
+
+Acceptance:
+
+- [x] No `hover_*_audit.go` implementation files remain directly under `orchestration/sim/internal/tasks`.
+- [x] `orchestration/sim/internal/tasks` contains only orchestration/adaptor code for hover audits, not audit algorithms.
+- [x] `navlab-sim audit hover ...` produces the same JSON schemas and exit behavior as the old standalone hover audit commands.
+- [x] Go tests pass for `./orchestration/sim/internal/audits/...`, `./orchestration/sim/internal/tasks/...`, and `./orchestration/sim/cmd/...`.
+- [x] `.git/hooks/pre-commit` passes after the package move is staged.
+- [x] Commit can be reviewed as a behavior-preserving refactor.
+
+Non-goals:
+
+- [ ] Do not tune thresholds such as `0.1m` / `0.15m`.
+- [ ] Do not change runtime hover FSM, stable-window timer, sim auto-continue, or real operator-confirm behavior.
+- [ ] Do not change `summary.json`, `mission_summary.json`, or audit artifact schemas.
+- [ ] Do not move Python runtime/FSM code in this phase.
+- [ ] Do not combine this with real launcher/operator UI integration.
+
 ## 已删除的旁路记录
 
 以下旁路内容已从主线删除，不再作为后续执行入口：

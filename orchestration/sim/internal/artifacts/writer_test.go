@@ -12,10 +12,10 @@ import (
 	"navlab/orchestration-sim/internal/tasks"
 )
 
-func TestWriteDryRunPlan(t *testing.T) {
+func TestWriteRunPlanCanMarkDryRun(t *testing.T) {
 	root := t.TempDir()
 	writer := NewWriter(root)
-	result, err := writer.WriteDryRunPlan(
+	result, err := writer.WriteRunPlan(
 		config.ProjectConfig{
 			Orchestration: config.OrchestrationConfig{
 				Family:          "sim",
@@ -33,9 +33,10 @@ func TestWriteDryRunPlan(t *testing.T) {
 			Steps:             []string{"load task YAML config"},
 		},
 		time.Date(2026, 6, 12, 1, 2, 3, 0, time.UTC),
+		RunPlanOptions{DryRun: true},
 	)
 	if err != nil {
-		t.Fatalf("WriteDryRunPlan() error = %v", err)
+		t.Fatalf("WriteRunPlan(dry-run) error = %v", err)
 	}
 	if result.RunID != "20260612T010203Z" {
 		t.Fatalf("RunID = %q, want 20260612T010203Z", result.RunID)
@@ -99,7 +100,7 @@ func TestWriteRunPlanCanMarkLiveRun(t *testing.T) {
 func TestAppendManifestArtifacts(t *testing.T) {
 	root := t.TempDir()
 	writer := NewWriter(root)
-	result, err := writer.WriteDryRunPlan(
+	result, err := writer.WriteRunPlan(
 		config.ProjectConfig{
 			Orchestration: config.OrchestrationConfig{
 				Family:          "sim",
@@ -110,9 +111,10 @@ func TestAppendManifestArtifacts(t *testing.T) {
 		},
 		tasks.Plan{TaskID: "hover"},
 		time.Date(2026, 6, 12, 1, 2, 3, 0, time.UTC),
+		RunPlanOptions{DryRun: true},
 	)
 	if err != nil {
-		t.Fatalf("WriteDryRunPlan() error = %v", err)
+		t.Fatalf("WriteRunPlan(dry-run) error = %v", err)
 	}
 	runtimePath := filepath.Join(result.ArtifactDir, "slam_runtime.toml")
 	if err := os.WriteFile(runtimePath, []byte("backend = \"cartographer\"\n"), 0o644); err != nil {

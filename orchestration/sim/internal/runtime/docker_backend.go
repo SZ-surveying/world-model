@@ -194,13 +194,6 @@ func DockerServiceArgs(spec ServiceSpec) ([]string, error) {
 	return args, nil
 }
 
-func DockerProbeArgs(spec ProbeSpec) ([]string, error) {
-	if err := spec.ValidateDocker(); err != nil {
-		return nil, err
-	}
-	return DockerServiceArgs(ProbeServiceSpec(spec))
-}
-
 func ProbeServiceSpec(spec ProbeSpec) ServiceSpec {
 	return ServiceSpec{
 		Name:          spec.Name,

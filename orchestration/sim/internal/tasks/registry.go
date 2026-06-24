@@ -190,15 +190,6 @@ func (registry *Registry) ConfigureOne(taskConfig config.TaskConfig) (Configured
 	return ConfiguredTask{Definition: definition, Config: taskConfig}, nil
 }
 
-func (registry *Registry) Names() []string {
-	names := make([]string, 0, len(registry.definitions))
-	for name := range registry.definitions {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 func normalizeID(id string) string {
 	return strings.TrimSpace(id)
 }
