@@ -10,10 +10,11 @@ import (
 var helperTemplates embed.FS
 
 type runtimeScriptTemplateData struct {
-	SpecJSON    string
-	TopicsJSON  string
-	NodeName    string
-	DurationSec float64
+	SpecJSON           string
+	TopicsJSON         string
+	OptionalTopicsJSON string
+	NodeName           string
+	DurationSec        float64
 }
 
 func renderRuntimeScriptTemplate(name string, payload []byte) (string, error) {

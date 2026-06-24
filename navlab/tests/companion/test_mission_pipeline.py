@@ -291,9 +291,9 @@ def test_hover_pipeline_runner_starts_landing_on_terminal_hover() -> None:
     assert outcome.status == "landing_started"
     assert runner.landing_started is True
     assert published == ["complete"]
-    assert landing_starts == [(16.0, "hover_unstable")]
+    assert landing_starts == [(16.0, "hover_samples_missing")]
     assert ctx.state.hover.body_ok is False
-    assert ctx.state.hover.body_reason == "hover_unstable"
+    assert ctx.state.hover.body_reason == "hover_samples_missing"
     assert fsm_events[-1] == ("S7 pre_land_hold", "hover_complete", None)
 
 

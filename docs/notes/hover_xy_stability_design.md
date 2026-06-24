@@ -231,3 +231,215 @@ Date: 2026-06-23
 - 不能说 SLAM 每轮都稳定。
 - 不能说只要 replay 画面对了，真实 hover drift 就合格。
 
+## 2026-06-23 复查：为什么有时过、有时不过
+
+复查对象：
+
+- pass: `20260623T045927Z`, `20260623T081943Z`, `20260623T123111Z`
+- blocked: `20260623T090519Z`, `20260623T090829Z`, `20260623T120635Z`, `20260623T123615Z`
+
+关键差异不是配置漂移，也不是 P7.9 package refactor：
+
+- 所有复查 run 仍使用 hover + Cartographer + ExternalNav 链路。
+- `hover_mission.runtime.log` 没有 import / traceback 类错误。
+- P7.9 后的 `20260623T123111Z` 还能达到 `mission_summary.ok=true`、
+  `mission_fsm_state=S13 task_success`、`landing.ok=true`。
+- 失败集中在 live XY evidence：Gazebo / FCU local / SLAM corrected /
+  ExternalNav drift 或方向不一致。
+
+### 复查表
+
+| Run | Task | Mission | Hover hold | Mission drift | Mission span | Gazebo drift | ExternalNav drift | SLAM corrected drift | FCU local drift | mid-hover jump |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `20260623T045927Z` | OK | `S13 task_success` | `18.0s` | `0.018m` | `0.045m` | `0.032m` | `0.038m` | `0.042m` | `0.025m` | no |
+| `20260623T081943Z` | OK | `S13 task_success` | `17.9s` | `0.032m` | `0.098m` | `0.069m` | `0.081m` | `0.099m` | `0.055m` | no |
+| `20260623T090519Z` | BLOCKED | `S13 task_success` | `17.9s` | `0.100m` | `0.211m` | `0.574m` | `0.488m` | `0.306m` | `0.143m` | yes, at `t=45.815s` |
+| `20260623T090829Z` | BLOCKED | `S13 task_success` | `18.0s` | `0.062m` | `0.266m` | `0.193m` | `0.340m` | `0.354m` | `0.137m` | no recorded bridge event, but high source drift |
+| `20260623T123111Z` | BLOCKED | `S13 task_success` | `18.0s` | `0.017m` | `0.088m` | `0.076m` | `0.085m` | `0.120m` | `0.045m` | no; only XY direction gate remained |
+| `20260623T123615Z` | BLOCKED | `S12 landing_complete` | `8.2s` | `0.167m` | `0.309m` | `0.756m` | `0.343m` | `0.422m` | `0.199m` | yes, at `t=36.477s` |
+
+### 直接原因
+
+`20260623T123615Z` 是最清楚的失败样本：
+
+- Hover hold 从 `t=28.200s` 开始。
+- ExternalNav 在 `t=36.477s` 报 `slam_quality_jump / pose_or_yaw_jump`。
+- Hover FSM 在 `t=36.500s` 从 `S6 hover_hold` 退回 `S1 wait_nav_ready`。
+- 约 `1.05s` 后以 `slam_quality_lost_after_airborne` 进入 `S_abort`。
+- Landing suffix 正常完成，所以最终是 `S12 landing_complete`，不是 crash。
+
+对应 probe 证据：
+
+- `/external_nav/status` 最终为 `ready=false`, `slam_quality=jump`,
+  `slam_quality_reason=pose_or_yaw_jump`。
+- `slam_quality_report.max_observed_position_jump_m=1.767`，超过
+  `max_position_jump_m=0.75`。
+- `slam_quality_report.max_observed_yaw_jump_rad=3.119`，超过
+  `max_yaw_jump_rad=0.75`，接近 180 度 yaw flip。
+- Scan geometry 本身不是 missing：`scan_geometry_observable=true`，
+  `hit_ratio=0.865`，`observed_quadrants=4`。
+
+所以这轮不是“没有 scan / 没有 ExternalNav”，而是 Cartographer/scan-derived
+pose 在 hover 中途出现了大幅 position/yaw jump，ExternalNav bridge 按设计
+fail-closed，任务随后触发 airborne 后定位丢失保护。
+
+`20260623T090519Z` 是另一类样本：
+
+- Mission body 自己还能 `hover_complete`，因为最终 displacement 接近阈值：
+  `horizontal_drift_m=0.0997m`。
+- 但窗口 span 已经明显失败：`horizontal_span_m=0.211m`。
+- Gate 看到 Gazebo / ExternalNav / SLAM / FCU local 全部漂或方向不一致，因此
+  top-level blocked。
+- `/external_nav/status` probe 同样记录 `max_observed_position_jump_m=1.968`、
+  `max_observed_yaw_jump_rad=3.119`。
+
+这解释了“有时可以，有时不行”：pass 轮只有启动早期 jump，随后 hover window
+内没有再触发大跳变；fail 轮在 hover window 内或 hover 末尾又发生一次
+Cartographer/ExternalNav pose/yaw jump，或者虽然没有 bridge event，窗口 span
+和多源 XY 已经被漂移污染。
+
+### 为什么会随机
+
+当前链路是：
+
+```text
+scan / IMU / scan-reference prior
+  -> Cartographer hover profile
+  -> /slam/odom
+  -> scan_reference_correction
+  -> /external_nav/odom_candidate
+  -> external_nav_bridge quality gate
+  -> /external_nav/odom
+  -> MAVLink ExternalNav
+  -> ArduPilot EKF local position
+  -> GUIDED hold setpoint controller
+```
+
+这条链路里有两个会导致 run-to-run 差异的点：
+
+1. **Cartographer local pose 解算在 hover 场景里仍可能跳。**
+   - 当前 hover profile 是 scan-led，`translation_weight=1`，
+     `rotation_weight=10`，启用了 online correlative scan matching。
+   - 官方 Cartographer tuning 文档也强调 scan matcher 和 prior 权重会影响
+     是否“slip”；pure localization / online localization 还要求低延迟和实时处理。
+   - 我们的 log 中 Cartographer scan rate 经常显示 pulsed at `~65%-70%`
+     real time；这未必单独导致失败，但说明在线 localization margin 不大。
+
+2. **ExternalNav fail-closed 会把跳变转成控制输入中断。**
+   - ArduPilot 官方 Non-GPS / ExternalNav 文档要求外部位置估计持续以至少
+     `4Hz` 送入 EKF；ODOMETRY 是推荐方式。
+   - 当 bridge 检测到 `pose_or_yaw_jump` 后，`/external_nav/odom` 不再发布
+     healthy output，MAVLink ExternalNav / FCU local readiness 随后变差。
+   - 飞控此时仍在 GUIDED hold；如果 EKF local pose 已经跟着污染源漂移，
+     Gazebo/FCU/SLAM/ExternalNav 的 XY evidence 就会出现不同方向或不同量级。
+
+### 当前最可能的根因链
+
+不是单一 threshold，而是定位链路不够稳定：
+
+1. hover 起飞后，Cartographer/scan-reference 的 XY/yaw estimate 有时保持稳定，
+   有时在 hover window 内产生大幅 position/yaw jump。
+2. ExternalNav bridge 正确地检测 jump 并 fail-closed；这保护了真机安全，但会让
+   hover mission 失去 ExternalNav readiness。
+3. 如果 jump 发生在 hover hold 中段，mission 直接 abort 到 landing。
+4. 如果 jump 发生在 hover 接近完成或 mission 没有把 span 作为 hard gate，
+   mission 可能仍显示 `hover_complete`，但 top-level gate 会根据多源 XY span /
+   drift / direction disagreement block。
+
+因此“有时候可以”不是说明系统稳定，而是该轮没有在 hover window 里遇到足够大的
+Cartographer/ExternalNav jump；“现在又不行”是同一随机/边界稳定性问题再次出现。
+
+### 追加发现：source selector 的 fail-closed 语义不够硬
+
+代码复查发现 `external_nav_source_selector.py` 的行为和服务名
+`fail_closed_external_nav_source_selector` 不完全一致：
+
+- 当 scan-reference 不可用、quality 不好、sign flip、非 hover correction phase
+  或 status stale 时，`select_external_nav_source()` 返回
+  `source="slam_passthrough"`。
+- `_publish_status()` 只要 source 不是 `waiting` 就发布 `ready=true`。
+- `_handle_slam_odom()` 无论 decision 是否带 blockers，都会发布
+  `/external_nav/odom_candidate`。
+
+对应测试也把这种行为固化了：
+
+- `test_quality_bad_fails_closed_to_slam_passthrough`
+- `test_stale_scan_status_fails_closed`
+- `test_sign_flip_fails_closed`
+- `test_non_hover_phase_fails_closed`
+
+也就是说，当前所谓 fail-closed 实际是“scan-reference 不合格时退回
+Cartographer SLAM passthrough”，不是“停止发布/hold last safe pose”。这在
+Cartographer 本身稳定时能通过；一旦 Cartographer 出现 pose/yaw jump，selector
+仍会把 jump 继续送到 `/external_nav/odom_candidate`，再由 ExternalNav bridge
+后置检测并停发 `/external_nav/odom`。这解释了：
+
+- 为什么 pass 轮能过：`slam_passthrough` 在该轮 hover window 内足够稳定。
+- 为什么 fail 轮会突然不过：`slam_passthrough` 在 hover window 内发生 jump 或
+  与 scan-reference 明显 disagreement。
+- 为什么 `/external_nav/source_selector/status` 经常显示 `ready=true` 且
+  `source=slam_passthrough`，同时 `blockers` 又包含
+  `scan_reference_quality_not_good` / `scan_reference_xy_axes_not_allowed`。
+
+这不是单纯的 Cartographer 参数问题；当前 source selector 策略也把不稳定
+Cartographer 输出暴露给下游了。更准确的修复方向应是：
+
+- hover phase 内 scan-reference 不合格时优先 `scan_reference_hold`，TTL 超时后
+  进入 `not_ready` / stop publishing，而不是无限 `slam_passthrough`。
+- source selector status 的 `ready` 应表示“输出可作为 ExternalNav 输入”，不能只看
+  source 是否非 waiting。
+- 若保留 `slam_passthrough`，至少要加 max step / max yaw step gate，并在
+  `cartographer_scan_disagreement=true` 时 fail closed。
+- tests 名称和断言要同步改掉，避免继续把 passthrough 误称为 fail-closed。
+
+### 上网核对的外部依据
+
+- ArduPilot Non-GPS Position Estimation:
+  https://ardupilot.org/dev/docs/mavlink-nongps-position-estimation.html
+  - ExternalNav 是给 EKF 的外部 position/velocity estimate。
+  - 推荐 MAVLink `ODOMETRY`。
+  - 外部估计消息应持续以 `4Hz` 或更高频率发送。
+  - ODOMETRY `quality` 和 covariance 会影响 EKF 是否使用该估计。
+- ArduPilot Guided Mode:
+  https://ardupilot.org/copter/docs/ac2_guidedmode.html
+  - companion computer 可以用 GUIDED 控制运动。
+  - `GUID_OPTIONS` 可关闭 XY position / velocity stabilization；当前必须确认没有误设。
+  - `GUID_TIMEOUT` 说明 offboard command cadence 对 GUIDED 控制有安全影响。
+- ArduPilot Guided MAVLink commands:
+  https://ardupilot.org/dev/docs/copter-commands-in-guided-mode.html
+  - `SET_POSITION_TARGET_LOCAL_NED` 的 position / velocity / acceleration 三轴语义必须完整。
+  - velocity/acceleration command 需要周期重发；位置 target 也不应在 hover 中长时间停发。
+- Cartographer ROS tuning:
+  https://google-cartographer-ros.readthedocs.io/en/latest/tuning.html
+  - scan matcher prior 权重会影响 slippage。
+  - online localization 需要低延迟，global SLAM 跟不上会让 drift 积累。
+  - tuning 应针对平台和多组数据，而不是单个 bag。
+
+### 下一步调查/修复建议
+
+优先级从高到低：
+
+1. **把 ExternalNav bridge 的 jump evidence 写进 summary。**
+   - 当前 mission status history 只保留 `slam_quality_jump`，但没有带出
+     `max_observed_position_jump_m` / `max_observed_yaw_jump_rad`。
+   - 这会让失败原因看起来像普通 readiness loss，实际是 pose/yaw jump。
+
+2. **在 hover gate 里输出 per-source timeline，而不是只输出 final vector。**
+   - 当前 final vector 能说明方向不一致，但不能直接定位 jump 发生时间。
+   - 需要输出 hover window 内每个 source 的 first/max/final、max step、yaw step。
+
+3. **修 mission acceptance：`horizontal_span_ok` 必须参与 `hover_body_ok`。**
+   - `20260623T090519Z` / `090829Z` 说明 final drift 可能过线，但窗口 span 已失败。
+   - Mission 和 top-level gate 应对“稳定 hover”的语义一致。
+
+4. **先修定位 fail-closed，再调控制。**
+   - 如果 scan-reference status 已经 `quality_not_good` / inlier 低 / residual 高，
+     source selector 不应继续让明显跳变的 `slam_passthrough` 污染 ExternalNav。
+   - 可选：hover phase 内对 `/external_nav/odom_candidate` 增加 max-step / max-yaw-step
+     gate，超限时 hold last good 或停止发布，让 bridge 不再先收到 jump。
+
+5. **再做 Cartographer / scan-reference tuning。**
+   - 检查 `translation_weight` / `rotation_weight` / `optimize_every_n_nodes` /
+     correlative search window 是否导致偶发 yaw flip。
+   - 目标是连续 3-5 轮没有 hover-window `pose_or_yaw_jump`，且 Gazebo/FCU/SLAM/
+     ExternalNav drift 都 `<0.1m`。

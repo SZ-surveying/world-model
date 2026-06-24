@@ -53,6 +53,17 @@ class HoverRequirements:
 
 
 @dataclass(frozen=True, slots=True)
+class HoverHealthGateConfig:
+    """Runtime proceed gate applied after the vehicle reaches hover hold."""
+
+    min_observation_sec: float = 10.0
+    stable_required_sec: float = 5.0
+    max_wait_sec: float = 60.0
+    operator_confirm_required: bool = False
+    operator_confirm_timeout_sec: float = 60.0
+
+
+@dataclass(frozen=True, slots=True)
 class HoverHoldConfig:
     """Configuration for the executable hover-body stage."""
 
@@ -63,6 +74,7 @@ class HoverHoldConfig:
     hover_altitude_tolerance_m: float = 0.18
     send_position_setpoints: bool = True
     requirements: HoverRequirements = HoverRequirements()
+    health_gate: HoverHealthGateConfig = HoverHealthGateConfig()
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +87,14 @@ class HoverDecision:
     should_arm: bool = False
     should_takeoff: bool = False
     terminal: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class HoverHealthGateResult:
+    """Typed result from the pre-task hover health gate."""
+
+    decision: HoverDecision
+    payload: dict[str, object]
 
 
 def hover_inputs_from_context(ctx: MissionContext) -> HoverInputs:
@@ -124,21 +144,24 @@ def decide_hover(
     requirements = requirements or HoverRequirements()
     if inputs.airborne_seen and not inputs.armed_seen:
         return HoverDecision("abort", "disarmed_after_airborne", terminal=True)
+    loss_abort_ready = inputs.airborne_seen and (
+        inputs.airborne_elapsed_sec >= hover_settle_sec or inputs.hover_elapsed_sec > 0.0
+    )
     if (
-        inputs.airborne_seen
+        loss_abort_ready
         and requirements.require_external_nav
         and not inputs.slam_quality_good
         and inputs.slam_quality_loss_duration_sec >= requirements.external_nav_loss_grace_sec
     ):
         return HoverDecision("abort", "slam_quality_lost_after_airborne", terminal=True)
     if (
-        inputs.airborne_seen
+        loss_abort_ready
         and requirements.require_external_nav
         and not inputs.external_nav_ready
         and inputs.external_nav_loss_duration_sec >= requirements.external_nav_loss_grace_sec
     ):
         return HoverDecision("abort", "external_nav_lost_after_airborne", terminal=True)
-    if inputs.airborne_seen and requirements.require_fcu_external_nav:
+    if loss_abort_ready and requirements.require_fcu_external_nav:
         if (
             not inputs.mavlink_external_nav_ready
             and inputs.mavlink_external_nav_loss_duration_sec >= requirements.external_nav_loss_grace_sec
@@ -163,7 +186,7 @@ def decide_hover(
         return HoverDecision("wait_ready", "waiting_for_external_nav_and_imu")
     if inputs.current_yaw_rad is None:
         return HoverDecision("wait_ready", "waiting_for_fcu_attitude")
-    if inputs.ready_elapsed_sec < preflight_ready_sec:
+    if not inputs.airborne_seen and inputs.ready_elapsed_sec < preflight_ready_sec:
         return HoverDecision("wait_ready", "waiting_for_stable_external_nav_and_imu")
     if inputs.airborne_seen and not inputs.expected_mode_seen:
         return HoverDecision("abort", "guided_mode_lost_after_airborne", terminal=True)
@@ -188,18 +211,259 @@ def decide_hover(
         return HoverDecision("complete", "hover_complete", terminal=True)
     if not independent_height_ok:
         return HoverDecision("hover_settle", "waiting_for_independent_takeoff_height")
-    target_z_ned = inputs.target_z_ned if inputs.target_z_ned is not None else -takeoff_alt_m
-    if inputs.current_z_ned is not None:
-        if abs(inputs.current_z_ned - target_z_ned) > hover_altitude_tolerance_m:
-            return HoverDecision("hover_settle", "settling_until_target_altitude")
-    elif inputs.current_height_m is not None:
-        if abs(inputs.current_height_m - takeoff_alt_m) > hover_altitude_tolerance_m:
-            return HoverDecision("hover_settle", "settling_until_target_altitude")
-    else:
+    if not hover_altitude_target_reached(
+        inputs,
+        takeoff_alt_m=takeoff_alt_m,
+        hover_altitude_tolerance_m=hover_altitude_tolerance_m,
+    ):
         return HoverDecision("hover_settle", "settling_until_target_altitude")
     if inputs.hover_elapsed_sec < hover_hold_sec:
         return HoverDecision("hover_hold", "holding_position")
     return HoverDecision("complete", "hover_complete", terminal=True)
+
+
+def apply_hover_health_gate(
+    ctx: MissionContext,
+    inputs: HoverInputs,
+    decision: HoverDecision,
+    *,
+    config: HoverHealthGateConfig,
+    requirements: HoverRequirements,
+) -> HoverHealthGateResult:
+    """Apply the runtime hover-health proceed gate without shortening hover acceptance."""
+
+    band, health_reason, blockers = classify_hover_health(inputs, decision, requirements=requirements)
+    state = ctx.state.hover
+    now = ctx.clock.now_monotonic
+    gate_active = decision.phase in {"hover_hold", "complete"} or state.health_started_at_monotonic is not None
+
+    if not gate_active:
+        _update_hover_health_state(
+            ctx,
+            band=band,
+            phase=decision.phase,
+            reason=health_reason,
+            operator_allowed=False,
+            reset_green=True,
+        )
+        return HoverHealthGateResult(decision, hover_health_payload(ctx, config=config, blockers=blockers))
+
+    if state.health_started_at_monotonic is None:
+        state.health_started_at_monotonic = now
+
+    if band == "green":
+        if state.health_green_since_monotonic is None:
+            state.health_green_since_monotonic = now
+    else:
+        state.health_green_since_monotonic = None
+        state.operator_confirm_received = False
+        state.operator_confirm_started_at_monotonic = None
+
+    observed_sec = max(0.0, now - state.health_started_at_monotonic)
+    stable_sec = (
+        0.0 if state.health_green_since_monotonic is None else max(0.0, now - state.health_green_since_monotonic)
+    )
+    state.health_observed_sec = observed_sec
+    state.health_stable_sec = stable_sec
+    min_observation_sec = max(0.0, config.min_observation_sec)
+    stable_required_sec = max(0.0, config.stable_required_sec)
+    min_observation_met = observed_sec >= min_observation_sec
+    stable_met = stable_sec >= stable_required_sec
+
+    if band == "red":
+        _update_hover_health_state(
+            ctx,
+            band=band,
+            phase="hover_health_blocked",
+            reason=health_reason,
+            operator_allowed=False,
+        )
+        red_decision = HoverDecision("abort", health_reason, terminal=True)
+        return HoverHealthGateResult(red_decision, hover_health_payload(ctx, config=config, blockers=blockers))
+
+    if (
+        config.max_wait_sec > 0.0
+        and observed_sec >= config.max_wait_sec
+        and not (band == "green" and min_observation_met and stable_met)
+    ):
+        reason = "hover_health_timeout"
+        _update_hover_health_state(
+            ctx,
+            band="red",
+            phase="hover_health_blocked",
+            reason=reason,
+            operator_allowed=False,
+        )
+        timeout_decision = HoverDecision("abort", reason, terminal=True)
+        return HoverHealthGateResult(
+            timeout_decision,
+            hover_health_payload(ctx, config=config, blockers=[*blockers, reason]),
+        )
+
+    proceed_allowed = False
+    operator_allowed = False
+    if band != "green":
+        health_phase = "hover_health_hold"
+        reason = health_reason
+    elif not min_observation_met:
+        health_phase = "hover_health_hold"
+        reason = "hover_health_waiting_min_observation"
+        state.operator_confirm_received = False
+    elif not stable_met:
+        health_phase = "hover_health_hold"
+        reason = "hover_health_waiting_stable_window"
+        state.operator_confirm_received = False
+    elif decision.phase != "complete":
+        health_phase = "hover_health_hold"
+        reason = "hover_health_waiting_hover_duration"
+        state.operator_confirm_received = False
+    elif config.operator_confirm_required:
+        operator_allowed = True
+        if state.operator_confirm_started_at_monotonic is None:
+            state.operator_confirm_started_at_monotonic = now
+        if state.operator_confirm_received:
+            health_phase = "operator_confirmed"
+            reason = "operator_confirmed"
+            proceed_allowed = True
+        elif (
+            config.operator_confirm_timeout_sec > 0.0
+            and now - state.operator_confirm_started_at_monotonic >= config.operator_confirm_timeout_sec
+        ):
+            reason = "operator_confirm_timeout"
+            _update_hover_health_state(
+                ctx,
+                band="red",
+                phase="hover_health_blocked",
+                reason=reason,
+                operator_allowed=False,
+            )
+            timeout_decision = HoverDecision("abort", reason, terminal=True)
+            return HoverHealthGateResult(
+                timeout_decision,
+                hover_health_payload(ctx, config=config, blockers=[*blockers, reason]),
+            )
+        else:
+            health_phase = "operator_confirm"
+            reason = "waiting_for_operator_confirm"
+    else:
+        health_phase = "sim_auto_continue"
+        reason = "hover_health_green_stable"
+        proceed_allowed = True
+
+    _update_hover_health_state(
+        ctx,
+        band=band,
+        phase=health_phase,
+        reason=reason,
+        operator_allowed=operator_allowed,
+    )
+
+    if decision.phase == "complete" and not proceed_allowed:
+        gated_decision = HoverDecision("hover_hold", reason)
+        return HoverHealthGateResult(gated_decision, hover_health_payload(ctx, config=config, blockers=blockers))
+    if decision.phase == "hover_hold" and health_phase in {"hover_health_hold", "operator_confirm"}:
+        gated_decision = HoverDecision("hover_hold", reason)
+        return HoverHealthGateResult(gated_decision, hover_health_payload(ctx, config=config, blockers=blockers))
+    return HoverHealthGateResult(decision, hover_health_payload(ctx, config=config, blockers=blockers))
+
+
+def classify_hover_health(
+    inputs: HoverInputs,
+    decision: HoverDecision,
+    *,
+    requirements: HoverRequirements,
+) -> tuple[str, str, list[str]]:
+    """Classify live hover readiness as green/yellow/red for proceed gating."""
+
+    if decision.phase == "abort" or decision.terminal and decision.reason != "hover_complete":
+        reason = decision.reason or "hover_health_red"
+        return "red", reason, [reason]
+
+    blockers: list[str] = []
+    if not inputs.airborne_seen:
+        blockers.append("not_airborne")
+    if not inputs.armed_seen:
+        blockers.append("not_armed")
+    if not inputs.expected_mode_seen:
+        blockers.append("guided_mode_not_confirmed")
+    if requirements.require_external_nav:
+        if not inputs.slam_quality_good:
+            blockers.append("slam_quality_not_green")
+        if not inputs.external_nav_ready:
+            blockers.append("external_nav_not_ready")
+    if requirements.require_fcu_external_nav:
+        if not inputs.mavlink_external_nav_ready:
+            blockers.append("mavlink_external_nav_not_ready")
+        if not inputs.fcu_local_position_ready:
+            blockers.append("fcu_local_position_not_ready")
+    if requirements.require_imu_status and not inputs.imu_ready:
+        blockers.append("imu_not_ready")
+
+    if blockers:
+        return "yellow", blockers[0], blockers
+    return "green", "hover_health_green", []
+
+
+def hover_health_payload(
+    ctx: MissionContext,
+    *,
+    config: HoverHealthGateConfig,
+    blockers: list[str] | None = None,
+) -> dict[str, object]:
+    """Build a status payload from the owned hover-health gate state."""
+
+    state = ctx.state.hover
+    confirm_elapsed_sec = (
+        None
+        if state.operator_confirm_started_at_monotonic is None
+        else max(0.0, ctx.clock.now_monotonic - state.operator_confirm_started_at_monotonic)
+    )
+    return {
+        "phase": state.health_phase,
+        "runtime_phase_alias": (
+            "hover_hold" if state.health_phase in {"hover_health_hold", "operator_confirm"} else state.health_phase
+        ),
+        "band": state.health_band,
+        "reason": state.health_reason,
+        "blockers": list(blockers or []),
+        "observed_sec": state.health_observed_sec,
+        "stable_sec": state.health_stable_sec,
+        "operator_confirm_required": config.operator_confirm_required,
+        "operator_confirm_allowed": state.operator_confirm_allowed,
+        "operator_confirm_received": state.operator_confirm_received,
+        "operator_confirm_elapsed_sec": confirm_elapsed_sec,
+        "sim_auto_continue_allowed": state.health_band == "green"
+        and not config.operator_confirm_required
+        and state.health_phase == "sim_auto_continue",
+        "real_operator_confirm_allowed": state.operator_confirm_allowed,
+        "min_observation_sec": config.min_observation_sec,
+        "stable_required_sec": config.stable_required_sec,
+        "max_wait_sec": config.max_wait_sec,
+        "operator_confirm_timeout_sec": config.operator_confirm_timeout_sec,
+    }
+
+
+def _update_hover_health_state(
+    ctx: MissionContext,
+    *,
+    band: str,
+    phase: str,
+    reason: str,
+    operator_allowed: bool,
+    reset_green: bool = False,
+) -> None:
+    """Persist the latest gate classification in the shared hover state."""
+
+    state = ctx.state.hover
+    state.health_band = band
+    state.health_phase = phase
+    state.health_reason = reason
+    state.operator_confirm_allowed = operator_allowed
+    if reset_green:
+        state.health_green_since_monotonic = None
+        state.health_observed_sec = 0.0
+        state.health_stable_sec = 0.0
+        state.operator_confirm_started_at_monotonic = None
 
 
 class HoverHoldStage:
@@ -225,6 +489,14 @@ class HoverHoldStage:
             takeoff_alt_m=self._config.takeoff_alt_m,
             hover_altitude_tolerance_m=self._config.hover_altitude_tolerance_m,
         )
+        health_gate = apply_hover_health_gate(
+            ctx,
+            inputs,
+            decision,
+            config=self._config.health_gate,
+            requirements=self._config.requirements,
+        )
+        decision = health_gate.decision
         should_send_hold_setpoint = should_send_position_hold_setpoint(
             send_position_setpoints=self._config.send_position_setpoints,
             inputs=inputs,
@@ -239,6 +511,7 @@ class HoverHoldStage:
             "terminal": decision.terminal,
             "should_send_hold_setpoint": should_send_hold_setpoint,
             "command_sent": command_sent,
+            "hover_health": health_gate.payload,
         }
         fsm_state = mission_fsm_state_for_hover_phase(decision.phase)
         if decision.phase == "abort":
@@ -351,20 +624,80 @@ def height_reaches_target(value_m: float | None, *, target_alt_m: float, toleran
     return abs(value - target_alt_m) <= tolerance_m
 
 
+def local_z_reaches_target(
+    current_z_ned: float | None,
+    *,
+    target_z_ned: float | None,
+    takeoff_alt_m: float,
+    tolerance_m: float,
+) -> bool:
+    """Return whether local-NED z is within the configured target altitude."""
+
+    if current_z_ned is None:
+        return False
+    value = float(current_z_ned)
+    if not math.isfinite(value):
+        return False
+    target = float(target_z_ned) if target_z_ned is not None else -float(takeoff_alt_m)
+    if not math.isfinite(target):
+        return False
+    return abs(value - target) <= tolerance_m
+
+
+def hover_altitude_source_votes(
+    inputs: HoverInputs,
+    *,
+    takeoff_alt_m: float,
+    hover_altitude_tolerance_m: float,
+) -> dict[str, bool]:
+    """Return target-altitude agreement from the independent hover height sources."""
+
+    return {
+        "external_nav_height": height_reaches_target(
+            inputs.external_nav_height_m,
+            target_alt_m=takeoff_alt_m,
+            tolerance_m=hover_altitude_tolerance_m,
+        ),
+        "rangefinder_relative_height": height_reaches_target(
+            inputs.rangefinder_relative_height_m,
+            target_alt_m=takeoff_alt_m,
+            tolerance_m=hover_altitude_tolerance_m,
+        ),
+        "fcu_local_z": local_z_reaches_target(
+            inputs.current_z_ned,
+            target_z_ned=inputs.target_z_ned,
+            takeoff_alt_m=takeoff_alt_m,
+            tolerance_m=hover_altitude_tolerance_m,
+        ),
+    }
+
+
+def hover_altitude_target_reached(
+    inputs: HoverInputs,
+    *,
+    takeoff_alt_m: float,
+    hover_altitude_tolerance_m: float,
+) -> bool:
+    """Require ExternalNav height plus one other altitude source at target."""
+
+    votes = hover_altitude_source_votes(
+        inputs,
+        takeoff_alt_m=takeoff_alt_m,
+        hover_altitude_tolerance_m=hover_altitude_tolerance_m,
+    )
+    return bool(votes["external_nav_height"] and (votes["rangefinder_relative_height"] or votes["fcu_local_z"]))
+
+
 def independent_takeoff_height_reached(
     inputs: HoverInputs,
     *,
     takeoff_alt_m: float,
     hover_altitude_tolerance_m: float,
 ) -> bool:
-    """Require external-nav and rangefinder height to agree with takeoff target."""
+    """Require ExternalNav height and a second height source to agree with target."""
 
-    return height_reaches_target(
-        inputs.external_nav_height_m,
-        target_alt_m=takeoff_alt_m,
-        tolerance_m=hover_altitude_tolerance_m,
-    ) and height_reaches_target(
-        inputs.rangefinder_relative_height_m,
-        target_alt_m=takeoff_alt_m,
-        tolerance_m=hover_altitude_tolerance_m,
+    return hover_altitude_target_reached(
+        inputs,
+        takeoff_alt_m=takeoff_alt_m,
+        hover_altitude_tolerance_m=hover_altitude_tolerance_m,
     )

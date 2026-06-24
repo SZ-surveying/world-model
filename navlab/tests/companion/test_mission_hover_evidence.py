@@ -112,3 +112,80 @@ def test_hover_evidence_recorder_evaluates_completion_and_frozen_evidence() -> N
     assert frozen["hover_body_ok"] is True
     assert frozen["hover_drift"]["sample_count"] == 2
     assert frozen["takeoff_ack_ok"] is True
+
+
+def test_hover_completion_rejects_large_span_even_when_endpoint_drift_is_small() -> None:
+    recorder = HoverEvidenceRecorder()
+
+    recorder.update_phase(phase="hover_hold", now_monotonic=10.0, terminal=False)
+    _append_sample(recorder, now=10.0, x=0.0, y=0.0)
+    _append_sample(recorder, now=11.0, x=0.2, y=0.0)
+    _append_sample(recorder, now=12.0, x=0.0, y=0.0)
+
+    evaluation = recorder.evaluate_completion(
+        target_alt_m=0.45,
+        altitude_tolerance_m=0.1,
+        hold_sec=2.0,
+        duration_tolerance_sec=0.25,
+        max_horizontal_drift_m=0.1,
+        max_altitude_drift_m=0.1,
+        local_position_count=3,
+        crash_detected=False,
+    )
+
+    assert evaluation.ok is False
+    assert evaluation.reason == "hover_span_unstable"
+    assert evaluation.drift.horizontal_drift_m == 0.0
+    assert evaluation.acceptance["horizontal_drift_ok"] is True
+    assert evaluation.acceptance["horizontal_span_ok"] is False
+
+
+def test_hover_completion_rejects_external_nav_loss_after_airborne() -> None:
+    recorder = HoverEvidenceRecorder()
+
+    recorder.update_phase(phase="hover_hold", now_monotonic=10.0, terminal=False)
+    _append_sample(recorder, now=10.0, x=0.0, y=0.0)
+    _append_sample(recorder, now=12.0, x=0.02, y=0.0)
+
+    evaluation = recorder.evaluate_completion(
+        target_alt_m=0.45,
+        altitude_tolerance_m=0.1,
+        hold_sec=2.0,
+        duration_tolerance_sec=0.25,
+        max_horizontal_drift_m=0.1,
+        max_altitude_drift_m=0.1,
+        local_position_count=3,
+        crash_detected=False,
+        external_nav_loss_duration_sec=1.2,
+    )
+
+    assert evaluation.ok is False
+    assert evaluation.reason == "external_nav_lost_after_airborne"
+    assert evaluation.acceptance["no_external_nav_loss_after_airborne"] is False
+
+
+def test_hover_completion_rejects_slam_quality_jump() -> None:
+    recorder = HoverEvidenceRecorder()
+
+    recorder.update_phase(phase="hover_hold", now_monotonic=10.0, terminal=False)
+    _append_sample(recorder, now=10.0, x=0.0, y=0.0)
+    _append_sample(recorder, now=12.0, x=0.02, y=0.0)
+
+    evaluation = recorder.evaluate_completion(
+        target_alt_m=0.45,
+        altitude_tolerance_m=0.1,
+        hold_sec=2.0,
+        duration_tolerance_sec=0.25,
+        max_horizontal_drift_m=0.1,
+        max_altitude_drift_m=0.1,
+        local_position_count=3,
+        crash_detected=False,
+        slam_quality="jump",
+        slam_quality_reason="pose_or_yaw_jump",
+    )
+    frozen = evaluation.frozen_hover_evidence(takeoff_ack_ok=True, crash_detected=False)
+
+    assert evaluation.ok is False
+    assert evaluation.reason == "slam_quality_jump_in_hover_window"
+    assert evaluation.acceptance["no_slam_quality_jump_in_hover_window"] is False
+    assert frozen["hover_acceptance"]["slam_quality_reason"] == "pose_or_yaw_jump"

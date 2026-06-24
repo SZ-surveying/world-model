@@ -80,10 +80,10 @@ def test_ros_enu_position_maps_to_mavlink_local_frd_axes() -> None:
     )
 
 
-def test_ros_enu_position_no_longer_uses_the_bad_y_x_mapping() -> None:
-    assert ros_enu_position_to_mavlink_local_frd(x_enu_m=-0.5, y_enu_m=0.35, z_enu_m=0.5) != (
+def test_ros_map_west_axis_projects_to_negative_local_east() -> None:
+    assert ros_enu_position_to_mavlink_local_frd(x_enu_m=-0.5, y_enu_m=0.35, z_enu_m=0.5) == (
         0.35,
-        -0.5,
+        0.5,
         -0.5,
     )
 

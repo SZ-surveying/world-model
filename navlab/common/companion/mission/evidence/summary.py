@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,63 @@ from navlab.common.companion.mission.stages.landing import (
     landing_handoff_confirmed,
     landing_policy_uses_ap_land_mode,
 )
+
+
+def _finite_float(value: object) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(result):
+        return None
+    return result
+
+
+def _status_signal_bad(row: Mapping[str, object], signal: str) -> bool:
+    if signal == "slam_quality":
+        if "slam_quality_good" in row:
+            return row.get("slam_quality_good") is not True
+        return row.get("slam_quality") != "good"
+    return row.get(signal) is False
+
+
+def summarize_post_airborne_nav_loss(status_history: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    """Summarize post-airborne nav loss windows from hover status history."""
+
+    specs = {
+        "slam_quality": ("slam_quality_loss_duration_sec", "slam_quality_reason"),
+        "external_nav": ("external_nav_loss_duration_sec", "reason"),
+        "mavlink_external_nav": ("mavlink_external_nav_loss_duration_sec", "reason"),
+        "fcu_local_position": ("fcu_local_position_loss_duration_sec", "reason"),
+    }
+    summaries: dict[str, object] = {}
+    for signal, (duration_key, reason_key) in specs.items():
+        ready_signal = signal if signal == "slam_quality" else f"{signal}_ready"
+        bad_rows = [
+            row for row in status_history if row.get("airborne_seen") is True and _status_signal_bad(row, ready_signal)
+        ]
+        if not bad_rows:
+            summaries[signal] = {"seen": False, "active": False, "max_duration_sec": 0.0}
+            continue
+        max_duration = max((_finite_float(row.get(duration_key)) or 0.0 for row in bad_rows), default=0.0)
+        first = bad_rows[0]
+        last = bad_rows[-1]
+        last_airborne_elapsed = _finite_float(last.get("airborne_elapsed_sec"))
+        inferred_started = None
+        if last_airborne_elapsed is not None:
+            inferred_started = max(0.0, last_airborne_elapsed - max_duration)
+        summaries[signal] = {
+            "seen": True,
+            "active": _status_signal_bad(last, ready_signal),
+            "max_duration_sec": max_duration,
+            "first_bad_phase": first.get("phase"),
+            "last_bad_phase": last.get("phase"),
+            "first_bad_airborne_elapsed_sec": _finite_float(first.get("airborne_elapsed_sec")),
+            "last_bad_airborne_elapsed_sec": last_airborne_elapsed,
+            "inferred_started_airborne_elapsed_sec": inferred_started,
+            "last_reason": last.get(reason_key),
+        }
+    return summaries
 
 
 def mission_fsm_summary_fields(snapshot: MissionFsmSnapshot) -> dict[str, object]:
@@ -46,10 +104,11 @@ def build_hover_status_payload(
     hold_x: float | None,
     hold_y: float | None,
     hold_yaw_rad: float | None,
+    hover_health: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Build the `/navlab/hover/status` JSON-compatible payload."""
 
-    return {
+    payload = {
         "phase": phase,
         "reason": reason,
         **mission_fsm_summary_fields(fsm_snapshot),
@@ -89,6 +148,14 @@ def build_hover_status_payload(
             "hold_yaw_rad": hold_yaw_rad,
         },
     }
+    if hover_health is not None:
+        hover_health_payload = dict(hover_health)
+        payload["hover_health"] = hover_health_payload
+        hover_health_phase = hover_health_payload.get("phase")
+        if hover_health_phase is not None:
+            payload["hover_health_phase"] = hover_health_phase
+            payload["mission_fsm_substate"] = hover_health_phase
+    return payload
 
 
 def build_landing_summary(
@@ -259,6 +326,12 @@ class MissionSummaryBuilder:
         hover_settle_sec: float,
         hover_altitude_tolerance_m: float,
         hover_hold_sec: float,
+        hover_health_min_observation_sec: float,
+        hover_health_stable_required_sec: float,
+        hover_health_max_wait_sec: float,
+        operator_confirm_required: bool,
+        operator_confirm_timeout_sec: float,
+        runtime_hover_health_final: Mapping[str, object],
         hover_hold_duration_sec: float,
         hover_hold_segments_seen: int,
         require_external_nav: bool,
@@ -289,6 +362,7 @@ class MissionSummaryBuilder:
     ) -> dict[str, object]:
         """Return the JSON-compatible final mission summary."""
 
+        bounded_status_history = list(status_history)[-40:]
         return {
             "ok": ok,
             "reason": reason,
@@ -298,7 +372,8 @@ class MissionSummaryBuilder:
             "phases_seen": sorted(phases_seen),
             "phase_counts": dict(sorted(phase_counts.items())),
             "prefix_pipeline": dict(prefix_pipeline),
-            "status_history": list(status_history)[-40:],
+            "status_history": bounded_status_history,
+            "post_airborne_nav_loss": summarize_post_airborne_nav_loss(bounded_status_history),
             "mode": mode,
             "mode_number": mode_number,
             "guided_seen": guided_seen,
@@ -324,6 +399,12 @@ class MissionSummaryBuilder:
             "hover_settle_sec": hover_settle_sec,
             "hover_altitude_tolerance_m": hover_altitude_tolerance_m,
             "hover_hold_sec": hover_hold_sec,
+            "hover_health_min_observation_sec": hover_health_min_observation_sec,
+            "hover_health_stable_required_sec": hover_health_stable_required_sec,
+            "hover_health_max_wait_sec": hover_health_max_wait_sec,
+            "operator_confirm_required": operator_confirm_required,
+            "operator_confirm_timeout_sec": operator_confirm_timeout_sec,
+            "runtime_hover_health_final": dict(runtime_hover_health_final),
             "hover_hold_duration_sec": hover_hold_duration_sec,
             "hover_hold_segments_seen": hover_hold_segments_seen,
             "require_external_nav": require_external_nav,

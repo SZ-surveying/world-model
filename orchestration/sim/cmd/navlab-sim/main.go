@@ -802,11 +802,30 @@ func runLiveTask(
 		tasks.RuntimeExecutionOptions{WaitForRosbags: true, TaskID: plan.TaskID, RunID: result.RunID, EventSink: eventSink},
 	)
 	summary := tasks.BuildLiveRunSummary(project, taskRuntimeConfig, plan, result.RunID, result.ArtifactDir, generatedArtifacts, runtimeSpecs, execution, executionErr)
+	tasks.AttachRuntimeHoverHealthFromMissionSummary(&summary)
 	summaryPath := filepath.Join(result.ArtifactDir, "summary.json")
 	summary.SummaryPath = summaryPath
 	summary.Stage1ProfileResult = tasks.Stage1ProfileResultFromSummary(summary)
 	if err := artifacts.WriteJSONArtifact(summaryPath, summary); err != nil {
 		return fmt.Errorf("failed to write live summary for %q: %w", plan.TaskID, err)
+	}
+	manifestEntries := []artifacts.GeneratedArtifact{
+		{Type: "summary", Path: summaryPath},
+	}
+	if plan.TaskID == "hover" {
+		if health, healthPath, err := tasks.BuildAndWriteHoverHealthSummaryArtifact(result.ArtifactDir); err != nil {
+			summary.Warnings = append(summary.Warnings, "hover_health_audit_failed:"+err.Error())
+			if rewriteErr := artifacts.WriteJSONArtifact(summaryPath, summary); rewriteErr != nil {
+				return fmt.Errorf("failed to rewrite live summary after hover health warning for %q: %w", plan.TaskID, rewriteErr)
+			}
+		} else {
+			tasks.AttachHoverHealthToLiveRunSummary(&summary, health)
+			summary.Stage1ProfileResult = tasks.Stage1ProfileResultFromSummary(summary)
+			if err := artifacts.WriteJSONArtifact(summaryPath, summary); err != nil {
+				return fmt.Errorf("failed to rewrite live summary with hover health for %q: %w", plan.TaskID, err)
+			}
+			manifestEntries = append(manifestEntries, artifacts.GeneratedArtifact{Type: "hover_health_summary", Path: healthPath})
+		}
 	}
 	emitTaskEvent(eventSink, plan.TaskID, result.RunID, tasks.RuntimeEvent{
 		Phase:    "summary.written",
@@ -817,9 +836,6 @@ func runLiveTask(
 	finalArtifacts, err := artifacts.FinalizeRunArtifacts(project, plan, result, stageLabel(plan.TaskID), controlMode(plan.TaskID, plan.SimulationProfile))
 	if err != nil {
 		return fmt.Errorf("failed to finalize live artifacts for %q: %w", plan.TaskID, err)
-	}
-	manifestEntries := []artifacts.GeneratedArtifact{
-		{Type: "summary", Path: summaryPath},
 	}
 	manifestEntries = append(manifestEntries, finalArtifacts...)
 	if err := artifacts.AppendManifestArtifacts(result.ManifestPath, result.ArtifactDir, manifestEntries); err != nil {

@@ -21,6 +21,7 @@ const (
 	DiagnosticGazeboTFStaticTopic        = "/gazebo/tf_static"
 	DiagnosticCartographerConfigBasename = "navlab_cartographer_2d_diagnostic_odom.lua"
 	HoverCartographerConfigBasename      = "navlab_cartographer_2d_hover.lua"
+	HoverNoOdomPriorConfigBasename       = "navlab_cartographer_2d_hover_no_odom_prior.lua"
 	OfficialCartographerConfigDir        = "/opt/navlab_ws/install/navlab_cartographer_adapter/share/navlab_cartographer_adapter/config"
 )
 

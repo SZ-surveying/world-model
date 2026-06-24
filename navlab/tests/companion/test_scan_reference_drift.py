@@ -11,6 +11,7 @@ from navlab.common.perception.scan_reference_drift import (
     evaluate_correction_intent,
     sample_from_scan_fields,
 )
+from navlab.sim.companion.nodes.scan_reference_drift import should_reset_reference_on_phase
 
 
 def _scan_for_translation(x: float, y: float, *, beams: int = 360) -> list[float]:
@@ -114,6 +115,50 @@ def test_scan_reference_reset_uses_new_reference() -> None:
     assert not first_after_reset.ready
     assert after_reset.quality_good
     assert after_reset.x_m == pytest.approx(0.1, abs=1e-6)
+
+
+def test_scan_reference_phase_reset_waits_for_first_hover_hold() -> None:
+    reset, done = should_reset_reference_on_phase(
+        reset_on_hover_hold=True,
+        phase="hover_settle",
+        hover_hold_reference_reset_done=False,
+    )
+    assert reset is False
+    assert done is False
+
+    reset, done = should_reset_reference_on_phase(
+        reset_on_hover_hold=True,
+        phase="hover_hold",
+        hover_hold_reference_reset_done=done,
+    )
+    assert reset is True
+    assert done is True
+
+    reset, done = should_reset_reference_on_phase(
+        reset_on_hover_hold=True,
+        phase="hover_settle",
+        hover_hold_reference_reset_done=done,
+    )
+    assert reset is False
+    assert done is True
+
+    reset, done = should_reset_reference_on_phase(
+        reset_on_hover_hold=True,
+        phase="hover_hold",
+        hover_hold_reference_reset_done=done,
+    )
+    assert reset is False
+    assert done is True
+
+
+def test_scan_reference_phase_reset_rearms_outside_correction_phases() -> None:
+    reset, done = should_reset_reference_on_phase(
+        reset_on_hover_hold=True,
+        phase="complete",
+        hover_hold_reference_reset_done=True,
+    )
+    assert reset is False
+    assert done is False
 
 
 def test_correction_eligibility_allows_only_stable_axis_when_other_axis_flips() -> None:

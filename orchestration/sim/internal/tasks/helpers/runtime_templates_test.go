@@ -67,6 +67,8 @@ func TestRuntimeScriptTemplatesRenderMissionAndNavigationWrappers(t *testing.T) 
 			want: []string{
 				"from navlab.sim.companion.nodes.hover_mission import run",
 				`\"duration_sec\":12.5`,
+				`\"operator_confirm_required\":false`,
+				"hover-health-min-observation-sec",
 				"mission_summary.json",
 				"hover_mission_rc.txt",
 			},
@@ -156,7 +158,9 @@ func TestRuntimeScriptTemplatesRenderMissionAndNavigationWrappers(t *testing.T) 
 			want: []string{
 				`"node": "navlab_test_probe"`,
 				`TOPICS = json.loads("[\"/scan\",\"/navlab/test/status\"]")`,
+				`OPTIONAL_TOPICS = set(json.loads("[]"))`,
 				`\"ProbeTimeoutSec\":3`,
+				`STRING_READY_TIMEOUT_SEC = max(STRING_BATCH_TIMEOUT_SEC, PROBE_TIMEOUT_SEC)`,
 			},
 		},
 		{

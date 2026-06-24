@@ -50,6 +50,7 @@ from navlab.common.companion.mission.runtime_state import (
 )
 from navlab.common.companion.mission.stages.hover import (
     HoverDecision,
+    HoverHealthGateConfig,
     HoverHoldConfig,
     HoverHoldStage,
     HoverInputs,
@@ -113,6 +114,29 @@ DEFAULT_LANDING_SLOWDOWN_ALTITUDE_M = 0.60
 DEFAULT_LANDING_NEAR_GROUND_DESCENT_RATE_MPS = 0.01
 
 
+def _operator_confirm_value(payload: str) -> bool | None:
+    """Parse operator confirm messages from a bool/string/JSON payload."""
+
+    text = payload.strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = text
+    if isinstance(parsed, dict):
+        parsed = parsed.get("confirm", parsed.get("confirmed", parsed.get("proceed")))
+    if isinstance(parsed, bool):
+        return parsed
+    if isinstance(parsed, str):
+        value = parsed.strip().lower()
+        if value in {"1", "true", "yes", "confirm", "confirmed", "continue", "proceed"}:
+            return True
+        if value in {"0", "false", "no", "cancel", "hold", "stop"}:
+            return False
+    return None
+
+
 def _request_hover_streams(connection, target_system: int, target_component: int) -> None:
     from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
@@ -155,6 +179,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hover-settle-sec", type=float, default=2.0)
     parser.add_argument("--hover-altitude-tolerance-m", type=float, default=0.18)
     parser.add_argument("--hover-hold-sec", type=float, default=20.0)
+    parser.add_argument("--hover-health-min-observation-sec", type=float, default=10.0)
+    parser.add_argument("--hover-health-stable-required-sec", type=float, default=5.0)
+    parser.add_argument("--hover-health-max-wait-sec", type=float, default=60.0)
+    parser.add_argument("--operator-confirm-required", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--operator-confirm-timeout-sec", type=float, default=60.0)
+    parser.add_argument("--operator-confirm-topic", default="/navlab/hover/operator_confirm")
+    parser.add_argument("--operator-confirm-received", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--max-horizontal-drift-m", type=float, default=1.0)
     parser.add_argument("--max-altitude-drift-m", type=float, default=0.6)
     parser.add_argument("--origin-lat-deg", type=float, default=DEFAULT_ORIGIN_LAT_DEG)
@@ -357,6 +388,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             )
             self.create_subscription(String, args.imu_status_topic, self._handle_imu_status, 10)
             self.create_subscription(String, args.mavlink_status_topic, self._handle_mavlink_status, 10)
+            self.create_subscription(String, args.operator_confirm_topic, self._handle_operator_confirm, 10)
             self.mode_number = mode_number(args.mode)
             self._started = time.monotonic()
             self._runtime = MavlinkRuntimeState()
@@ -378,6 +410,11 @@ def run(argv: Sequence[str] | None = None) -> int:
                     takeoff_alt_m=args.takeoff_alt_m,
                     hover_altitude_tolerance_m=args.hover_altitude_tolerance_m,
                     hover_hold_sec=args.hover_hold_sec,
+                    hover_health_min_observation_sec=args.hover_health_min_observation_sec,
+                    hover_health_stable_required_sec=args.hover_health_stable_required_sec,
+                    hover_health_max_wait_sec=args.hover_health_max_wait_sec,
+                    operator_confirm_required=args.operator_confirm_required,
+                    operator_confirm_timeout_sec=args.operator_confirm_timeout_sec,
                     hover_duration_tolerance_sec=HOVER_DURATION_TOLERANCE_SEC,
                     max_horizontal_drift_m=args.max_horizontal_drift_m,
                     max_altitude_drift_m=args.max_altitude_drift_m,
@@ -417,7 +454,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._mission_context = MissionContext(
                 clock=MissionClock(started_at_monotonic=self._started, now_monotonic=self._started)
             )
-            self._mission_context.state.hover.hold_yaw_rad = 0.0
+            self._mission_context.state.hover.operator_confirm_received = args.operator_confirm_received
             self._mission_context.io.command_adapter = HoverMissionCommandAdapter(self)
             prefix_pipeline = FlightPipeline(
                 [
@@ -440,6 +477,13 @@ def run(argv: Sequence[str] | None = None) -> int:
                         require_fcu_external_nav=args.require_external_nav,
                         require_imu_status=args.require_imu_status,
                         external_nav_loss_grace_sec=args.external_nav_loss_grace_sec,
+                    ),
+                    health_gate=HoverHealthGateConfig(
+                        min_observation_sec=args.hover_health_min_observation_sec,
+                        stable_required_sec=args.hover_health_stable_required_sec,
+                        max_wait_sec=args.hover_health_max_wait_sec,
+                        operator_confirm_required=args.operator_confirm_required,
+                        operator_confirm_timeout_sec=args.operator_confirm_timeout_sec,
                     ),
                 )
             )
@@ -538,6 +582,22 @@ def run(argv: Sequence[str] | None = None) -> int:
 
         def _handle_mavlink_status(self, msg: String) -> None:
             self._mission_runtime.apply_mavlink_status(msg.data, mode_number=self.mode_number)
+
+        def _handle_operator_confirm(self, msg: String) -> None:
+            value = _operator_confirm_value(msg.data)
+            if value is None:
+                self.get_logger().warning("ignored invalid operator confirm payload")
+                return
+            hover = self._mission_context.state.hover
+            if not value:
+                hover.operator_confirm_received = False
+                return
+            if hover.operator_confirm_allowed and hover.health_band == "green":
+                hover.operator_confirm_received = True
+                self.get_logger().info("operator confirmed hover health proceed")
+                return
+            hover.operator_confirm_received = False
+            self.get_logger().warning("operator confirm ignored because hover health is not green/allowed")
 
         def _tick(self) -> None:
             now = time.monotonic()
@@ -752,9 +812,18 @@ def run(argv: Sequence[str] | None = None) -> int:
                 or now < self._command_runtime.next_setpoint
             ):
                 return
+            hover = self._mission_context.state.hover
+            hover.hold_x_m, hover.hold_y_m, hover.hold_yaw_rad = capture_hold_anchor(
+                hover.hold_x_m,
+                hover.hold_y_m,
+                hover.hold_yaw_rad,
+                self._runtime.current_x,
+                self._runtime.current_y,
+                self._runtime.current_yaw_rad,
+            )
             target_x, target_y, target_z = hover_hold_setpoint_axes(
-                hold_x=self._mission_context.state.hover.hold_x_m,
-                hold_y=self._mission_context.state.hover.hold_y_m,
+                hold_x=hover.hold_x_m,
+                hold_y=hover.hold_y_m,
                 current_x=self._runtime.current_x,
                 current_y=self._runtime.current_y,
                 current_z=self._runtime.current_z,
@@ -767,7 +836,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                 target_x,
                 target_y,
                 target_z,
-                hold_yaw_or_current(self._mission_context.state.hover.hold_yaw_rad, self._runtime.current_yaw_rad),
+                hold_yaw_or_current(hover.hold_yaw_rad, self._runtime.current_yaw_rad),
             )
             self._command_runtime.count_setpoint()
             self._command_runtime.next_setpoint = now + (1.0 / args.setpoint_rate_hz)
@@ -963,6 +1032,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                 hold_x=self._mission_context.state.hover.hold_x_m,
                 hold_y=self._mission_context.state.hover.hold_y_m,
                 hold_yaw_rad=self._mission_context.state.hover.hold_yaw_rad,
+                hover_health=self._hover_health_payload(decision, inputs),
             )
             self._status_history.append(status_payload)
             self._status_history = self._status_history[-80:]
@@ -982,6 +1052,37 @@ def run(argv: Sequence[str] | None = None) -> int:
                 setpoints_sent_count=self._command_runtime.setpoints_sent,
             )
             self._sim_log_pub.publish(sim_log)
+
+        def _hover_health_payload(self, decision: HoverDecision, inputs: HoverInputs) -> dict[str, object]:
+            hover = self._mission_context.state.hover
+            confirm_elapsed_sec = (
+                None
+                if hover.operator_confirm_started_at_monotonic is None
+                else max(0.0, time.monotonic() - hover.operator_confirm_started_at_monotonic)
+            )
+            return {
+                "phase": hover.health_phase
+                or ("hover_health_hold" if decision.phase == "hover_hold" else decision.phase),
+                "runtime_phase_alias": decision.phase,
+                "band": hover.health_band,
+                "reason": hover.health_reason or decision.reason,
+                "observed_sec": hover.health_observed_sec,
+                "stable_sec": hover.health_stable_sec,
+                "operator_confirm_required": args.operator_confirm_required,
+                "operator_confirm_allowed": hover.operator_confirm_allowed,
+                "operator_confirm_received": hover.operator_confirm_received,
+                "operator_confirm_elapsed_sec": confirm_elapsed_sec,
+                "sim_auto_continue_allowed": (
+                    hover.health_band == "green"
+                    and not args.operator_confirm_required
+                    and hover.health_phase == "sim_auto_continue"
+                ),
+                "real_operator_confirm_allowed": hover.operator_confirm_allowed,
+                "min_observation_sec": args.hover_health_min_observation_sec,
+                "stable_required_sec": args.hover_health_stable_required_sec,
+                "max_wait_sec": args.hover_health_max_wait_sec,
+                "operator_confirm_timeout_sec": args.operator_confirm_timeout_sec,
+            }
 
         def _landing_summary(self) -> dict[str, object]:
             return self._summary_runtime.landing_summary(

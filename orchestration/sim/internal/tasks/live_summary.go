@@ -1,7 +1,10 @@
 package tasks
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,7 +43,29 @@ type LiveRunSummary struct {
 	ResultGates               []ResultGateSummary        `json:"result_gates"`
 	GateParity                GateParitySummary          `json:"gate_parity"`
 	GateEvaluation            GateEvaluation             `json:"gate_evaluation"`
+	RuntimeHoverHealthFinal   map[string]any             `json:"runtime_hover_health_final,omitempty"`
+	PostrunHoverHealthAudit   *PostrunHoverHealthAudit   `json:"postrun_hover_health_audit,omitempty"`
+	CohortHoverHealth         map[string]any             `json:"cohort_hover_health,omitempty"`
+	HoverHealthBand           string                     `json:"hover_health_band,omitempty"`
+	HoverHealthHardBlockers   []HoverHealthFinding       `json:"hover_health_hard_blockers,omitempty"`
+	HoverHealthWarnings       []HoverHealthFinding       `json:"hover_health_statistical_warnings,omitempty"`
+	HoverHealthReviewOnly     []HoverHealthFinding       `json:"hover_health_review_only_findings,omitempty"`
+	HoverHealthProceed        *HoverHealthProceed        `json:"hover_health_proceed,omitempty"`
 	CreatedAt                 string                     `json:"created_at"`
+}
+
+type PostrunHoverHealthAudit struct {
+	Schema                   string               `json:"schema"`
+	Artifact                 string               `json:"artifact"`
+	HealthBand               HoverHealthBand      `json:"health_band"`
+	Proceed                  HoverHealthProceed   `json:"proceed"`
+	HardBlockers             []HoverHealthFinding `json:"hard_blockers"`
+	StatisticalWarnings      []HoverHealthFinding `json:"statistical_warnings"`
+	ReviewOnlyFindings       []HoverHealthFinding `json:"review_only_findings"`
+	DiagnosticOnly           bool                 `json:"diagnostic_only"`
+	ControlsRuntimeProceed   bool                 `json:"controls_runtime_proceed"`
+	RuntimeProceedTruth      bool                 `json:"runtime_proceed_truth"`
+	RuntimeHealthArtifactKey string               `json:"runtime_health_artifact_key"`
 }
 
 type TaskResultBlocker struct {
@@ -249,5 +274,106 @@ func liveEvidence(gateEvaluation GateEvaluation, execution RuntimeExecutionResul
 		"rosbagHandles":   execution.RosbagHandles,
 		"runtimeProbes":   execution.ProbeResults,
 		"landingEvidence": gateEvaluation.Landing,
+	}
+}
+
+func BuildAndWriteHoverHealthSummaryArtifact(artifactDir string) (*HoverHealthSummary, string, error) {
+	health, err := BuildHoverHealthAudit(artifactDir)
+	if err != nil {
+		return nil, "", err
+	}
+	path := filepath.Join(artifactDir, "hover_health_summary.json")
+	data, err := json.MarshalIndent(health, "", "  ")
+	if err != nil {
+		return nil, "", err
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return nil, "", err
+	}
+	return health, path, nil
+}
+
+func AttachHoverHealthToLiveRunSummary(summary *LiveRunSummary, health *HoverHealthSummary) {
+	if summary == nil || health == nil {
+		return
+	}
+	summary.HoverHealthBand = string(health.HealthBand)
+	summary.HoverHealthHardBlockers = append([]HoverHealthFinding(nil), health.HardBlockers...)
+	summary.HoverHealthWarnings = append([]HoverHealthFinding(nil), health.StatisticalWarnings...)
+	summary.HoverHealthReviewOnly = append([]HoverHealthFinding(nil), health.ReviewOnlyFindings...)
+	proceed := health.Proceed
+	summary.HoverHealthProceed = &proceed
+	summary.PostrunHoverHealthAudit = &PostrunHoverHealthAudit{
+		Schema:                   health.Schema,
+		Artifact:                 filepath.Join(summary.ArtifactDir, "hover_health_summary.json"),
+		HealthBand:               health.HealthBand,
+		Proceed:                  proceed,
+		HardBlockers:             append([]HoverHealthFinding{}, health.HardBlockers...),
+		StatisticalWarnings:      append([]HoverHealthFinding{}, health.StatisticalWarnings...),
+		ReviewOnlyFindings:       append([]HoverHealthFinding{}, health.ReviewOnlyFindings...),
+		DiagnosticOnly:           health.DiagnosticOnly,
+		ControlsRuntimeProceed:   false,
+		RuntimeProceedTruth:      false,
+		RuntimeHealthArtifactKey: "runtime_hover_health_final",
+	}
+
+	healthMetrics := map[string]any{
+		"band":                          health.HealthBand,
+		"hard_blocker_count":            len(health.HardBlockers),
+		"statistical_warning_count":     len(health.StatisticalWarnings),
+		"review_only_finding_count":     len(health.ReviewOnlyFindings),
+		"sim_auto_continue_allowed":     health.Proceed.SimAutoContinueAllowed,
+		"real_operator_confirm_allowed": health.Proceed.RealOperatorConfirmAllowed,
+		"proceed_reason":                health.Proceed.Reason,
+	}
+	summary.GateEvaluation.Metrics.HoverHealth = healthMetrics
+	if summary.Metrics == nil {
+		summary.Metrics = map[string]any{}
+	}
+	summary.Metrics["hover_health"] = healthMetrics
+	if gate, ok := summary.Metrics["gate"].(MetricSummary); ok {
+		gate.HoverHealth = healthMetrics
+		summary.Metrics["gate"] = gate
+	}
+	if summary.Evidence == nil {
+		summary.Evidence = map[string]any{}
+	}
+	summary.Evidence["hoverHealth"] = map[string]any{
+		"schema":         health.Schema,
+		"artifact":       filepath.Join(summary.ArtifactDir, "hover_health_summary.json"),
+		"diagnosticOnly": health.DiagnosticOnly,
+	}
+}
+
+func AttachRuntimeHoverHealthFromMissionSummary(summary *LiveRunSummary) {
+	if summary == nil || summary.ArtifactDir == "" {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(summary.ArtifactDir, "mission_summary.json"))
+	if err != nil {
+		return
+	}
+	var mission map[string]any
+	if err := json.Unmarshal(data, &mission); err != nil {
+		return
+	}
+	health, ok := mission["runtime_hover_health_final"].(map[string]any)
+	if !ok || len(health) == 0 {
+		return
+	}
+	summary.RuntimeHoverHealthFinal = health
+	if summary.Metrics == nil {
+		summary.Metrics = map[string]any{}
+	}
+	summary.Metrics["runtime_hover_health"] = health
+	if summary.Evidence == nil {
+		summary.Evidence = map[string]any{}
+	}
+	summary.Evidence["runtimeHoverHealth"] = map[string]any{
+		"schema":              health["schema"],
+		"artifact":            filepath.Join(summary.ArtifactDir, "mission_summary.json"),
+		"controlsTaskProceed": true,
+		"postrunAudit":        false,
 	}
 }

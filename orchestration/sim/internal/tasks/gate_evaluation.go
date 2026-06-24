@@ -35,6 +35,7 @@ type ProbeOutputSummary struct {
 	Name    string         `json:"name"`
 	Path    string         `json:"path"`
 	Exists  bool           `json:"exists"`
+	Empty   bool           `json:"empty,omitempty"`
 	OK      bool           `json:"ok"`
 	Status  string         `json:"status,omitempty"`
 	Payload map[string]any `json:"payload,omitempty"`
@@ -73,6 +74,7 @@ type MetricSummary struct {
 	ScanReferenceRuntimeDrift map[string]any            `json:"scan_reference_runtime_drift,omitempty"`
 	ScanReferenceCorrection   map[string]any            `json:"scan_reference_correction,omitempty"`
 	HoverXYAlignment          map[string]any            `json:"hover_xy_alignment,omitempty"`
+	HoverHealth               map[string]any            `json:"hover_health,omitempty"`
 	SLAMRuntimeLog            map[string]any            `json:"slam_runtime_log,omitempty"`
 	ScanIntegrity             map[string]any            `json:"scan_integrity,omitempty"`
 	ScanStabilization         map[string]any            `json:"scan_stabilization,omitempty"`
@@ -102,21 +104,29 @@ func EvaluateResultGates(
 		blockers = append(blockers, "runtime_execution_failed")
 	}
 	for _, result := range execution.ProbeResults {
-		if !result.OK() {
+		if !result.OK() && runtimeProbeRequired(runtimeSpecs, result.Name) {
 			blockers = append(blockers, fmt.Sprintf("probe_failed:%s:rc=%d", result.Name, result.ReturnCode))
+			if result.ReturnCode < 0 {
+				blockers = append(blockers, "probe_killed:"+result.Name)
+			}
 		}
 	}
 
 	probeOutputs := evaluateProbeOutputs(plan, artifactDir)
 	for _, probe := range probeOutputs {
-		if !probe.OK {
+		probeRequired := runtimeProbeRequired(runtimeSpecs, probe.Name)
+		if !probe.OK && probeRequired {
 			if !probe.Exists {
 				blockers = append(blockers, "probe_output_missing:"+probe.Name)
+			} else if probe.Empty {
+				blockers = append(blockers, "probe_output_empty:"+probe.Name)
 			} else {
 				blockers = append(blockers, "probe_output_not_ok:"+probe.Name)
 			}
 		}
-		blockers = append(blockers, probeBlockers(probe)...)
+		if probeRequired {
+			blockers = append(blockers, probeBlockers(probe)...)
+		}
 	}
 
 	rosbagProfiles := evaluateRosbagProfiles(plan, artifactDir)
@@ -126,7 +136,11 @@ func EvaluateResultGates(
 		}
 	}
 
+	metrics := metricSummaryFromEvidence(probeOutputs, rosbagProfiles, artifactDir)
 	landingEvidence := landingFromProbeOutputs(probeOutputs)
+	if landingEvidence == nil {
+		landingEvidence = landingFromHoverMissionSummary(metrics.HoverMission)
+	}
 	landing := helpers.BuildAcceptance(
 		"simulation",
 		landingConfig(project, runtimeConfig, plan.TaskID),
@@ -136,13 +150,14 @@ func EvaluateResultGates(
 	if plan.TaskID != "hover-slam-only" {
 		blockers = append(blockers, landing.Blockers...)
 	}
-	metrics := metricSummaryFromEvidence(probeOutputs, rosbagProfiles, artifactDir)
 	blockers = append(blockers, slamRuntimeLogBlockers(metrics.SLAMRuntimeLog)...)
 	if plan.TaskID == "hover" {
 		blockers = append(blockers, slamPreflightBlockers(metrics.SLAM, metrics.SLAMRuntimeLog)...)
 		blockers = append(blockers, x2ScanSourceBlockers(metrics.X2)...)
 		blockers = append(blockers, externalNavFeedbackBlockers(metrics.ExternalNav, metrics.MAVLinkExternalNav, metrics.HoverMission)...)
-		blockers = append(blockers, externalNavSourceSelectorBlockers(metrics.ExternalNavSourceSelector)...)
+		if hoverUsesExternalNavSourceSelector(runtimeConfig) {
+			blockers = append(blockers, externalNavSourceSelectorBlockers(metrics.ExternalNavSourceSelector)...)
+		}
 		blockers = append(blockers, hoverMissionBlockers(metrics.HoverMission)...)
 		blockers = append(blockers, hoverXYAlignmentBlockers(metrics.HoverXYAlignment)...)
 		blockers = append(blockers, scanReferenceCorrectionBlockers(metrics.ScanReferenceCorrection)...)
@@ -163,6 +178,18 @@ func EvaluateResultGates(
 		TaskChecks:     taskChecks,
 		Metrics:        metrics,
 	}
+}
+
+func runtimeProbeRequired(runtimeSpecs RuntimeSpecBundle, name string) bool {
+	if len(runtimeSpecs.Probes) == 0 {
+		return true
+	}
+	for _, probe := range runtimeSpecs.Probes {
+		if probe.Name == name {
+			return probe.Required
+		}
+	}
+	return true
 }
 
 func metricSummaryFromEvidence(probes []ProbeOutputSummary, rosbags []RosbagGateSummary, artifactDirs ...string) MetricSummary {
@@ -214,7 +241,7 @@ func metricSummaryFromEvidence(probes []ProbeOutputSummary, rosbags []RosbagGate
 		summary.MetricEvidenceSources["external_nav"] = topic
 	}
 	if payload, topic := statusPayloadBySuffix(probes, "/external_nav/source_selector/status"); payload != nil {
-		summary.ExternalNavSourceSelector = subsetMap(payload, "ready", "source", "blockers", "hover_phase", "cartographer_scan_disagreement", "uses_gazebo_truth_input", "uses_known_map_input", "output_odom_topic", "output_frame_id", "output_child_frame_id", "slam_odom_topic", "scan_reference_odom_topic", "scan_reference_status_topic")
+		summary.ExternalNavSourceSelector = subsetMap(payload, "ready", "publish", "degraded", "source", "blockers", "hover_phase", "cartographer_scan_disagreement", "uses_gazebo_truth_input", "uses_known_map_input", "output_odom_topic", "output_frame_id", "output_child_frame_id", "slam_odom_topic", "scan_reference_odom_topic", "scan_reference_status_topic", "hold_age_ms", "hold_reason", "reject_reason", "rejected_step_m", "rejected_yaw_step_rad", "last_accepted_age_ms")
 		summary.MetricEvidenceSources["external_nav_source_selector"] = topic
 	}
 	if payload, topic := statusPayloadBySuffix(probes, "/mavlink_external_nav/status"); payload != nil {
@@ -283,7 +310,7 @@ func metricSummaryFromEvidence(probes []ProbeOutputSummary, rosbags []RosbagGate
 			summary.ScanReferenceCorrection = mergeMaps(summary.ScanReferenceCorrection, statusMetrics)
 			summary.MetricEvidenceSources["scan_reference_correction_status_hover_window"] = "rosbag/hover_rosbag/hover_rosbag_0.mcap"
 		}
-		if statusMetrics, source := summarizeLatestJSONStatusFromHoverRosbag(artifactDirs[0], "/external_nav/source_selector/status", "ready", "source", "blockers", "hover_phase", "cartographer_scan_disagreement", "uses_gazebo_truth_input", "uses_known_map_input", "output_odom_topic", "output_frame_id", "output_child_frame_id", "slam_odom_topic", "scan_reference_odom_topic", "scan_reference_status_topic"); statusMetrics != nil {
+		if statusMetrics, source := summarizeLatestJSONStatusFromHoverRosbag(artifactDirs[0], "/external_nav/source_selector/status", "ready", "publish", "degraded", "source", "blockers", "hover_phase", "cartographer_scan_disagreement", "uses_gazebo_truth_input", "uses_known_map_input", "output_odom_topic", "output_frame_id", "output_child_frame_id", "slam_odom_topic", "scan_reference_odom_topic", "scan_reference_status_topic", "hold_age_ms", "hold_reason", "reject_reason", "rejected_step_m", "rejected_yaw_step_rad", "last_accepted_age_ms"); statusMetrics != nil {
 			summary.ExternalNavSourceSelector = mergeMaps(summary.ExternalNavSourceSelector, statusMetrics)
 			summary.MetricEvidenceSources["external_nav_source_selector"] = source
 		}
@@ -356,11 +383,18 @@ func parseHoverMissionSummary(path string) map[string]any {
 }
 
 func subsetHoverMissionSummary(payload map[string]any) map[string]any {
+	if reason := missionAbortReason(payload); reason != "" {
+		payload["mission_abort_reason"] = reason
+	}
 	return subsetMap(payload,
 		"path",
 		"exists",
 		"ok",
 		"reason",
+		"mission_fsm_state",
+		"mission_fsm_blocker",
+		"mission_fsm_last_transition_reason",
+		"mission_abort_reason",
 		"hover_body_ok",
 		"landing_ok",
 		"phases_seen",
@@ -479,6 +513,36 @@ func hoverMissionFSMCompleted(state string) bool {
 	return state == "S12 landing_complete" || state == "S13 task_success"
 }
 
+func missionAbortReason(mission map[string]any) string {
+	for _, key := range []string{"mission_fsm_blocker", "mission_abort_reason"} {
+		if reason, _ := mission[key].(string); strings.TrimSpace(reason) != "" {
+			return strings.TrimSpace(reason)
+		}
+	}
+	history, ok := mission["mission_fsm_history"].([]any)
+	if !ok {
+		return ""
+	}
+	for index := len(history) - 1; index >= 0; index-- {
+		entry, ok := history[index].(map[string]any)
+		if !ok {
+			continue
+		}
+		state, _ := entry["state"].(string)
+		guard, _ := entry["guard"].(string)
+		if strings.TrimSpace(state) != "S_abort" && strings.TrimSpace(guard) != "abort" {
+			continue
+		}
+		if blocker, _ := entry["blocker"].(string); strings.TrimSpace(blocker) != "" {
+			return strings.TrimSpace(blocker)
+		}
+		if reason, _ := entry["reason"].(string); strings.TrimSpace(reason) != "" {
+			return strings.TrimSpace(reason)
+		}
+	}
+	return ""
+}
+
 func isAllowedExternalNavSLAMInputTopic(topic string) bool {
 	switch strings.TrimSpace(topic) {
 	case "/slam/odom", "/slam/odom_corrected", "/external_nav/odom_candidate":
@@ -486,6 +550,11 @@ func isAllowedExternalNavSLAMInputTopic(topic string) bool {
 	default:
 		return false
 	}
+}
+
+func hoverUsesExternalNavSourceSelector(runtimeConfig config.TaskRuntimeConfig) bool {
+	topic := strings.TrimSpace(runtimeConfig.SlamHover.ExternalNavInputOdomTopic)
+	return topic == "" || topic == "/external_nav/odom_candidate"
 }
 
 func hoverMissionBlockers(mission map[string]any) []string {
@@ -499,6 +568,11 @@ func hoverMissionBlockers(mission map[string]any) []string {
 	missionOK := hoverMissionCompletedOK(mission)
 	if ok, _ := mission["ok"].(bool); !ok {
 		blockers = append(blockers, "hover_mission_not_ok")
+	}
+	if !missionOK {
+		if abortReason, _ := mission["mission_abort_reason"].(string); strings.TrimSpace(abortReason) != "" {
+			blockers = append(blockers, "hover_mission_abort:"+strings.TrimSpace(abortReason))
+		}
 	}
 	if requireExternalNav, _ := mission["require_external_nav"].(bool); requireExternalNav {
 		if externalNavReady, _ := mission["external_nav_ready"].(bool); !externalNavReady && !missionOK {
@@ -566,6 +640,27 @@ func hoverMissionBlockers(mission map[string]any) []string {
 		}
 		if driftOK, _ := hoverDrift["ok"].(bool); !driftOK {
 			blockers = append(blockers, "hover_mission_drift_not_ok")
+		}
+		if horizontalDriftOK, ok := hoverDrift["horizontal_drift_ok"].(bool); ok && !horizontalDriftOK {
+			blockers = append(blockers, "hover_mission_horizontal_drift_not_ok")
+		}
+		if horizontalSpanOK, ok := hoverDrift["horizontal_span_ok"].(bool); ok && !horizontalSpanOK {
+			blockers = append(blockers, "hover_mission_horizontal_span_not_ok")
+		}
+		if zSpanOK, ok := hoverDrift["z_span_ok"].(bool); ok && !zSpanOK {
+			blockers = append(blockers, "hover_mission_z_span_not_ok")
+		}
+		if slamQualityLossOK, ok := hoverDrift["no_slam_quality_loss_after_airborne"].(bool); ok && !slamQualityLossOK {
+			blockers = append(blockers, "hover_mission_slam_quality_lost_after_airborne")
+		}
+		if externalNavLossOK, ok := hoverDrift["no_external_nav_loss_after_airborne"].(bool); ok && !externalNavLossOK {
+			blockers = append(blockers, "hover_mission_external_nav_lost_after_airborne")
+		}
+		if mavlinkExternalNavLossOK, ok := hoverDrift["no_mavlink_external_nav_loss_after_airborne"].(bool); ok && !mavlinkExternalNavLossOK {
+			blockers = append(blockers, "hover_mission_mavlink_external_nav_lost_after_airborne")
+		}
+		if slamJumpOK, ok := hoverDrift["no_slam_quality_jump_in_hover_window"].(bool); ok && !slamJumpOK {
+			blockers = append(blockers, "hover_mission_slam_quality_jump_in_hover_window")
 		}
 		switch quality, _ := hoverDrift["quality"].(string); quality {
 		case "tight", "nominal", "marginal":
@@ -707,6 +802,15 @@ func externalNavSourceSelectorBlockers(summary map[string]any) []string {
 		return []string{"external_nav_source_selector_status_missing"}
 	}
 	blockers := []string{}
+	if ready, ok := summary["ready"].(bool); ok && !ready {
+		blockers = append(blockers, "external_nav_source_selector_not_ready")
+	}
+	if publish, ok := summary["publish"].(bool); ok && !publish {
+		blockers = append(blockers, "external_nav_source_selector_not_publishing")
+	}
+	if rejectReason, _ := summary["reject_reason"].(string); strings.TrimSpace(rejectReason) != "" {
+		blockers = append(blockers, "external_nav_source_selector_rejected:"+strings.TrimSpace(rejectReason))
+	}
 	if usedTruth, _ := summary["uses_gazebo_truth_input"].(bool); usedTruth {
 		blockers = append(blockers, "external_nav_source_selector_uses_gazebo_truth")
 	}
@@ -886,13 +990,14 @@ func summarizeHoverXYAlignment(path string) (map[string]any, error) {
 		topic     string
 		kind      string
 		compareXY bool
+		hardGate  bool
 	}
 	sources := []sourceSpec{
-		{key: "gazebo_model_odometry", topic: helpers.DiagnosticGazeboModelOdometryTopic, kind: "odometry", compareXY: true},
-		{key: "fcu_local_position_pose", topic: "/navlab/fcu/local_position_pose", kind: "pose_stamped", compareXY: true},
-		{key: "external_nav_odom_candidate", topic: "/external_nav/odom_candidate", kind: "odometry", compareXY: true},
-		{key: "slam_odom_corrected", topic: "/slam/odom_corrected", kind: "odometry", compareXY: true},
-		{key: "external_nav_odom", topic: "/external_nav/odom", kind: "odometry", compareXY: true},
+		{key: "gazebo_model_odometry", topic: helpers.DiagnosticGazeboModelOdometryTopic, kind: "odometry", compareXY: true, hardGate: false},
+		{key: "fcu_local_position_pose", topic: "/navlab/fcu/local_position_pose", kind: "pose_stamped", compareXY: true, hardGate: true},
+		{key: "external_nav_odom_candidate", topic: "/external_nav/odom_candidate", kind: "odometry", compareXY: true, hardGate: true},
+		{key: "slam_odom_corrected", topic: "/slam/odom_corrected", kind: "odometry", compareXY: true, hardGate: true},
+		{key: "external_nav_odom", topic: "/external_nav/odom", kind: "odometry", compareXY: true, hardGate: true},
 	}
 	byTopic := map[string]sourceSpec{}
 	rawSamples := map[string][]timedXYSample{}
@@ -964,11 +1069,11 @@ func summarizeHoverXYAlignment(path string) (map[string]any, error) {
 		switch source.key {
 		case "fcu_local_position_pose":
 			// /navlab/fcu/local_position_pose mirrors MAVLink LOCAL_POSITION_NED
-			// as x=north,y=east, while SLAM/external_nav odometry is ROS ENU.
-			// Compare all estimator evidence in ROS ENU to avoid false x/y swap
-			// blockers without changing any runtime control input.
-			comparisonVector = [2]float64{comparisonVector[1], comparisonVector[0]}
-			sourceSummary["comparison_frame"] = "ros_enu_from_mavlink_local_position_ned"
+			// as x=north,y=east. The hover map contract used by the scan and
+			// ExternalNav topics is x=west,y=north, so compare as map_x=-east,
+			// map_y=north without changing any runtime control input.
+			comparisonVector = [2]float64{-comparisonVector[1], comparisonVector[0]}
+			sourceSummary["comparison_frame"] = "ros_map_xy_from_mavlink_local_position_ned"
 			sourceSummary["comparison_final_x_m"] = comparisonVector[0]
 			sourceSummary["comparison_final_y_m"] = comparisonVector[1]
 		case "external_nav_odom_candidate", "external_nav_odom", "slam_odom_corrected":
@@ -991,6 +1096,7 @@ func summarizeHoverXYAlignment(path string) (map[string]any, error) {
 	}
 	pairwise := map[string]any{}
 	blockers := []string{}
+	auditBlockers := []string{}
 	comparableSources := []sourceSpec{}
 	for _, source := range sources {
 		if source.compareXY {
@@ -1007,13 +1113,16 @@ func summarizeHoverXYAlignment(path string) (map[string]any, error) {
 			pair := summarizeXYVectorPair(vectorByKey[left.key], vectorByKey[right.key], metricInt(leftSummary, "sample_count"), metricInt(rightSummary, "sample_count"))
 			pairwise[pairKey] = pair
 			if xyPairDirectionMismatch(pair) {
-				blockers = append(blockers, "hover_xy_evidence_disagreement")
-				blockers = append(blockers, "hover_xy_alignment_direction_mismatch:"+pairKey)
+				auditBlockers = append(auditBlockers, "hover_xy_alignment_direction_mismatch:"+pairKey)
+				if left.hardGate && right.hardGate {
+					blockers = append(blockers, "hover_xy_evidence_disagreement")
+					blockers = append(blockers, "hover_xy_alignment_direction_mismatch:"+pairKey)
+				}
 			}
 		}
 	}
 	for _, source := range sources {
-		if !source.compareXY {
+		if !source.compareXY || !source.hardGate {
 			continue
 		}
 		if metricInt(mapFromAny(sourceSummaries[source.key]), "sample_count") < 2 {
@@ -1022,8 +1131,9 @@ func summarizeHoverXYAlignment(path string) (map[string]any, error) {
 		}
 	}
 	return map[string]any{
-		"ok":       len(blockers) == 0,
-		"blockers": uniqueStrings(blockers),
+		"ok":             len(blockers) == 0,
+		"blockers":       uniqueStrings(blockers),
+		"audit_blockers": uniqueStrings(auditBlockers),
 		"gazebo_model_odometry_evidence": summarizeGazeboModelOdometryEvidence(
 			filepath.Dir(filepath.Dir(filepath.Dir(path))),
 			mapFromAny(sourceSummaries["gazebo_model_odometry"]),
@@ -2805,6 +2915,25 @@ func landingFromProbeOutputs(probes []ProbeOutputSummary) *helpers.Landing {
 	return fallback
 }
 
+func landingFromHoverMissionSummary(mission map[string]any) *helpers.Landing {
+	landingMap := mapFromAny(mission["landing"])
+	if len(landingMap) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(landingMap)
+	if err != nil {
+		return nil
+	}
+	var landing helpers.Landing
+	if err := json.Unmarshal(data, &landing); err != nil {
+		return nil
+	}
+	if landingOK, _ := mission["landing_ok"].(bool); landing.Claim == "" && landingOK {
+		landing.Claim = helpers.ClaimEvaluated
+	}
+	return &landing
+}
+
 func evaluateProbeOutputs(plan Plan, artifactDir string) []ProbeOutputSummary {
 	summaries := make([]ProbeOutputSummary, 0, len(plan.Execution.ROSProbes))
 	for _, probe := range plan.Execution.ROSProbes {
@@ -2816,6 +2945,11 @@ func evaluateProbeOutputs(plan Plan, artifactDir string) []ProbeOutputSummary {
 			continue
 		}
 		summary.Exists = true
+		if strings.TrimSpace(string(data)) == "" {
+			summary.Empty = true
+			summaries = append(summaries, summary)
+			continue
+		}
 		payload := map[string]any{}
 		if err := json.Unmarshal(data, &payload); err != nil {
 			summary.OK = strings.TrimSpace(string(data)) != ""

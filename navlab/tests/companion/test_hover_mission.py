@@ -4,6 +4,7 @@ from math import isclose
 
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
+from navlab.common.companion.mission.context import MissionClock, MissionContext
 from navlab.common.companion.mission.evidence.hover import (
     classify_hover_drift,
     summarize_hover_altitude_crosscheck,
@@ -25,6 +26,9 @@ from navlab.common.companion.mission.fsm import (
 )
 from navlab.common.companion.mission.runtime_state import append_bounded_statustext, statustext_indicates_crash
 from navlab.common.companion.mission.stages.hover import (
+    HoverHealthGateConfig,
+    HoverHoldConfig,
+    HoverHoldStage,
     HoverInputs,
     HoverRequirements,
     capture_hold_anchor,
@@ -112,6 +116,62 @@ def _inputs(**overrides) -> HoverInputs:
     return HoverInputs(**values)
 
 
+def _hover_context(inputs: HoverInputs, *, now: float = 10.0) -> MissionContext:
+    ctx = MissionContext(clock=MissionClock(started_at_monotonic=0.0, now_monotonic=now))
+    ctx.state.nav.external_nav_ready = inputs.external_nav_ready
+    ctx.state.nav.mavlink_external_nav_ready = inputs.mavlink_external_nav_ready
+    ctx.state.nav.fcu_local_position_ready = inputs.fcu_local_position_ready
+    ctx.state.nav.imu_ready = inputs.imu_ready
+    ctx.state.nav.slam_quality_good = inputs.slam_quality_good
+    ctx.state.nav.slam_quality = inputs.slam_quality
+    ctx.state.nav.ready_elapsed_sec = inputs.ready_elapsed_sec
+    ctx.state.nav.slam_quality_loss_duration_sec = inputs.slam_quality_loss_duration_sec
+    ctx.state.nav.external_nav_loss_duration_sec = inputs.external_nav_loss_duration_sec
+    ctx.state.nav.mavlink_external_nav_loss_duration_sec = inputs.mavlink_external_nav_loss_duration_sec
+    ctx.state.nav.fcu_local_position_loss_duration_sec = inputs.fcu_local_position_loss_duration_sec
+    ctx.state.fcu.expected_mode_seen = inputs.expected_mode_seen
+    ctx.state.fcu.armed = inputs.armed_seen
+    ctx.state.fcu.airborne = inputs.airborne_seen
+    ctx.state.fcu.takeoff_ack_ok = inputs.takeoff_ack_ok
+    ctx.state.pose.yaw_rad = inputs.current_yaw_rad
+    ctx.state.pose.x_m = inputs.current_x
+    ctx.state.pose.y_m = inputs.current_y
+    ctx.state.pose.z_ned_m = inputs.current_z_ned
+    ctx.state.pose.height_m = inputs.current_height_m
+    ctx.state.pose.external_nav_height_m = inputs.external_nav_height_m
+    ctx.state.pose.rangefinder_relative_height_m = inputs.rangefinder_relative_height_m
+    ctx.state.pose.target_z_ned_m = inputs.target_z_ned
+    ctx.state.hover.airborne_elapsed_sec = inputs.airborne_elapsed_sec
+    ctx.state.hover.hover_elapsed_sec = inputs.hover_elapsed_sec
+    return ctx
+
+
+def _hover_health_stage(
+    *,
+    min_observation_sec: float = 1.0,
+    stable_required_sec: float = 1.0,
+    max_wait_sec: float = 10.0,
+    operator_confirm_required: bool = False,
+    operator_confirm_timeout_sec: float = 10.0,
+) -> HoverHoldStage:
+    return HoverHoldStage(
+        HoverHoldConfig(
+            preflight_ready_sec=5.0,
+            hover_settle_sec=2.0,
+            hover_hold_sec=20.0,
+            takeoff_alt_m=0.45,
+            hover_altitude_tolerance_m=0.18,
+            health_gate=HoverHealthGateConfig(
+                min_observation_sec=min_observation_sec,
+                stable_required_sec=stable_required_sec,
+                max_wait_sec=max_wait_sec,
+                operator_confirm_required=operator_confirm_required,
+                operator_confirm_timeout_sec=operator_confirm_timeout_sec,
+            ),
+        )
+    )
+
+
 def test_hover_decision_waits_then_guided_arm_takeoff_hold_complete() -> None:
     assert decide_hover(
         _inputs(external_nav_ready=False, armed_seen=False, airborne_seen=False),
@@ -139,7 +199,7 @@ def test_hover_decision_waits_then_guided_arm_takeoff_hold_complete() -> None:
     )
     assert (
         decide_hover(
-            _inputs(ready_elapsed_sec=4.9),
+            _inputs(ready_elapsed_sec=4.9, airborne_seen=False),
             preflight_ready_sec=5.0,
             hover_settle_sec=2.0,
             hover_hold_sec=20.0,
@@ -220,7 +280,12 @@ def test_hover_decision_waits_then_guided_arm_takeoff_hold_complete() -> None:
         hover_altitude_tolerance_m=0.18,
     )
     altitude_settle = decide_hover(
-        _inputs(current_z_ned=-0.2, current_height_m=0.2),
+        _inputs(
+            current_z_ned=-0.2,
+            current_height_m=0.2,
+            external_nav_height_m=0.2,
+            rangefinder_relative_height_m=0.2,
+        ),
         preflight_ready_sec=5.0,
         hover_settle_sec=2.0,
         hover_hold_sec=20.0,
@@ -254,9 +319,101 @@ def test_hover_decision_waits_then_guided_arm_takeoff_hold_complete() -> None:
     assert hold_without_takeoff_ack_but_with_independent_height.reason == "holding_position_with_independent_height"
     assert hold_without_takeoff_ack_but_with_independent_height.should_takeoff is False
     assert settle.phase == "hover_settle"
-    assert altitude_settle.reason == "settling_until_target_altitude"
+    assert altitude_settle.reason == "waiting_for_independent_takeoff_height"
     assert hold.phase == "hover_hold"
     assert complete.terminal is True
+
+
+def test_hover_health_gate_delays_sim_completion_until_stable_window() -> None:
+    stage = _hover_health_stage(min_observation_sec=1.0, stable_required_sec=1.0)
+    ctx = _hover_context(_inputs(hover_elapsed_sec=20.0), now=10.0)
+
+    waiting = stage.tick(ctx)
+    ctx.clock.now_monotonic = 11.0
+    complete = stage.tick(ctx)
+
+    assert waiting.status == "running"
+    assert waiting.evidence["phase"] == "hover_hold"
+    assert waiting.evidence["hover_health"]["phase"] == "hover_health_hold"
+    assert waiting.evidence["hover_health"]["reason"] == "hover_health_waiting_min_observation"
+    assert complete.status == "complete"
+    assert complete.evidence["hover_health"]["phase"] == "sim_auto_continue"
+    assert complete.evidence["hover_health"]["sim_auto_continue_allowed"] is True
+
+
+def test_hover_health_gate_does_not_shortcut_existing_hover_duration() -> None:
+    stage = _hover_health_stage(min_observation_sec=0.0, stable_required_sec=0.0)
+    ctx = _hover_context(_inputs(hover_elapsed_sec=19.0), now=10.0)
+
+    waiting = stage.tick(ctx)
+
+    assert waiting.status == "running"
+    assert waiting.reason == "hover_health_waiting_hover_duration"
+    assert waiting.evidence["hover_health"]["sim_auto_continue_allowed"] is False
+
+
+def test_hover_health_gate_resets_stable_window_on_yellow_sample() -> None:
+    stage = _hover_health_stage(min_observation_sec=0.0, stable_required_sec=1.0)
+    ctx = _hover_context(_inputs(hover_elapsed_sec=20.0), now=10.0)
+
+    assert stage.tick(ctx).status == "running"
+    ctx.clock.now_monotonic = 10.5
+    ctx.state.nav.slam_quality_good = False
+    yellow = stage.tick(ctx)
+    ctx.clock.now_monotonic = 11.5
+    ctx.state.nav.slam_quality_good = True
+    still_waiting = stage.tick(ctx)
+    ctx.clock.now_monotonic = 12.5
+    complete = stage.tick(ctx)
+
+    assert yellow.evidence["hover_health"]["band"] == "yellow"
+    assert yellow.evidence["hover_health"]["blockers"] == ["slam_quality_not_green"]
+    assert still_waiting.status == "running"
+    assert still_waiting.evidence["hover_health"]["stable_sec"] == 0.0
+    assert complete.status == "complete"
+
+
+def test_hover_health_gate_waits_for_operator_confirm_after_green() -> None:
+    stage = _hover_health_stage(
+        min_observation_sec=0.0,
+        stable_required_sec=0.0,
+        operator_confirm_required=True,
+    )
+    ctx = _hover_context(_inputs(hover_elapsed_sec=20.0), now=10.0)
+
+    waiting = stage.tick(ctx)
+    ctx.state.hover.operator_confirm_received = True
+    ctx.clock.now_monotonic = 10.1
+    complete = stage.tick(ctx)
+
+    assert waiting.status == "running"
+    assert waiting.reason == "waiting_for_operator_confirm"
+    assert waiting.evidence["hover_health"]["phase"] == "operator_confirm"
+    assert waiting.evidence["hover_health"]["real_operator_confirm_allowed"] is True
+    assert complete.status == "complete"
+    assert complete.evidence["hover_health"]["phase"] == "operator_confirmed"
+
+
+def test_hover_health_gate_blocks_operator_confirm_when_red() -> None:
+    stage = _hover_health_stage(
+        min_observation_sec=0.0,
+        stable_required_sec=0.0,
+        operator_confirm_required=True,
+    )
+    ctx = _hover_context(_inputs(hover_elapsed_sec=20.0), now=10.0)
+
+    waiting = stage.tick(ctx)
+    ctx.clock.now_monotonic = 10.5
+    ctx.state.nav.external_nav_ready = False
+    ctx.state.nav.external_nav_loss_duration_sec = 1.0
+    ctx.state.hover.operator_confirm_received = True
+    blocked = stage.tick(ctx)
+
+    assert waiting.evidence["hover_health"]["phase"] == "operator_confirm"
+    assert blocked.status == "abort"
+    assert blocked.reason == "external_nav_lost_after_airborne"
+    assert blocked.evidence["hover_health"]["band"] == "red"
+    assert blocked.evidence["hover_health"]["operator_confirm_allowed"] is False
 
 
 def test_hover_phases_map_to_mission_fsm_states() -> None:
@@ -469,7 +626,7 @@ def test_hover_decision_blocks_hold_with_takeoff_ack_when_independent_height_lag
     assert decision.reason == "waiting_for_independent_takeoff_height"
 
 
-def test_independent_takeoff_height_evidence_requires_external_nav_and_rangefinder_window() -> None:
+def test_independent_takeoff_height_evidence_requires_external_nav_and_second_height_source() -> None:
     assert height_reaches_target(0.34, target_alt_m=0.45, tolerance_m=0.18)
     assert not height_reaches_target(0.70, target_alt_m=0.45, tolerance_m=0.18)
     assert not height_reaches_target(0.09, target_alt_m=0.45, tolerance_m=0.18)
@@ -483,11 +640,71 @@ def test_independent_takeoff_height_evidence_requires_external_nav_and_rangefind
         takeoff_alt_m=0.45,
         hover_altitude_tolerance_m=0.18,
     )
-    assert not independent_takeoff_height_reached(
-        _inputs(takeoff_ack_ok=False, external_nav_height_m=0.0, rangefinder_relative_height_m=0.0),
+    assert independent_takeoff_height_reached(
+        _inputs(
+            takeoff_ack_ok=False,
+            current_z_ned=-0.44,
+            external_nav_height_m=0.44,
+            rangefinder_relative_height_m=0.95,
+            target_z_ned=-0.45,
+        ),
         takeoff_alt_m=0.45,
         hover_altitude_tolerance_m=0.18,
     )
+    assert not independent_takeoff_height_reached(
+        _inputs(
+            takeoff_ack_ok=False,
+            current_z_ned=-0.44,
+            external_nav_height_m=0.0,
+            rangefinder_relative_height_m=0.44,
+            target_z_ned=-0.45,
+        ),
+        takeoff_alt_m=0.45,
+        hover_altitude_tolerance_m=0.18,
+    )
+
+
+def test_hover_decision_keeps_hold_when_rangefinder_has_single_high_outlier() -> None:
+    decision = decide_hover(
+        _inputs(
+            takeoff_ack_ok=True,
+            current_z_ned=-0.404,
+            current_height_m=1.04,
+            external_nav_height_m=0.411,
+            rangefinder_relative_height_m=0.95,
+            target_z_ned=-0.485,
+            hover_elapsed_sec=0.25,
+        ),
+        preflight_ready_sec=5.0,
+        hover_settle_sec=2.0,
+        hover_hold_sec=20.0,
+        takeoff_alt_m=0.5,
+        hover_altitude_tolerance_m=0.18,
+    )
+
+    assert decision.phase == "hover_hold"
+    assert decision.reason == "holding_position"
+
+
+def test_hover_decision_still_settles_when_external_nav_height_does_not_support_target() -> None:
+    decision = decide_hover(
+        _inputs(
+            takeoff_ack_ok=True,
+            current_z_ned=-0.485,
+            external_nav_height_m=0.0,
+            rangefinder_relative_height_m=0.5,
+            target_z_ned=-0.485,
+            hover_elapsed_sec=0.25,
+        ),
+        preflight_ready_sec=5.0,
+        hover_settle_sec=2.0,
+        hover_hold_sec=20.0,
+        takeoff_alt_m=0.5,
+        hover_altitude_tolerance_m=0.18,
+    )
+
+    assert decision.phase == "hover_settle"
+    assert decision.reason == "waiting_for_independent_takeoff_height"
 
 
 def test_position_hold_setpoint_waits_for_true_hover_hold_phase() -> None:
@@ -533,6 +750,12 @@ def test_capture_hold_anchor_latches_first_airborne_position() -> None:
 
     retained = capture_hold_anchor(captured[0], captured[1], captured[2], 2.5, 0.8, 1.1)
     assert retained == captured
+
+
+def test_capture_hold_anchor_uses_current_yaw_when_no_anchor_exists() -> None:
+    captured = capture_hold_anchor(None, None, None, 1.2, -0.4, 1.57)
+
+    assert captured == (1.2, -0.4, 1.57)
 
 
 def test_capture_hold_anchor_refreshes_yaw_for_new_hold_segment() -> None:
@@ -632,6 +855,75 @@ def test_hover_decision_debounces_short_nav_quality_loss_after_airborne() -> Non
     assert decision.terminal is False
 
 
+def test_hover_decision_defers_nav_loss_abort_during_initial_settle() -> None:
+    decision = decide_hover(
+        _inputs(
+            slam_quality_good=False,
+            slam_quality="stale",
+            external_nav_ready=False,
+            mavlink_external_nav_ready=False,
+            armed_seen=True,
+            airborne_seen=True,
+            airborne_elapsed_sec=1.5,
+            hover_elapsed_sec=0.0,
+            slam_quality_loss_duration_sec=1.1,
+            external_nav_loss_duration_sec=1.1,
+            mavlink_external_nav_loss_duration_sec=1.1,
+        ),
+        preflight_ready_sec=5.0,
+        hover_settle_sec=2.0,
+        hover_hold_sec=20.0,
+        takeoff_alt_m=0.45,
+        hover_altitude_tolerance_m=0.18,
+    )
+
+    assert decision.phase == "hover_settle"
+    assert decision.reason == "settling_before_position_hold"
+
+
+def test_hover_decision_aborts_nav_loss_after_initial_settle_window() -> None:
+    decision = decide_hover(
+        _inputs(
+            slam_quality_good=False,
+            slam_quality="stale",
+            external_nav_ready=False,
+            armed_seen=True,
+            airborne_seen=True,
+            airborne_elapsed_sec=2.1,
+            hover_elapsed_sec=0.0,
+            slam_quality_loss_duration_sec=1.1,
+            external_nav_loss_duration_sec=1.1,
+        ),
+        preflight_ready_sec=5.0,
+        hover_settle_sec=2.0,
+        hover_hold_sec=20.0,
+        takeoff_alt_m=0.45,
+        hover_altitude_tolerance_m=0.18,
+    )
+
+    assert decision.phase == "abort"
+    assert decision.reason == "slam_quality_lost_after_airborne"
+
+
+def test_hover_decision_does_not_reapply_preflight_stability_wait_after_airborne() -> None:
+    decision = decide_hover(
+        _inputs(
+            ready_elapsed_sec=0.1,
+            airborne_seen=True,
+            airborne_elapsed_sec=10.0,
+            hover_elapsed_sec=10.0,
+        ),
+        preflight_ready_sec=5.0,
+        hover_settle_sec=2.0,
+        hover_hold_sec=20.0,
+        takeoff_alt_m=0.45,
+        hover_altitude_tolerance_m=0.18,
+    )
+
+    assert decision.phase == "hover_hold"
+    assert decision.reason == "holding_position"
+
+
 def test_hover_decision_aborts_when_guided_mode_is_lost_after_airborne() -> None:
     decision = decide_hover(
         _inputs(expected_mode_seen=False, armed_seen=True, airborne_seen=True),
@@ -647,9 +939,9 @@ def test_hover_decision_aborts_when_guided_mode_is_lost_after_airborne() -> None
     assert decision.terminal is True
 
 
-def test_hover_decision_prefers_fcu_local_position_for_altitude_gate() -> None:
+def test_hover_decision_keeps_hold_when_fcu_local_z_is_single_outlier() -> None:
     decision = decide_hover(
-        _inputs(current_height_m=0.46, current_z_ned=-0.8),
+        _inputs(current_height_m=0.46, current_z_ned=-0.8, hover_elapsed_sec=19.9),
         preflight_ready_sec=5.0,
         hover_settle_sec=2.0,
         hover_hold_sec=20.0,
@@ -657,7 +949,8 @@ def test_hover_decision_prefers_fcu_local_position_for_altitude_gate() -> None:
         hover_altitude_tolerance_m=0.18,
     )
 
-    assert decision.reason == "settling_until_target_altitude"
+    assert decision.phase == "hover_hold"
+    assert decision.reason == "holding_position"
 
 
 def test_hover_decision_falls_back_to_rangefinder_without_local_position() -> None:

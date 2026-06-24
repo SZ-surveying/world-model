@@ -13,8 +13,17 @@ import (
 	"github.com/foxglove/mcap/go/mcap"
 
 	"navlab/orchestration-sim/internal/config"
+	simruntime "navlab/orchestration-sim/internal/runtime"
 	"navlab/orchestration-sim/internal/tasks/helpers"
 )
+
+func copyAnyMap(input map[string]any) map[string]any {
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
+}
 
 func TestEvaluateResultGatesReadsProbeAndRosbagArtifacts(t *testing.T) {
 	artifactDir := t.TempDir()
@@ -123,6 +132,88 @@ func TestEvaluateResultGatesBlocksWhenRequiredSlamHoverProbeIsMissing(t *testing
 	}
 }
 
+func TestEvaluateResultGatesClassifiesKilledProbeWithEmptyOutput(t *testing.T) {
+	artifactDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(artifactDir, "slam_hover_probe.json"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	evaluation := EvaluateResultGates(
+		config.ProjectConfig{},
+		config.TaskRuntimeConfig{
+			Landing:       config.LandingConfig{HoverPolicy: helpers.PolicyAPLandModeAfterHover, DefaultPolicy: helpers.PolicyLandInPlace},
+			FCUController: config.FCUControllerConfig{TakeoffAltM: 0.5},
+			SlamHover:     config.SlamHoverConfig{HoverClaim: "evaluated"},
+		},
+		Plan{
+			TaskID: "hover",
+			Execution: helpers.ExecutionPlan{
+				ROSProbes: []helpers.ROSProbePlan{{Name: "slam_hover_probe", OutputPath: "slam_hover_probe.json"}},
+			},
+		},
+		artifactDir,
+		RuntimeSpecBundle{},
+		RuntimeExecutionResult{
+			ProbeResults: []simruntime.ProbeResult{{Name: "slam_hover_probe", ReturnCode: -1}},
+		},
+		nil,
+	)
+
+	for _, want := range []string{
+		"probe_failed:slam_hover_probe:rc=-1",
+		"probe_killed:slam_hover_probe",
+		"probe_output_empty:slam_hover_probe",
+	} {
+		if !stringSliceContains(evaluation.Blockers, want) {
+			t.Fatalf("blockers = %#v, want %s", evaluation.Blockers, want)
+		}
+	}
+	if len(evaluation.ProbeOutputs) != 1 || !evaluation.ProbeOutputs[0].Exists || !evaluation.ProbeOutputs[0].Empty {
+		t.Fatalf("probe outputs = %#v, want existing empty output", evaluation.ProbeOutputs)
+	}
+}
+
+func TestEvaluateResultGatesIgnoresDiagnosticSlamHoverProbeFailure(t *testing.T) {
+	artifactDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(artifactDir, "slam_hover_probe.json"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	evaluation := EvaluateResultGates(
+		config.ProjectConfig{},
+		config.TaskRuntimeConfig{
+			Landing:       config.LandingConfig{HoverPolicy: helpers.PolicyAPLandModeAfterHover, DefaultPolicy: helpers.PolicyLandInPlace},
+			FCUController: config.FCUControllerConfig{TakeoffAltM: 0.5},
+			SlamHover:     config.SlamHoverConfig{HoverClaim: "evaluated"},
+		},
+		Plan{
+			TaskID: "hover",
+			Execution: helpers.ExecutionPlan{
+				ROSProbes: []helpers.ROSProbePlan{{Name: "slam_hover_probe", OutputPath: "slam_hover_probe.json"}},
+			},
+		},
+		artifactDir,
+		RuntimeSpecBundle{Probes: []simruntime.ProbeSpec{{Name: "slam_hover_probe", Required: false}}},
+		RuntimeExecutionResult{
+			ProbeResults: []simruntime.ProbeResult{{Name: "slam_hover_probe", ReturnCode: -1}},
+		},
+		nil,
+	)
+
+	for _, unwanted := range []string{
+		"probe_failed:slam_hover_probe:rc=-1",
+		"probe_killed:slam_hover_probe",
+		"probe_output_empty:slam_hover_probe",
+	} {
+		if stringSliceContains(evaluation.Blockers, unwanted) {
+			t.Fatalf("blockers = %#v, must not contain %s", evaluation.Blockers, unwanted)
+		}
+	}
+	if len(evaluation.ProbeOutputs) != 1 || !evaluation.ProbeOutputs[0].Exists || !evaluation.ProbeOutputs[0].Empty {
+		t.Fatalf("probe outputs = %#v, want existing empty diagnostic output", evaluation.ProbeOutputs)
+	}
+}
+
 func TestHoverMissionBlockersRequirePythonMissionSummary(t *testing.T) {
 	if blockers := hoverMissionBlockers(nil); !stringSliceContains(blockers, "hover_mission_summary_missing") {
 		t.Fatalf("blockers = %#v, want hover_mission_summary_missing", blockers)
@@ -186,6 +277,69 @@ func TestHoverMissionBlockersRequirePythonMissionSummary(t *testing.T) {
 	if blockers := hoverMissionBlockers(valid); len(blockers) != 0 {
 		t.Fatalf("blockers = %#v, want none", blockers)
 	}
+	aborted := copyAnyMap(valid)
+	aborted["ok"] = false
+	aborted["hover_body_ok"] = false
+	aborted["mission_fsm_history"] = []any{
+		map[string]any{"state": "S6 hover_hold", "reason": "holding_position"},
+		map[string]any{"state": "S_abort", "guard": "abort", "reason": "slam_quality_lost_after_airborne", "blocker": "slam_quality_lost_after_airborne"},
+	}
+	aborted = subsetHoverMissionSummary(aborted)
+	blockers := hoverMissionBlockers(aborted)
+	if !stringSliceContains(blockers, "hover_mission_abort:slam_quality_lost_after_airborne") {
+		t.Fatalf("blockers = %#v, want hover mission abort reason", blockers)
+	}
+	spanFailed := copyAnyMap(valid)
+	spanFailed["ok"] = false
+	spanFailed["hover_body_ok"] = false
+	spanFailed["hover_drift"] = map[string]any{
+		"sample_count":           float64(20),
+		"duration_sec":           float64(17.9),
+		"duration_tolerance_sec": float64(0.25),
+		"horizontal_drift_m":     float64(0.02),
+		"horizontal_span_m":      float64(0.21),
+		"max_horizontal_drift_m": float64(0.10),
+		"max_altitude_drift_m":   float64(0.30),
+		"quality":                "tight",
+		"horizontal_drift_ok":    true,
+		"horizontal_span_ok":     false,
+		"z_span_ok":              true,
+		"duration_ok":            true,
+		"ok":                     false,
+	}
+	blockers = hoverMissionBlockers(spanFailed)
+	if !stringSliceContains(blockers, "hover_mission_drift_not_ok") ||
+		!stringSliceContains(blockers, "hover_mission_horizontal_span_not_ok") {
+		t.Fatalf("blockers = %#v, want generic and span-specific drift blockers", blockers)
+	}
+	jumpFailed := copyAnyMap(valid)
+	jumpFailed["ok"] = false
+	jumpFailed["hover_body_ok"] = false
+	jumpFailed["hover_drift"] = map[string]any{
+		"sample_count":                                float64(20),
+		"duration_sec":                                float64(17.9),
+		"duration_tolerance_sec":                      float64(0.25),
+		"horizontal_drift_m":                          float64(0.02),
+		"horizontal_span_m":                           float64(0.03),
+		"quality":                                     "tight",
+		"horizontal_drift_ok":                         true,
+		"horizontal_span_ok":                          true,
+		"z_span_ok":                                   true,
+		"duration_ok":                                 true,
+		"no_slam_quality_jump_in_hover_window":        false,
+		"no_external_nav_loss_after_airborne":         false,
+		"no_mavlink_external_nav_loss_after_airborne": true,
+		"ok": true,
+	}
+	blockers = hoverMissionBlockers(jumpFailed)
+	for _, want := range []string{
+		"hover_mission_slam_quality_jump_in_hover_window",
+		"hover_mission_external_nav_lost_after_airborne",
+	} {
+		if !stringSliceContains(blockers, want) {
+			t.Fatalf("blockers = %#v, want %s", blockers, want)
+		}
+	}
 	tooLow := map[string]any{
 		"ok":                         false,
 		"hover_body_ok":              false,
@@ -226,7 +380,7 @@ func TestHoverMissionBlockersRequirePythonMissionSummary(t *testing.T) {
 			"motors_safe":           false,
 		},
 	}
-	blockers := hoverMissionBlockers(tooLow)
+	blockers = hoverMissionBlockers(tooLow)
 	for _, want := range []string{
 		"hover_mission_not_ok",
 		"hover_mission_hover_hold_missing",
@@ -356,6 +510,35 @@ func TestExternalNavFeedbackBlockersRequireSlamBridgeAndFCUFeedback(t *testing.T
 	blockers := externalNavFeedbackBlockers(externalNav, mavlinkExternalNav, nil)
 	if !stringSliceContains(blockers, "external_nav_not_seen_by_fcu") {
 		t.Fatalf("blockers = %#v, want external_nav_not_seen_by_fcu", blockers)
+	}
+}
+
+func TestLandingEvidenceFallsBackToHoverMissionSummary(t *testing.T) {
+	landing := landingFromHoverMissionSummary(map[string]any{
+		"landing_ok": true,
+		"landing": map[string]any{
+			"ok":                         true,
+			"claim":                      "evaluated",
+			"policy":                     "ap_land_mode_after_hover",
+			"state":                      "landing_complete",
+			"land_command_accepted":      true,
+			"landed_confirmed":           true,
+			"touchdown_confirmed":        true,
+			"disarmed":                   true,
+			"motors_safe":                true,
+			"require_disarm":             true,
+			"require_motors_safe":        true,
+			"uses_gazebo_truth_as_input": false,
+			"blockers":                   []any{},
+			"return_home": map[string]any{
+				"required": false,
+				"ok":       true,
+				"state":    "not_required",
+			},
+		},
+	})
+	if landing == nil || !landing.OK || landing.Claim != "evaluated" || landing.State != "landing_complete" {
+		t.Fatalf("landing = %#v", landing)
 	}
 }
 
@@ -715,8 +898,29 @@ func TestSummarizeHoverXYAlignmentFlagsDirectionMismatch(t *testing.T) {
 		t.Fatalf("xy alignment = %#v, want mismatch", summary)
 	}
 	blockers := testStringSliceFromAny(summary["blockers"])
-	if !stringSliceContains(blockers, "hover_xy_alignment_direction_mismatch:gazebo_model_odometry__external_nav_odom_candidate") {
+	if !stringSliceContains(blockers, "hover_xy_alignment_direction_mismatch:external_nav_odom_candidate__slam_odom_corrected") {
 		t.Fatalf("blockers = %#v, want external nav candidate mismatch", blockers)
+	}
+}
+
+func TestSummarizeHoverXYAlignmentKeepsGazeboOnlyMismatchReviewOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hover_xy_alignment_gazebo_mismatch_rosbag_0.mcap")
+	writeHoverXYAlignmentMCAPWithMode(t, path, "gazebo_only_mismatch")
+
+	summary, err := summarizeHoverXYAlignment(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := summary["ok"].(bool); !ok {
+		t.Fatalf("xy alignment = %#v, want ok when only review-only Gazebo source disagrees", summary)
+	}
+	blockers := testStringSliceFromAny(summary["blockers"])
+	if len(blockers) != 0 {
+		t.Fatalf("blockers = %#v, want none for Gazebo-only disagreement", blockers)
+	}
+	auditBlockers := testStringSliceFromAny(summary["audit_blockers"])
+	if !stringSliceContains(auditBlockers, "hover_xy_alignment_direction_mismatch:gazebo_model_odometry__slam_odom_corrected") {
+		t.Fatalf("audit_blockers = %#v, want Gazebo mismatch retained for audit", auditBlockers)
 	}
 }
 
@@ -954,6 +1158,15 @@ func writeGazeboHoverWindowMCAP(t *testing.T, path string) {
 
 func writeHoverXYAlignmentMCAP(t *testing.T, path string, mismatch bool) {
 	t.Helper()
+	mode := "aligned"
+	if mismatch {
+		mode = "estimate_mismatch"
+	}
+	writeHoverXYAlignmentMCAPWithMode(t, path, mode)
+}
+
+func writeHoverXYAlignmentMCAPWithMode(t *testing.T, path string, mode string) {
+	t.Helper()
 	file, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
@@ -998,14 +1211,20 @@ func writeHoverXYAlignmentMCAP(t *testing.T, path string, mismatch bool) {
 	for idx := 10; idx <= 12; idx++ {
 		dx := 0.1 * float64(idx-10)
 		dy := 0.05 * float64(idx-10)
+		gazeboX := dx
+		gazeboY := dy
 		externalX := dx
 		externalY := dy
-		if mismatch {
+		switch mode {
+		case "estimate_mismatch":
 			externalX = -dx
 			externalY = -dy
+		case "gazebo_only_mismatch":
+			gazeboX = -dx
+			gazeboY = -dy
 		}
-		writeMsg(1, uint64(idx), gateTestOdometryCDR(dx, dy, 0))
-		writeMsg(3, uint64(idx), gateTestPoseStampedCDR(dx*0.98, dy*0.98, 0))
+		writeMsg(1, uint64(idx), gateTestOdometryCDR(gazeboX, gazeboY, 0))
+		writeMsg(3, uint64(idx), gateTestPoseStampedCDR(dy*0.98, -dx*0.98, 0))
 		writeMsg(4, uint64(idx), gateTestOdometryCDR(externalX, externalY, 0))
 		writeMsg(5, uint64(idx), gateTestOdometryCDR(dx*1.02, dy*1.02, 0))
 		writeMsg(6, uint64(idx), gateTestOdometryCDR(externalX, externalY, 0))
@@ -1705,16 +1924,19 @@ func TestMetricSummaryIncludesFCUSetpointEvidence(t *testing.T) {
 func TestSummarizeLatestJSONStatusFromRosbagFillsSelectorEvidence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hover_status_rosbag_0.mcap")
 	writeLatestStatusMCAP(t, path, "/external_nav/source_selector/status", []string{
-		`{"source":"slam_passthrough","output_odom_topic":"/external_nav/odom_candidate","uses_gazebo_truth_input":false}`,
-		`{"source":"scan_reference","cartographer_scan_disagreement":true,"uses_gazebo_truth_input":false,"uses_known_map_input":false,"output_odom_topic":"/external_nav/odom_candidate","output_frame_id":"map","output_child_frame_id":"base_link"}`,
+		`{"ready":true,"publish":true,"source":"slam_bootstrap","output_odom_topic":"/external_nav/odom_candidate","uses_gazebo_truth_input":false}`,
+		`{"ready":false,"publish":false,"source":"not_ready","blockers":["candidate_step_jump"],"reject_reason":"candidate_step_jump","rejected_step_m":1.7,"cartographer_scan_disagreement":false,"uses_gazebo_truth_input":false,"uses_known_map_input":false,"output_odom_topic":"/external_nav/odom_candidate","output_frame_id":"map","output_child_frame_id":"base_link"}`,
 	})
 
-	summary, err := summarizeLatestJSONStatusFromRosbag(path, "/external_nav/source_selector/status", "source", "cartographer_scan_disagreement", "uses_gazebo_truth_input", "uses_known_map_input", "output_odom_topic", "output_frame_id", "output_child_frame_id")
+	summary, err := summarizeLatestJSONStatusFromRosbag(path, "/external_nav/source_selector/status", "ready", "publish", "source", "blockers", "reject_reason", "rejected_step_m", "cartographer_scan_disagreement", "uses_gazebo_truth_input", "uses_known_map_input", "output_odom_topic", "output_frame_id", "output_child_frame_id")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary["source"] != "scan_reference" ||
-		summary["cartographer_scan_disagreement"] != true ||
+	if summary["source"] != "not_ready" ||
+		summary["ready"] != false ||
+		summary["publish"] != false ||
+		summary["reject_reason"] != "candidate_step_jump" ||
+		metricFloat(summary, "rejected_step_m") != 1.7 ||
 		summary["output_odom_topic"] != "/external_nav/odom_candidate" ||
 		metricInt(summary, "status_sample_count") != 2 {
 		t.Fatalf("summary = %#v", summary)
@@ -1770,15 +1992,17 @@ func TestMetricSummaryIncludesExternalNavSourceSelectorEvidence(t *testing.T) {
 			Payload: map[string]any{
 				"samples": map[string]any{
 					"/external_nav/source_selector/status": map[string]any{
-						"data": `{"ready":true,"source":"scan_reference","blockers":[],"cartographer_scan_disagreement":true,"uses_gazebo_truth_input":false,"uses_known_map_input":false,"output_odom_topic":"/external_nav/odom_candidate","output_frame_id":"map","output_child_frame_id":"base_link"}`,
+						"data": `{"ready":true,"publish":true,"degraded":true,"source":"scan_reference_hold","blockers":["candidate_step_jump"],"reject_reason":"candidate_step_jump","rejected_step_m":1.7,"hold_age_ms":100.0,"hold_reason":"candidate_step_jump_hold","cartographer_scan_disagreement":false,"uses_gazebo_truth_input":false,"uses_known_map_input":false,"output_odom_topic":"/external_nav/odom_candidate","output_frame_id":"map","output_child_frame_id":"base_link"}`,
 					},
 				},
 			},
 		},
 	}, nil)
 
-	if metrics.ExternalNavSourceSelector["source"] != "scan_reference" ||
-		metrics.ExternalNavSourceSelector["cartographer_scan_disagreement"] != true ||
+	if metrics.ExternalNavSourceSelector["source"] != "scan_reference_hold" ||
+		metrics.ExternalNavSourceSelector["publish"] != true ||
+		metrics.ExternalNavSourceSelector["degraded"] != true ||
+		metrics.ExternalNavSourceSelector["reject_reason"] != "candidate_step_jump" ||
 		metrics.ExternalNavSourceSelector["output_odom_topic"] != "/external_nav/odom_candidate" {
 		t.Fatalf("external nav source selector metrics = %#v", metrics.ExternalNavSourceSelector)
 	}
@@ -1832,9 +2056,49 @@ func TestExternalNavSourceSelectorBlockersRejectTruthInput(t *testing.T) {
 	}
 }
 
+func TestExternalNavSourceSelectorBlockersExposeNotReadyRejectReason(t *testing.T) {
+	blockers := externalNavSourceSelectorBlockers(map[string]any{
+		"ready":                   false,
+		"publish":                 false,
+		"source":                  "not_ready",
+		"reject_reason":           "candidate_step_jump",
+		"uses_gazebo_truth_input": false,
+		"uses_known_map_input":    false,
+		"output_odom_topic":       "/external_nav/odom_candidate",
+		"output_frame_id":         "map",
+		"output_child_frame_id":   "base_link",
+	})
+
+	for _, want := range []string{
+		"external_nav_source_selector_not_ready",
+		"external_nav_source_selector_not_publishing",
+		"external_nav_source_selector_rejected:candidate_step_jump",
+	} {
+		if !stringSliceContains(blockers, want) {
+			t.Fatalf("blockers = %#v, want %s", blockers, want)
+		}
+	}
+}
+
 func TestExternalNavCandidateIsAllowedExternalNavInput(t *testing.T) {
 	if !isAllowedExternalNavSLAMInputTopic("/external_nav/odom_candidate") {
 		t.Fatal("/external_nav/odom_candidate should be an allowed hover ExternalNav input")
+	}
+}
+
+func TestHoverSourceSelectorGateOnlyAppliesToSelectorRoute(t *testing.T) {
+	if !hoverUsesExternalNavSourceSelector(config.TaskRuntimeConfig{}) {
+		t.Fatal("default hover route should require source selector evidence")
+	}
+	if !hoverUsesExternalNavSourceSelector(config.TaskRuntimeConfig{
+		SlamHover: config.SlamHoverConfig{ExternalNavInputOdomTopic: "/external_nav/odom_candidate"},
+	}) {
+		t.Fatal("selector candidate route should require source selector evidence")
+	}
+	if hoverUsesExternalNavSourceSelector(config.TaskRuntimeConfig{
+		SlamHover: config.SlamHoverConfig{ExternalNavInputOdomTopic: "/slam/odom"},
+	}) {
+		t.Fatal("direct /slam/odom route should not require source selector evidence")
 	}
 }
 

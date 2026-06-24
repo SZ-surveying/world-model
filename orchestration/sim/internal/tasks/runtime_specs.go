@@ -159,7 +159,7 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 			},
 			TimeoutSec:  probeTimeoutSec(probe.Name, plan.DurationSec),
 			LogPath:     filepath.Join(artifactDir, probe.Name+".log"),
-			Required:    true,
+			Required:    probeRequiredForRuntime(probe.Name),
 			ServiceRole: probe.HelperID,
 		}
 		if err := spec.ValidateDocker(); err != nil {
@@ -203,6 +203,10 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 		bundle.Rosbags = append(bundle.Rosbags, spec)
 	}
 	return bundle, nil
+}
+
+func probeRequiredForRuntime(name string) bool {
+	return name != "slam_hover_probe"
 }
 
 func probeTimeoutSec(name string, durationSec float64) float64 {

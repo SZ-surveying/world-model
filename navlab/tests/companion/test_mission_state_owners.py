@@ -156,6 +156,11 @@ def test_hover_mission_summary_runtime_builds_final_summary(tmp_path) -> None:
         takeoff_alt_m=0.45,
         hover_altitude_tolerance_m=0.2,
         hover_hold_sec=1.0,
+        hover_health_min_observation_sec=1.0,
+        hover_health_stable_required_sec=0.5,
+        hover_health_max_wait_sec=5.0,
+        operator_confirm_required=False,
+        operator_confirm_timeout_sec=3.0,
         hover_duration_tolerance_sec=0.25,
         max_horizontal_drift_m=0.5,
         max_altitude_drift_m=0.3,
@@ -184,6 +189,13 @@ def test_hover_mission_summary_runtime_builds_final_summary(tmp_path) -> None:
     ctx.state.hover.hold_x_m = 1.0
     ctx.state.hover.hold_y_m = 2.0
     ctx.state.hover.hold_yaw_rad = 0.3
+    ctx.state.hover.health_started_at_monotonic = 12.0
+    ctx.state.hover.health_green_since_monotonic = 12.5
+    ctx.state.hover.health_phase = "sim_auto_continue"
+    ctx.state.hover.health_band = "green"
+    ctx.state.hover.health_reason = "hover_health_green_stable"
+    ctx.state.hover.health_observed_sec = 4.0
+    ctx.state.hover.health_stable_sec = 3.5
     hover_evidence = HoverEvidenceRecorder()
     ctx.state.pose.x_m = 1.0
     ctx.state.pose.y_m = 2.0
@@ -238,7 +250,17 @@ def test_hover_mission_summary_runtime_builds_final_summary(tmp_path) -> None:
         started_at_monotonic=10.0,
         fsm_snapshot=fsm.snapshot(now_monotonic=16.0),
         prefix_pipeline={"terminal": True},
-        status_history=[],
+        status_history=[
+            {
+                "phase": "hover_hold",
+                "hover_health": {
+                    "phase": "sim_auto_continue",
+                    "band": "green",
+                    "reason": "hover_health_green_stable",
+                    "blockers": [],
+                },
+            }
+        ],
         ctx=ctx,
         runtime_adapter=runtime_adapter,
         runtime_adapter_config=adapter_config,
@@ -253,4 +275,200 @@ def test_hover_mission_summary_runtime_builds_final_summary(tmp_path) -> None:
     assert summary["ok"] is True
     assert summary["landing"]["ok"] is True
     assert summary["hover_drift"]["sample_count"] == 2
+    assert summary["hover_drift"]["horizontal_span_ok"] is True
+    assert summary["hover_drift"]["no_external_nav_loss_after_airborne"] is True
+    assert summary["hover_drift"]["no_slam_quality_jump_in_hover_window"] is True
+    assert summary["runtime_hover_health_final"]["schema"] == "navlab.runtime_hover_health.v1"
+    assert summary["runtime_hover_health_final"]["phase"] == "sim_auto_continue"
+    assert summary["runtime_hover_health_final"]["band"] == "green"
+    assert summary["runtime_hover_health_final"]["sim_auto_continue_allowed"] is True
+    assert summary["runtime_hover_health_final"]["mission_fsm_substate"] == "sim_auto_continue"
     assert json.loads((tmp_path / "mission_summary.json").read_text())["landing"]["state"] == "landing_complete"
+
+
+def test_hover_mission_summary_runtime_freezes_abort_runtime_health(tmp_path) -> None:
+    from navlab.common.companion.mission import MissionContext
+    from navlab.common.companion.mission.summary_runtime import HoverMissionSummaryConfig, HoverMissionSummaryRuntime
+
+    config = HoverMissionSummaryConfig(
+        summary_file=str(tmp_path / "mission_summary.json"),
+        mode="GUIDED",
+        mode_number=4,
+        takeoff_alt_m=0.45,
+        hover_altitude_tolerance_m=0.2,
+        hover_hold_sec=1.0,
+        hover_health_min_observation_sec=1.0,
+        hover_health_stable_required_sec=0.5,
+        hover_health_max_wait_sec=5.0,
+        operator_confirm_required=True,
+        operator_confirm_timeout_sec=3.0,
+        hover_duration_tolerance_sec=0.25,
+        max_horizontal_drift_m=0.5,
+        max_altitude_drift_m=0.3,
+        preflight_ready_sec=1.0,
+        max_wait_ready_sec=10.0,
+        hover_settle_sec=1.0,
+        require_external_nav=True,
+        require_imu_status=True,
+        send_position_setpoints=True,
+        landing_policy="ap_land_mode_after_hover",
+        require_disarm=True,
+        require_motors_safe=True,
+        touchdown_confirm_sec=0.2,
+        force_disarm_grace_sec=1.0,
+        force_disarm_after_touchdown=False,
+        landing_setpoint_lookahead_sec=1.0,
+        landing_slowdown_altitude_m=0.6,
+        landing_near_ground_descent_rate_mps=0.01,
+        max_landing_descent_rate_mps=0.6,
+        touchdown_altitude_m=0.12,
+    )
+    ctx = MissionContext()
+    ctx.state.hover.health_phase = "hover_health_blocked"
+    ctx.state.hover.health_band = "red"
+    ctx.state.hover.health_reason = "external_nav_lost_after_airborne"
+    ctx.state.hover.health_observed_sec = 6.0
+    ctx.state.hover.health_stable_sec = 0.0
+    ctx.state.hover.operator_confirm_allowed = False
+    ctx.state.hover.operator_confirm_received = False
+
+    health = HoverMissionSummaryRuntime(config)._runtime_hover_health_final(
+        ctx,
+        [
+            {
+                "hover_health": {
+                    "phase": "hover_health_blocked",
+                    "band": "red",
+                    "reason": "external_nav_lost_after_airborne",
+                    "blockers": ["external_nav_lost_after_airborne"],
+                }
+            }
+        ],
+    )
+
+    assert health["schema"] == "navlab.runtime_hover_health.v1"
+    assert health["phase"] == "hover_health_blocked"
+    assert health["band"] == "red"
+    assert health["blockers"] == ["external_nav_lost_after_airborne"]
+    assert health["operator_confirm_required"] is True
+    assert health["operator_confirm_allowed"] is False
+    assert health["real_operator_confirm_allowed"] is False
+
+
+def test_hover_mission_summary_runtime_requires_hover_span_for_drift_ok(tmp_path) -> None:
+    from navlab.common.companion.mission.evidence.hover import HoverDriftSummary
+    from navlab.common.companion.mission.summary_runtime import HoverMissionSummaryConfig, HoverMissionSummaryRuntime
+
+    config = HoverMissionSummaryConfig(
+        summary_file=str(tmp_path / "mission_summary.json"),
+        mode="GUIDED",
+        mode_number=4,
+        takeoff_alt_m=0.45,
+        hover_altitude_tolerance_m=0.2,
+        hover_hold_sec=2.0,
+        hover_health_min_observation_sec=1.0,
+        hover_health_stable_required_sec=0.5,
+        hover_health_max_wait_sec=5.0,
+        operator_confirm_required=False,
+        operator_confirm_timeout_sec=3.0,
+        hover_duration_tolerance_sec=0.25,
+        max_horizontal_drift_m=0.1,
+        max_altitude_drift_m=0.3,
+        preflight_ready_sec=1.0,
+        max_wait_ready_sec=10.0,
+        hover_settle_sec=1.0,
+        require_external_nav=True,
+        require_imu_status=True,
+        send_position_setpoints=True,
+        landing_policy="ap_land_mode_after_hover",
+        require_disarm=True,
+        require_motors_safe=True,
+        touchdown_confirm_sec=0.2,
+        force_disarm_grace_sec=1.0,
+        force_disarm_after_touchdown=False,
+        landing_setpoint_lookahead_sec=1.0,
+        landing_slowdown_altitude_m=0.6,
+        landing_near_ground_descent_rate_mps=0.01,
+        max_landing_descent_rate_mps=0.6,
+        touchdown_altitude_m=0.12,
+    )
+    drift = HoverDriftSummary(
+        sample_count=3,
+        duration_sec=2.0,
+        horizontal_span_m=0.2,
+        z_span_m=0.01,
+        horizontal_drift_m=0.0,
+        z_drift_m=0.0,
+    )
+
+    payload = HoverMissionSummaryRuntime(config)._hover_drift_payload(drift, "tight")
+
+    assert payload["horizontal_drift_ok"] is True
+    assert payload["horizontal_span_ok"] is False
+    assert payload["ok"] is False
+
+
+def test_hover_mission_summary_runtime_reports_slam_jump_evidence(tmp_path) -> None:
+    from navlab.common.companion.mission.evidence.hover import HoverDriftSummary
+    from navlab.common.companion.mission.summary_runtime import HoverMissionSummaryConfig, HoverMissionSummaryRuntime
+
+    config = HoverMissionSummaryConfig(
+        summary_file=str(tmp_path / "mission_summary.json"),
+        mode="GUIDED",
+        mode_number=4,
+        takeoff_alt_m=0.45,
+        hover_altitude_tolerance_m=0.2,
+        hover_hold_sec=2.0,
+        hover_health_min_observation_sec=1.0,
+        hover_health_stable_required_sec=0.5,
+        hover_health_max_wait_sec=5.0,
+        operator_confirm_required=False,
+        operator_confirm_timeout_sec=3.0,
+        hover_duration_tolerance_sec=0.25,
+        max_horizontal_drift_m=0.1,
+        max_altitude_drift_m=0.3,
+        preflight_ready_sec=1.0,
+        max_wait_ready_sec=10.0,
+        hover_settle_sec=1.0,
+        require_external_nav=True,
+        require_imu_status=True,
+        send_position_setpoints=True,
+        landing_policy="ap_land_mode_after_hover",
+        require_disarm=True,
+        require_motors_safe=True,
+        touchdown_confirm_sec=0.2,
+        force_disarm_grace_sec=1.0,
+        force_disarm_after_touchdown=False,
+        landing_setpoint_lookahead_sec=1.0,
+        landing_slowdown_altitude_m=0.6,
+        landing_near_ground_descent_rate_mps=0.01,
+        max_landing_descent_rate_mps=0.6,
+        touchdown_altitude_m=0.12,
+    )
+    drift = HoverDriftSummary(
+        sample_count=3,
+        duration_sec=2.0,
+        horizontal_span_m=0.02,
+        z_span_m=0.01,
+        horizontal_drift_m=0.01,
+        z_drift_m=0.0,
+    )
+
+    payload = HoverMissionSummaryRuntime(config)._hover_drift_payload(
+        drift,
+        "tight",
+        slam_quality="jump",
+        slam_quality_reason="pose_or_yaw_jump",
+        external_nav_status_payload={
+            "slam_quality_report": {
+                "max_observed_position_jump_m": 1.7,
+                "max_observed_yaw_jump_rad": 3.1,
+            }
+        },
+    )
+
+    assert payload["jump_seen_in_hover_window"] is True
+    assert payload["no_slam_quality_jump_in_hover_window"] is False
+    assert payload["max_observed_position_jump_m"] == 1.7
+    assert payload["max_observed_yaw_jump_rad"] == 3.1
+    assert payload["ok"] is False

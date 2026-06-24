@@ -163,6 +163,7 @@ class HoverCompletionEvaluation:
     reason: str
     drift: HoverDriftSummary
     altitude_crosscheck: dict[str, object]
+    acceptance: dict[str, object]
 
     def frozen_hover_evidence(self, *, takeoff_ack_ok: bool, crash_detected: bool) -> dict[str, object]:
         """Return the hover evidence payload frozen at landing handoff."""
@@ -178,7 +179,9 @@ class HoverCompletionEvaluation:
                 "horizontal_drift_m": json_safe_number(self.drift.horizontal_drift_m),
                 "z_drift_m": json_safe_number(self.drift.z_drift_m),
             },
+            "hover_acceptance": dict(self.acceptance),
             "hover_body_ok": self.ok,
+            "hover_body_reason": self.reason,
             "crash_detected": crash_detected,
         }
 
@@ -324,6 +327,11 @@ class HoverEvidenceRecorder:
         max_altitude_drift_m: float,
         local_position_count: int,
         crash_detected: bool,
+        slam_quality: str = "",
+        slam_quality_reason: str = "",
+        slam_quality_loss_duration_sec: float = 0.0,
+        external_nav_loss_duration_sec: float = 0.0,
+        mavlink_external_nav_loss_duration_sec: float = 0.0,
     ) -> HoverCompletionEvaluation:
         """Evaluate final hover-body acceptance from selected evidence."""
 
@@ -334,18 +342,81 @@ class HoverEvidenceRecorder:
             target_alt_m=target_alt_m,
             tolerance_m=altitude_tolerance_m,
         )
-        ok = (
-            drift.ok
-            and altitude_crosscheck["ok"] is True
-            and drift.duration_sec >= hold_sec - duration_tolerance_sec
-            and drift.horizontal_drift_m <= max_horizontal_drift_m
-            and drift.z_span_m <= max_altitude_drift_m
-            and local_position_count > 0
-            and not crash_detected
+        sample_count_ok = drift.ok
+        altitude_ok = altitude_crosscheck["ok"] is True
+        duration_ok = drift.duration_sec >= hold_sec - duration_tolerance_sec
+        horizontal_drift_ok = drift.horizontal_drift_m <= max_horizontal_drift_m
+        horizontal_span_ok = drift.horizontal_span_m <= max_horizontal_drift_m
+        z_span_ok = drift.z_span_m <= max_altitude_drift_m
+        local_position_ok = local_position_count > 0
+        no_slam_quality_loss_after_airborne = slam_quality_loss_duration_sec <= 0.0
+        no_external_nav_loss_after_airborne = external_nav_loss_duration_sec <= 0.0
+        no_mavlink_external_nav_loss_after_airborne = mavlink_external_nav_loss_duration_sec <= 0.0
+        slam_quality_jump_seen = slam_quality == "jump" or slam_quality_reason == "pose_or_yaw_jump"
+        no_slam_quality_jump_in_hover_window = not slam_quality_jump_seen
+        acceptance = {
+            "sample_count_ok": sample_count_ok,
+            "altitude_ok": altitude_ok,
+            "duration_ok": duration_ok,
+            "horizontal_drift_ok": horizontal_drift_ok,
+            "horizontal_span_ok": horizontal_span_ok,
+            "z_span_ok": z_span_ok,
+            "local_position_ok": local_position_ok,
+            "crash_free": not crash_detected,
+            "no_slam_quality_loss_after_airborne": no_slam_quality_loss_after_airborne,
+            "no_external_nav_loss_after_airborne": no_external_nav_loss_after_airborne,
+            "no_mavlink_external_nav_loss_after_airborne": no_mavlink_external_nav_loss_after_airborne,
+            "no_slam_quality_jump_in_hover_window": no_slam_quality_jump_in_hover_window,
+            "slam_quality": slam_quality,
+            "slam_quality_reason": slam_quality_reason,
+            "slam_quality_loss_duration_sec": slam_quality_loss_duration_sec,
+            "external_nav_loss_duration_sec": external_nav_loss_duration_sec,
+            "mavlink_external_nav_loss_duration_sec": mavlink_external_nav_loss_duration_sec,
+        }
+        ok = all(
+            bool(acceptance[key])
+            for key in (
+                "sample_count_ok",
+                "altitude_ok",
+                "duration_ok",
+                "horizontal_drift_ok",
+                "horizontal_span_ok",
+                "z_span_ok",
+                "local_position_ok",
+                "crash_free",
+                "no_slam_quality_loss_after_airborne",
+                "no_external_nav_loss_after_airborne",
+                "no_mavlink_external_nav_loss_after_airborne",
+                "no_slam_quality_jump_in_hover_window",
+            )
         )
         return HoverCompletionEvaluation(
             ok=bool(ok),
-            reason="hover_complete" if ok else "hover_unstable",
+            reason="hover_complete" if ok else _hover_completion_failure_reason(acceptance),
             drift=drift,
             altitude_crosscheck=altitude_crosscheck,
+            acceptance=acceptance,
         )
+
+
+def _hover_completion_failure_reason(acceptance: dict[str, object]) -> str:
+    """Return the first actionable hover acceptance failure reason."""
+
+    checks = (
+        ("sample_count_ok", "hover_samples_missing"),
+        ("altitude_ok", "hover_altitude_unstable"),
+        ("duration_ok", "hover_duration_short"),
+        ("horizontal_drift_ok", "hover_drift_unstable"),
+        ("horizontal_span_ok", "hover_span_unstable"),
+        ("z_span_ok", "hover_altitude_span_unstable"),
+        ("local_position_ok", "hover_local_position_missing"),
+        ("crash_free", "hover_crash_detected"),
+        ("no_slam_quality_loss_after_airborne", "slam_quality_lost_after_airborne"),
+        ("no_external_nav_loss_after_airborne", "external_nav_lost_after_airborne"),
+        ("no_mavlink_external_nav_loss_after_airborne", "mavlink_external_nav_lost_after_airborne"),
+        ("no_slam_quality_jump_in_hover_window", "slam_quality_jump_in_hover_window"),
+    )
+    for key, reason in checks:
+        if acceptance.get(key) is not True:
+            return reason
+    return "hover_unstable"

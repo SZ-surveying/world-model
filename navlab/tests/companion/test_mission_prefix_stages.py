@@ -205,8 +205,9 @@ def test_hover_hold_stage_requests_hold_setpoint_only_in_hover_hold() -> None:
     result = stage.tick(ctx)
 
     assert result.status == "running"
-    assert result.reason == "holding_position"
+    assert result.reason == "hover_health_waiting_min_observation"
     assert result.evidence["phase"] == "hover_hold"
+    assert result.evidence["hover_health"]["phase"] == "hover_health_hold"
     assert result.evidence["should_send_hold_setpoint"] is True
     assert result.evidence["command_sent"] is True
     assert adapter.calls == ["hold:16.0"]

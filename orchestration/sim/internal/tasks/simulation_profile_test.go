@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"navlab/orchestration-sim/internal/config"
+	"navlab/orchestration-sim/internal/tasks/helpers"
 )
 
 func TestApplySimulationProfileOverridesScanRobustnessRuntimeProfile(t *testing.T) {
@@ -67,5 +68,68 @@ func TestApplySimulationProfileDoesNotChangeOtherTasks(t *testing.T) {
 	}
 	if updated.AirframeDisturbance.Profile != "realistic" {
 		t.Fatalf("airframe profile = %q", updated.AirframeDisturbance.Profile)
+	}
+}
+
+func TestApplySimulationProfileHoverSlamDirectUsesRawSlamOdom(t *testing.T) {
+	runtimeConfig := config.TaskRuntimeConfig{
+		SlamHover: config.SlamHoverConfig{
+			SlamOdomTopic: "/slam/odom",
+		},
+	}
+
+	updated, err := ApplySimulationProfile(runtimeConfig, Plan{
+		TaskID:            "hover",
+		SimulationProfile: "slam-direct",
+	})
+	if err != nil {
+		t.Fatalf("ApplySimulationProfile() error = %v", err)
+	}
+	if updated.SlamHover.ExternalNavInputOdomTopic != "/slam/odom" {
+		t.Fatalf("external nav input = %q, want /slam/odom", updated.SlamHover.ExternalNavInputOdomTopic)
+	}
+}
+
+func TestApplySimulationProfileHoverSlamDirectNoOdomPriorUsesRawSlamOdomAndNoOdomConfig(t *testing.T) {
+	runtimeConfig := config.TaskRuntimeConfig{
+		SlamHover: config.SlamHoverConfig{
+			SlamOdomTopic: "/slam/odom",
+		},
+	}
+
+	updated, err := ApplySimulationProfile(runtimeConfig, Plan{
+		TaskID:            "hover",
+		SimulationProfile: "slam-direct-no-odom-prior",
+	})
+	if err != nil {
+		t.Fatalf("ApplySimulationProfile() error = %v", err)
+	}
+	if updated.SlamHover.ExternalNavInputOdomTopic != "/slam/odom" {
+		t.Fatalf("external nav input = %q, want /slam/odom", updated.SlamHover.ExternalNavInputOdomTopic)
+	}
+	if updated.SlamBackend.CartographerConfigurationBasename != helpers.HoverNoOdomPriorConfigBasename {
+		t.Fatalf("cartographer config = %q, want %q", updated.SlamBackend.CartographerConfigurationBasename, helpers.HoverNoOdomPriorConfigBasename)
+	}
+}
+
+func TestApplySimulationProfileHoverSlamOnlyNoOdomPriorUsesNoOdomConfig(t *testing.T) {
+	runtimeConfig := config.TaskRuntimeConfig{
+		SlamHover: config.SlamHoverConfig{
+			SlamOdomTopic: "/slam/odom",
+		},
+	}
+
+	updated, err := ApplySimulationProfile(runtimeConfig, Plan{
+		TaskID:            "hover-slam-only",
+		SimulationProfile: "slam-direct-no-odom-prior",
+	})
+	if err != nil {
+		t.Fatalf("ApplySimulationProfile() error = %v", err)
+	}
+	if updated.SlamHover.ExternalNavInputOdomTopic != "/slam/odom" {
+		t.Fatalf("external nav input = %q, want /slam/odom", updated.SlamHover.ExternalNavInputOdomTopic)
+	}
+	if updated.SlamBackend.CartographerConfigurationBasename != helpers.HoverNoOdomPriorConfigBasename {
+		t.Fatalf("cartographer config = %q, want %q", updated.SlamBackend.CartographerConfigurationBasename, helpers.HoverNoOdomPriorConfigBasename)
 	}
 }

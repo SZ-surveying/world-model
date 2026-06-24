@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from math import isclose
+
 from navlab.common.companion.mission.evidence.summary import (
     build_hover_status_payload,
     build_landing_summary,
     mission_fsm_summary_fields,
+    summarize_post_airborne_nav_loss,
 )
 from navlab.common.companion.mission.fsm import MissionFsmRecorder
 from navlab.common.companion.mission.stages.hover import HoverInputs
@@ -72,6 +75,7 @@ def test_hover_status_payload_preserves_position_and_prefix_evidence() -> None:
         hold_x=1.0,
         hold_y=-0.25,
         hold_yaw_rad=0.1,
+        hover_health={"phase": "hover_health_hold", "band": "green", "sim_auto_continue_allowed": True},
     )
 
     assert payload["phase"] == "hover_hold"
@@ -79,6 +83,55 @@ def test_hover_status_payload_preserves_position_and_prefix_evidence() -> None:
     assert payload["position"]["x"] == 1.25
     assert payload["position"]["hold_yaw_rad"] == 0.1
     assert payload["mission_fsm_state"] == "S6 hover_hold"
+    assert payload["hover_health"]["phase"] == "hover_health_hold"
+    assert payload["hover_health"]["band"] == "green"
+    assert payload["hover_health_phase"] == "hover_health_hold"
+    assert payload["mission_fsm_substate"] == "hover_health_hold"
+
+
+def test_summarize_post_airborne_nav_loss_reports_window_evidence() -> None:
+    summary = summarize_post_airborne_nav_loss(
+        [
+            {
+                "phase": "hover_settle",
+                "airborne_seen": True,
+                "airborne_elapsed_sec": 6.1,
+                "external_nav_ready": False,
+                "slam_quality": "stale",
+                "slam_quality_good": False,
+                "slam_quality_reason": "odom_stale",
+                "slam_quality_loss_duration_sec": 5.45,
+                "external_nav_loss_duration_sec": 5.45,
+                "mavlink_external_nav_ready": False,
+                "mavlink_external_nav_loss_duration_sec": 4.7,
+                "fcu_local_position_ready": True,
+            },
+            {
+                "phase": "abort",
+                "reason": "slam_quality_lost_after_airborne",
+                "airborne_seen": True,
+                "airborne_elapsed_sec": 8.05,
+                "external_nav_ready": False,
+                "slam_quality": "stale",
+                "slam_quality_good": False,
+                "slam_quality_reason": "odom_stale",
+                "slam_quality_loss_duration_sec": 7.4,
+                "external_nav_loss_duration_sec": 7.4,
+                "mavlink_external_nav_ready": False,
+                "mavlink_external_nav_loss_duration_sec": 6.65,
+                "fcu_local_position_ready": True,
+            },
+        ]
+    )
+
+    assert summary["slam_quality"]["seen"] is True
+    assert summary["slam_quality"]["max_duration_sec"] == 7.4
+    assert summary["slam_quality"]["last_reason"] == "odom_stale"
+    assert summary["slam_quality"]["last_bad_phase"] == "abort"
+    assert isclose(summary["slam_quality"]["inferred_started_airborne_elapsed_sec"], 0.65)
+    assert summary["external_nav"]["seen"] is True
+    assert summary["mavlink_external_nav"]["max_duration_sec"] == 6.65
+    assert summary["fcu_local_position"]["seen"] is False
 
 
 def test_ap_land_summary_treats_descent_profile_as_audit_only() -> None:

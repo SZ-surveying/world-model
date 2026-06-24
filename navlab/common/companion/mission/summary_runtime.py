@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -40,6 +41,11 @@ class HoverMissionSummaryConfig:
     takeoff_alt_m: float
     hover_altitude_tolerance_m: float
     hover_hold_sec: float
+    hover_health_min_observation_sec: float
+    hover_health_stable_required_sec: float
+    hover_health_max_wait_sec: float
+    operator_confirm_required: bool
+    operator_confirm_timeout_sec: float
     hover_duration_tolerance_sec: float
     max_horizontal_drift_m: float
     max_altitude_drift_m: float
@@ -231,6 +237,12 @@ class HoverMissionSummaryRuntime:
             hover_settle_sec=self._config.hover_settle_sec,
             hover_altitude_tolerance_m=self._config.hover_altitude_tolerance_m,
             hover_hold_sec=self._config.hover_hold_sec,
+            hover_health_min_observation_sec=self._config.hover_health_min_observation_sec,
+            hover_health_stable_required_sec=self._config.hover_health_stable_required_sec,
+            hover_health_max_wait_sec=self._config.hover_health_max_wait_sec,
+            operator_confirm_required=self._config.operator_confirm_required,
+            operator_confirm_timeout_sec=self._config.operator_confirm_timeout_sec,
+            runtime_hover_health_final=self._runtime_hover_health_final(ctx, status_history),
             hover_hold_duration_sec=drift.duration_sec,
             hover_hold_segments_seen=hover_evidence.segment_count,
             require_external_nav=self._config.require_external_nav,
@@ -244,7 +256,16 @@ class HoverMissionSummaryRuntime:
             mavlink_external_nav_status_history=readiness.mavlink_external_nav_status_history,
             require_imu_status=self._config.require_imu_status,
             send_position_setpoints=self._config.send_position_setpoints,
-            hover_drift=self._hover_drift_payload(drift, drift_quality),
+            hover_drift=self._hover_drift_payload(
+                drift,
+                drift_quality,
+                slam_quality=runtime_adapter.external_nav_slam_quality,
+                slam_quality_reason=runtime_adapter.external_nav_slam_quality_reason,
+                slam_quality_loss_duration_sec=ctx.state.nav.slam_quality_loss_duration_sec,
+                external_nav_loss_duration_sec=ctx.state.nav.external_nav_loss_duration_sec,
+                mavlink_external_nav_loss_duration_sec=ctx.state.nav.mavlink_external_nav_loss_duration_sec,
+                external_nav_status_payload=runtime_adapter.last_external_status_payload,
+            ),
             last_position={"x": runtime.current_x, "y": runtime.current_y, "z_ned": runtime.current_z},
             hold_position={"x": ctx.state.hover.hold_x_m, "y": ctx.state.hover.hold_y_m},
             last_yaw_rad=runtime.current_yaw_rad,
@@ -260,15 +281,86 @@ class HoverMissionSummaryRuntime:
             landing_summary=landing_summary,
         )
 
+    def _runtime_hover_health_final(
+        self,
+        ctx: MissionContext,
+        status_history: Sequence[Mapping[str, object]],
+    ) -> dict[str, object]:
+        """Freeze the final runtime health gate state for mission-summary review."""
+
+        latest_health: Mapping[str, object] = {}
+        for row in reversed(status_history):
+            candidate = row.get("hover_health")
+            if isinstance(candidate, Mapping):
+                latest_health = candidate
+                break
+
+        hover = ctx.state.hover
+        phase = str(hover.health_phase or latest_health.get("phase") or "not_started")
+        band = str(hover.health_band or latest_health.get("band") or "yellow")
+        confirm_elapsed_sec = (
+            None
+            if hover.operator_confirm_started_at_monotonic is None
+            else max(0.0, ctx.clock.now_monotonic - hover.operator_confirm_started_at_monotonic)
+        )
+        return {
+            "schema": "navlab.runtime_hover_health.v1",
+            "source": "python_runtime_fsm",
+            "controls_task_proceed": True,
+            "postrun_audit": False,
+            "phase": phase,
+            "band": band,
+            "reason": str(hover.health_reason or latest_health.get("reason") or ""),
+            "blockers": list(latest_health.get("blockers") or []),
+            "mission_fsm_state": "S6 hover_hold" if phase != "not_started" else None,
+            "mission_fsm_substate": phase,
+            "runtime_phase_alias": latest_health.get("runtime_phase_alias", "hover_hold"),
+            "observed_sec": hover.health_observed_sec,
+            "stable_sec": hover.health_stable_sec,
+            "operator_confirm_required": self._config.operator_confirm_required,
+            "operator_confirm_allowed": hover.operator_confirm_allowed,
+            "operator_confirm_received": hover.operator_confirm_received,
+            "operator_confirm_elapsed_sec": confirm_elapsed_sec,
+            "sim_auto_continue_allowed": (
+                band == "green" and not self._config.operator_confirm_required and phase == "sim_auto_continue"
+            ),
+            "real_operator_confirm_allowed": hover.operator_confirm_allowed,
+            "min_observation_sec": self._config.hover_health_min_observation_sec,
+            "stable_required_sec": self._config.hover_health_stable_required_sec,
+            "max_wait_sec": self._config.hover_health_max_wait_sec,
+            "operator_confirm_timeout_sec": self._config.operator_confirm_timeout_sec,
+        }
+
     def write_final_summary(self, *, summary_file: str, summary: Mapping[str, object]) -> None:
         """Write the final mission summary if a path is configured."""
 
         if summary_file:
             MissionSummaryWriter(summary_file).write(summary)
 
-    def _hover_drift_payload(self, drift, drift_quality: str) -> dict[str, object]:
+    def _hover_drift_payload(
+        self,
+        drift,
+        drift_quality: str,
+        *,
+        slam_quality: str = "",
+        slam_quality_reason: str = "",
+        slam_quality_loss_duration_sec: float = 0.0,
+        external_nav_loss_duration_sec: float = 0.0,
+        mavlink_external_nav_loss_duration_sec: float = 0.0,
+        external_nav_status_payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
         """Build the legacy hover drift payload."""
 
+        jump_report = _slam_quality_jump_report(external_nav_status_payload or {})
+        jump_seen = slam_quality == "jump" or slam_quality_reason == "pose_or_yaw_jump"
+        horizontal_span_ok = drift.horizontal_span_m <= self._config.max_horizontal_drift_m
+        horizontal_drift_ok = drift.horizontal_drift_m <= self._config.max_horizontal_drift_m
+        z_span_ok = drift.z_span_m <= self._config.max_altitude_drift_m
+        duration_ok = drift.duration_sec >= self._config.hover_hold_sec - self._config.hover_duration_tolerance_sec
+        no_slam_quality_loss_after_airborne = slam_quality_loss_duration_sec <= 0.0
+        no_external_nav_loss_after_airborne = external_nav_loss_duration_sec <= 0.0
+        no_mavlink_external_nav_loss_after_airborne = mavlink_external_nav_loss_duration_sec <= 0.0
+        no_slam_quality_jump_in_hover_window = not jump_seen
         return {
             "sample_count": drift.sample_count,
             "duration_sec": drift.duration_sec,
@@ -281,17 +373,32 @@ class HoverMissionSummaryRuntime:
             "duration_tolerance_sec": self._config.hover_duration_tolerance_sec,
             "quality": drift_quality,
             "gps_like": drift_quality == "tight" and drift.horizontal_drift_m <= 0.05 and drift.z_span_m <= 0.05,
-            "horizontal_span_ok": drift.horizontal_span_m <= self._config.max_horizontal_drift_m,
-            "horizontal_drift_ok": drift.horizontal_drift_m <= self._config.max_horizontal_drift_m,
-            "z_span_ok": drift.z_span_m <= self._config.max_altitude_drift_m,
-            "duration_ok": (
-                drift.duration_sec >= self._config.hover_hold_sec - self._config.hover_duration_tolerance_sec
-            ),
+            "horizontal_span_ok": horizontal_span_ok,
+            "horizontal_drift_ok": horizontal_drift_ok,
+            "z_span_ok": z_span_ok,
+            "duration_ok": duration_ok,
+            "no_slam_quality_loss_after_airborne": no_slam_quality_loss_after_airborne,
+            "no_external_nav_loss_after_airborne": no_external_nav_loss_after_airborne,
+            "no_mavlink_external_nav_loss_after_airborne": no_mavlink_external_nav_loss_after_airborne,
+            "no_slam_quality_jump_in_hover_window": no_slam_quality_jump_in_hover_window,
+            "slam_quality": slam_quality,
+            "slam_quality_reason": slam_quality_reason,
+            "slam_quality_loss_duration_sec": slam_quality_loss_duration_sec,
+            "external_nav_loss_duration_sec": external_nav_loss_duration_sec,
+            "mavlink_external_nav_loss_duration_sec": mavlink_external_nav_loss_duration_sec,
+            "jump_seen_in_hover_window": jump_seen,
+            "max_observed_position_jump_m": jump_report["max_observed_position_jump_m"],
+            "max_observed_yaw_jump_rad": jump_report["max_observed_yaw_jump_rad"],
             "ok": (
                 drift.ok
-                and drift.duration_sec >= self._config.hover_hold_sec - self._config.hover_duration_tolerance_sec
-                and drift.horizontal_drift_m <= self._config.max_horizontal_drift_m
-                and drift.z_span_m <= self._config.max_altitude_drift_m
+                and duration_ok
+                and horizontal_drift_ok
+                and horizontal_span_ok
+                and z_span_ok
+                and no_slam_quality_loss_after_airborne
+                and no_external_nav_loss_after_airborne
+                and no_mavlink_external_nav_loss_after_airborne
+                and no_slam_quality_jump_in_hover_window
             ),
         }
 
@@ -308,3 +415,21 @@ class HoverMissionSummaryRuntime:
     @staticmethod
     def _rangefinder_count(runtime: MavlinkRuntimeState) -> int:
         return runtime.message_counts.get("DISTANCE_SENSOR", 0) + runtime.message_counts.get("RANGEFINDER", 0)
+
+
+def _finite_number(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _slam_quality_jump_report(payload: Mapping[str, object]) -> dict[str, float | None]:
+    report = payload.get("slam_quality_report")
+    if not isinstance(report, Mapping):
+        return {"max_observed_position_jump_m": None, "max_observed_yaw_jump_rad": None}
+    return {
+        "max_observed_position_jump_m": _finite_number(report.get("max_observed_position_jump_m")),
+        "max_observed_yaw_jump_rad": _finite_number(report.get("max_observed_yaw_jump_rad")),
+    }

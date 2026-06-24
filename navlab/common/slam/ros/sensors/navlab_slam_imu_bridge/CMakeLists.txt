@@ -10,6 +10,8 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
+include_directories(include)
+
 add_executable(navlab_slam_imu_bridge_node
   src/navlab_slam_imu_bridge_node.cpp
 )
@@ -25,9 +27,22 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(DIRECTORY include/
+  DESTINATION include
+)
+
 install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
   OPTIONAL
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  ament_add_gtest(imu_timestamp_test
+    test/imu_timestamp_test.cpp
+  )
+  target_include_directories(imu_timestamp_test PRIVATE include)
+endif()
 
 ament_package()

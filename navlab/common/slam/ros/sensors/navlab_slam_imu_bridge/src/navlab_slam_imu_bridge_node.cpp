@@ -1,9 +1,11 @@
 #include <chrono>
 #include <iomanip>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 
+#include "navlab_slam_imu_bridge/timestamp.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "std_msgs/msg/string.hpp"
@@ -65,6 +67,7 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
     const auto received_wall_at = std::chrono::steady_clock::now();
     auto normalized = *msg;
     bool timestamp_replaced = false;
+    bool timestamp_adjusted = false;
 
     if (last_output_msg_) {
       const double delta_sec =
@@ -87,6 +90,7 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
       normalized.header.stamp = received_at;
       timestamp_replaced = true;
     }
+    timestamp_adjusted = ensure_monotonic_output_stamp(normalized);
 
     last_source_msg_time_ = received_at;
     last_source_wall_time_ = received_wall_at;
@@ -94,8 +98,12 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
     last_input_frame_id_ = msg->header.frame_id;
     last_output_frame_id_ = normalized.header.frame_id;
     last_timestamp_replaced_ = timestamp_replaced;
+    last_timestamp_adjusted_ = timestamp_adjusted;
     if (timestamp_replaced) {
       ++timestamp_replaced_count_;
+    }
+    if (timestamp_adjusted) {
+      ++timestamp_adjusted_count_;
     }
     ++forwarded_count_;
 
@@ -107,6 +115,7 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
     imu.header.stamp = now();
     imu.header.frame_id = output_frame_id_;
     imu.orientation.w = 1.0;
+    const bool timestamp_adjusted = ensure_monotonic_output_stamp(imu);
 
     imu_pub_->publish(imu);
     last_source_msg_time_ = now();
@@ -115,6 +124,10 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
     last_input_frame_id_.clear();
     last_output_frame_id_ = output_frame_id_;
     last_timestamp_replaced_ = false;
+    last_timestamp_adjusted_ = timestamp_adjusted;
+    if (timestamp_adjusted) {
+      ++timestamp_adjusted_count_;
+    }
     input_rate_hz_ = status_period_ms_ > 0 ? 1000.0 / status_period_ms_ : 0.0;
     ++forwarded_count_;
   }
@@ -148,6 +161,20 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
     }
 
     return input_rate_hz_ >= min_input_rate_hz_;
+  }
+
+  bool ensure_monotonic_output_stamp(sensor_msgs::msg::Imu &msg) {
+    const auto candidate_ns = rclcpp::Time(msg.header.stamp).nanoseconds();
+    const auto adjusted_ns =
+        navlab_slam_imu_bridge::monotonic_output_stamp_nanoseconds(
+            candidate_ns, last_output_stamp_ns_);
+    last_output_stamp_ns_ = adjusted_ns;
+    if (adjusted_ns == candidate_ns) {
+      return false;
+    }
+    msg.header.stamp.sec = static_cast<int32_t>(adjusted_ns / 1000000000LL);
+    msg.header.stamp.nanosec = static_cast<uint32_t>(adjusted_ns % 1000000000LL);
+    return true;
   }
 
   static std::string json_escape(const std::string &value) {
@@ -221,7 +248,10 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
         << (replace_zero_timestamp_ ? "true" : "false") << ",";
     oss << "\"last_timestamp_replaced\":"
         << (last_timestamp_replaced_ ? "true" : "false") << ",";
-    oss << "\"timestamp_replaced_count\":" << timestamp_replaced_count_ << "}";
+    oss << "\"timestamp_replaced_count\":" << timestamp_replaced_count_ << ",";
+    oss << "\"last_timestamp_adjusted\":"
+        << (last_timestamp_adjusted_ ? "true" : "false") << ",";
+    oss << "\"timestamp_adjusted_count\":" << timestamp_adjusted_count_ << "}";
     oss << "}";
     return oss.str();
   }
@@ -251,9 +281,12 @@ class NavlabSlamImuBridgeNode : public rclcpp::Node {
   double input_rate_hz_{0.0};
   uint64_t forwarded_count_{0};
   uint64_t timestamp_replaced_count_{0};
+  uint64_t timestamp_adjusted_count_{0};
   bool last_timestamp_replaced_{false};
+  bool last_timestamp_adjusted_{false};
   std::string last_input_frame_id_;
   std::string last_output_frame_id_;
+  std::optional<int64_t> last_output_stamp_ns_;
 
   sensor_msgs::msg::Imu::SharedPtr last_output_msg_;
   rclcpp::Time last_source_msg_time_{0, 0, RCL_ROS_TIME};

@@ -221,6 +221,11 @@ class HoverMissionPipelineRunner:
             max_altitude_drift_m=self._hover_config.max_altitude_drift_m,
             local_position_count=runtime.local_position_count,
             crash_detected=runtime.crash_detected,
+            slam_quality=ctx.state.nav.slam_quality,
+            slam_quality_reason=ctx.state.nav.slam_quality_reason,
+            slam_quality_loss_duration_sec=ctx.state.nav.slam_quality_loss_duration_sec,
+            external_nav_loss_duration_sec=ctx.state.nav.external_nav_loss_duration_sec,
+            mavlink_external_nav_loss_duration_sec=ctx.state.nav.mavlink_external_nav_loss_duration_sec,
         )
         ctx.state.hover.body_ok = hover_completion.ok
         ctx.state.hover.body_reason = hover_completion.reason

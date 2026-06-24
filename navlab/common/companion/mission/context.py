@@ -44,6 +44,7 @@ class NavState:
     imu_ready: bool = False
     slam_quality: str = "unknown"
     slam_quality_good: bool = False
+    slam_quality_reason: str = ""
     ready_elapsed_sec: float = 0.0
     slam_quality_loss_duration_sec: float = 0.0
     external_nav_loss_duration_sec: float = 0.0
@@ -87,6 +88,16 @@ class HoverState:
     started_at_monotonic: float | None = None
     airborne_elapsed_sec: float = 0.0
     hover_elapsed_sec: float = 0.0
+    health_started_at_monotonic: float | None = None
+    health_green_since_monotonic: float | None = None
+    health_phase: str = "not_started"
+    health_band: str = "yellow"
+    health_reason: str = "hover_health_not_started"
+    health_observed_sec: float = 0.0
+    health_stable_sec: float = 0.0
+    operator_confirm_allowed: bool = False
+    operator_confirm_received: bool = False
+    operator_confirm_started_at_monotonic: float | None = None
     body_ok: bool = False
     body_reason: str = ""
 

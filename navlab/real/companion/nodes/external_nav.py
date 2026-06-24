@@ -65,7 +65,9 @@ def _yaw_from_ros_quat_enu(q: object) -> float:
 def ros_enu_position_to_mavlink_local_frd(
     *, x_enu_m: float, y_enu_m: float, z_enu_m: float
 ) -> tuple[float, float, float]:
-    # Project the current ROS/Gazebo map XY contract into ArduPilot local FRD/NED.
+    # ArduPilot's ODOMETRY handler requires MAV_FRAME_LOCAL_FRD. The runtime
+    # ROS map contract is x=west, y=north for the hover world, so map x projects
+    # to negative local-NED east.
     return y_enu_m, -x_enu_m, -z_enu_m
 
 

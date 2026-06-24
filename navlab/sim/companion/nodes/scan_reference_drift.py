@@ -63,6 +63,21 @@ def _parse_phase(data: str) -> str:
     return str(value.get("phase") or "") if isinstance(value, dict) else ""
 
 
+def should_reset_reference_on_phase(
+    *,
+    reset_on_hover_hold: bool,
+    phase: str,
+    hover_hold_reference_reset_done: bool,
+) -> tuple[bool, bool]:
+    if not reset_on_hover_hold or not phase:
+        return False, hover_hold_reference_reset_done
+    if phase == "hover_hold" and not hover_hold_reference_reset_done:
+        return True, True
+    if phase not in CORRECTION_PHASES:
+        return False, False
+    return False, hover_hold_reference_reset_done
+
+
 def _intent_payload(intent) -> dict[str, object]:
     return {
         "shadow_only": intent.shadow_only,
@@ -193,6 +208,7 @@ def run(argv: list[str] | None = None) -> int:
             self._config = self._estimator.config
             self._last_phase = ""
             self._reset_pending = False
+            self._hover_hold_reference_reset_done = False
             self._last_estimate: ScanReferenceEstimate | None = None
             self._consecutive_allowed_samples = 0
             self._last_publish_wall = time.monotonic()
@@ -207,7 +223,12 @@ def run(argv: list[str] | None = None) -> int:
 
         def _handle_hover_status(self, message: String) -> None:
             phase = _parse_phase(message.data)
-            if args.reset_on_hover_hold and phase in CORRECTION_PHASES and self._last_phase not in CORRECTION_PHASES:
+            reset_now, self._hover_hold_reference_reset_done = should_reset_reference_on_phase(
+                reset_on_hover_hold=args.reset_on_hover_hold,
+                phase=phase,
+                hover_hold_reference_reset_done=self._hover_hold_reference_reset_done,
+            )
+            if reset_now:
                 self._reset_pending = True
             if phase:
                 self._last_phase = phase

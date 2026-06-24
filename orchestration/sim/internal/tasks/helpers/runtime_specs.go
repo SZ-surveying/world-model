@@ -572,6 +572,11 @@ type HoverMissionRuntimeSpec struct {
 	HoverSettleSec                float64
 	HoverAltitudeToleranceM       float64
 	HoverHoldSec                  float64
+	HoverHealthMinObservationSec  float64
+	HoverHealthStableRequiredSec  float64
+	HoverHealthMaxWaitSec         float64
+	OperatorConfirmRequired       bool
+	OperatorConfirmTimeoutSec     float64
 	MaxHorizontalDriftM           float64
 	MaxAltitudeDriftM             float64
 	StatusTopic                   string
@@ -725,6 +730,11 @@ func DefaultHoverMissionRuntimeSpec() HoverMissionRuntimeSpec {
 		HoverSettleSec:                2.0,
 		HoverAltitudeToleranceM:       0.18,
 		HoverHoldSec:                  hover.HoverWindowSec,
+		HoverHealthMinObservationSec:  10.0,
+		HoverHealthStableRequiredSec:  5.0,
+		HoverHealthMaxWaitSec:         60.0,
+		OperatorConfirmRequired:       false,
+		OperatorConfirmTimeoutSec:     60.0,
 		MaxHorizontalDriftM:           hover.MaxHoverHorizontalDrift,
 		MaxAltitudeDriftM:             hover.MaxHoverAltitudeError,
 		StatusTopic:                   hover.HoverStatusTopic,
@@ -765,9 +775,10 @@ func HoverProbeScript(spec SlamHoverSpec) (string, error) {
 		spec = DefaultSlamHoverSpec()
 	}
 	sourceSelector := DefaultExternalNavSourceSelectorSpec()
-	return rosProbeScript(
+	return rosProbeScriptWithOptionalTopics(
 		"navlab_slam_hover_probe",
 		[]string{spec.FCUPoseTopic, spec.SlamOdomTopic, spec.SlamStatusTopic, spec.ExternalNavStatusTopic, sourceSelector.OutputOdomTopic, sourceSelector.StatusTopic, spec.ScanReferenceOdomTopic, spec.ScanReferenceStatusTopic, "/mavlink_external_nav/status", "/sim/x2/status", spec.HoverStatusTopic, "/navlab/landing/status"},
+		[]string{"/navlab/landing/status"},
 		spec,
 	)
 }
@@ -877,6 +888,11 @@ func HoverMissionRuntimeScript(spec HoverMissionRuntimeSpec, durationSec float64
 		"hover_settle_sec":                  spec.HoverSettleSec,
 		"hover_altitude_tolerance_m":        spec.HoverAltitudeToleranceM,
 		"hover_hold_sec":                    spec.HoverHoldSec,
+		"hover_health_min_observation_sec":  spec.HoverHealthMinObservationSec,
+		"hover_health_stable_required_sec":  spec.HoverHealthStableRequiredSec,
+		"hover_health_max_wait_sec":         spec.HoverHealthMaxWaitSec,
+		"operator_confirm_required":         spec.OperatorConfirmRequired,
+		"operator_confirm_timeout_sec":      spec.OperatorConfirmTimeoutSec,
 		"max_horizontal_drift_m":            spec.MaxHorizontalDriftM,
 		"max_altitude_drift_m":              spec.MaxAltitudeDriftM,
 		"status_topic":                      spec.StatusTopic,
@@ -1032,6 +1048,7 @@ type ExplorationWorkflowSpec struct {
 	Strategy               string
 	ExplorationWindowSec   float64
 	MotionSpeedMPS         float64
+	YawRateRadPS           float64
 	MinAcceptedGoals       int
 	MinPathLengthM         float64
 	ProbeTimeoutSec        float64
@@ -1047,6 +1064,7 @@ func DefaultExplorationWorkflowSpec() ExplorationWorkflowSpec {
 		Strategy:               "frontier_lite",
 		ExplorationWindowSec:   26.0,
 		MotionSpeedMPS:         0.10,
+		YawRateRadPS:           0.18,
 		MinAcceptedGoals:       3,
 		MinPathLengthM:         0.35,
 		ProbeTimeoutSec:        35.0,
@@ -1085,6 +1103,7 @@ func ExplorationWorkflowRuntimeScript(spec ExplorationWorkflowSpec, durationSec 
 		"strategy":                 spec.Strategy,
 		"exploration_window_sec":   spec.ExplorationWindowSec,
 		"motion_speed_mps":         spec.MotionSpeedMPS,
+		"yaw_rate_radps":           spec.YawRateRadPS,
 		"min_accepted_goals":       spec.MinAcceptedGoals,
 		"min_path_length_m":        spec.MinPathLengthM,
 		"controller_status_topic":  spec.ControllerStatusTopic,
@@ -1438,6 +1457,13 @@ func BaselineROSEnv() map[string]string {
 }
 
 func rosProbeScript(nodeName string, topics []string, spec any) (string, error) {
+	return rosProbeScriptWithOptionalTopics(nodeName, topics, nil, spec)
+}
+
+func rosProbeScriptWithOptionalTopics(nodeName string, topics []string, optionalTopics []string, spec any) (string, error) {
+	if optionalTopics == nil {
+		optionalTopics = []string{}
+	}
 	payload, err := json.Marshal(spec)
 	if err != nil {
 		return "", err
@@ -1446,7 +1472,16 @@ func rosProbeScript(nodeName string, topics []string, spec any) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	return renderRuntimeScriptTemplateData("ros_probe.py.tmpl", runtimeScriptTemplateData{SpecJSON: string(payload), TopicsJSON: string(topicPayload), NodeName: nodeName})
+	optionalTopicPayload, err := json.Marshal(optionalTopics)
+	if err != nil {
+		return "", err
+	}
+	return renderRuntimeScriptTemplateData("ros_probe.py.tmpl", runtimeScriptTemplateData{
+		SpecJSON:           string(payload),
+		TopicsJSON:         string(topicPayload),
+		OptionalTopicsJSON: string(optionalTopicPayload),
+		NodeName:           nodeName,
+	})
 }
 
 func fcuControllerRuntimeScript(spec map[string]any) (string, error) {

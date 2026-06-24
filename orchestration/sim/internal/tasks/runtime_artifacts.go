@@ -107,9 +107,9 @@ func GenerateRuntimeArtifacts(
 	if hasHelper(plan, "slam") {
 		spec := slamSpec(runtimeConfig)
 		if isHoverSlamRuntimeTask(plan.TaskID) {
-			spec.CartographerConfigurationBasename = helpers.HoverCartographerConfigBasename
+			spec.CartographerConfigurationBasename = hoverCartographerConfigBasename(runtimeConfig)
 			spec.CartographerTFTopic = helpers.DefaultSlamRuntimeSpec().CartographerTFTopic
-			spec.ExternalNavInputOdomTopic = helpers.DefaultExternalNavSourceSelectorSpec().OutputOdomTopic
+			spec.ExternalNavInputOdomTopic = hoverExternalNavInputOdomTopic(runtimeConfig)
 			spec.IMUSourceTopic = "/imu"
 			spec.IMUTopic = "/navlab/slam/imu"
 			spec.PublishGlobalTF = false
@@ -121,7 +121,7 @@ func GenerateRuntimeArtifacts(
 				return nil, err
 			}
 			spec.CartographerConfigurationDirectory = configDir
-			source, err := resolveWorkspaceSource(project, filepath.Join(cartographerConfigRelativePath, helpers.HoverCartographerConfigBasename))
+			source, err := resolveWorkspaceSource(project, filepath.Join(cartographerConfigRelativePath, spec.CartographerConfigurationBasename))
 			if err != nil {
 				return nil, err
 			}
@@ -129,7 +129,7 @@ func GenerateRuntimeArtifacts(
 			if err != nil {
 				return nil, err
 			}
-			hoverConfigPath := filepath.Join(artifactDir, helpers.HoverCartographerConfigBasename)
+			hoverConfigPath := filepath.Join(artifactDir, spec.CartographerConfigurationBasename)
 			if err := os.WriteFile(hoverConfigPath, content, 0o644); err != nil {
 				return nil, err
 			}
@@ -143,7 +143,7 @@ func GenerateRuntimeArtifacts(
 		externalNavBridgeParamsPath := filepath.Join(artifactDir, "external_nav_bridge_params.yaml")
 		externalNavSpec := spec
 		if isHoverSlamRuntimeTask(plan.TaskID) {
-			externalNavSpec.ExternalNavInputOdomTopic = helpers.DefaultExternalNavSourceSelectorSpec().OutputOdomTopic
+			externalNavSpec.ExternalNavInputOdomTopic = hoverExternalNavInputOdomTopic(runtimeConfig)
 		}
 		if err := os.WriteFile(externalNavBridgeParamsPath, []byte(helpers.ExternalNavBridgeParamsOverride(externalNavSpec)), 0o644); err != nil {
 			return nil, err
@@ -380,7 +380,26 @@ func publishesOfficialMazeOverlayTask(taskID string) bool {
 }
 
 func isHoverSlamRuntimeTask(taskID string) bool {
-	return taskID == "hover" || taskID == "hover-slam-only"
+	switch taskID {
+	case "hover", "hover-slam-only":
+		return true
+	default:
+		return false
+	}
+}
+
+func hoverExternalNavInputOdomTopic(runtimeConfig config.TaskRuntimeConfig) string {
+	if topic := strings.TrimSpace(runtimeConfig.SlamHover.ExternalNavInputOdomTopic); topic != "" {
+		return topic
+	}
+	return helpers.DefaultExternalNavSourceSelectorSpec().OutputOdomTopic
+}
+
+func hoverCartographerConfigBasename(runtimeConfig config.TaskRuntimeConfig) string {
+	if runtimeConfig.SlamBackend.CartographerConfigurationBasename == helpers.HoverNoOdomPriorConfigBasename {
+		return helpers.HoverNoOdomPriorConfigBasename
+	}
+	return helpers.HoverCartographerConfigBasename
 }
 
 func officialMazeSource(project config.ProjectConfig) (string, error) {
@@ -748,6 +767,11 @@ func hoverMissionSpec(runtimeConfig config.TaskRuntimeConfig) helpers.HoverMissi
 	spec.TakeoffAltM = fcu.TakeoffAltM
 	spec.HoverSettleSec = hover.SettleWindowSec
 	spec.HoverHoldSec = hover.HoverWindowSec
+	spec.HoverHealthMinObservationSec = hover.HoverHealthMinObservationSec
+	spec.HoverHealthStableRequiredSec = hover.HoverHealthStableRequiredSec
+	spec.HoverHealthMaxWaitSec = hover.HoverHealthMaxWaitSec
+	spec.OperatorConfirmRequired = hover.OperatorConfirmRequired
+	spec.OperatorConfirmTimeoutSec = hover.OperatorConfirmTimeoutSec
 	spec.MaxHorizontalDriftM = hover.MaxHoverHorizontalDriftM
 	spec.MaxAltitudeDriftM = hover.MaxHoverAltitudeErrorM
 	spec.StatusTopic = hover.HoverStatusTopic

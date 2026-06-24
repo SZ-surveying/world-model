@@ -174,6 +174,61 @@ func TestProbeTimeoutsAllowExplorationReadinessWindow(t *testing.T) {
 	}
 }
 
+func TestBuildRuntimeSpecsMakesSlamHoverProbeDiagnosticOnly(t *testing.T) {
+	t.Setenv("NAVLAB_SIM_DISTRO", "")
+	t.Setenv("NAVLAB_SIM_IMAGE_TAG", "")
+	t.Setenv("NAVLAB_SIM_RUNTIME_IMAGE_TAG", "")
+	project := config.ProjectConfig{
+		Orchestration: config.OrchestrationConfig{
+			Runtime: config.OrchestrationRuntimeConfig{
+				Docker: config.DockerRuntimeConfig{WorkspaceContainerPath: "/workspace"},
+			},
+		},
+		Paths:       config.PathConfig{WorkspaceRoot: "."},
+		RosDomainID: "85",
+		Navlab: config.NavlabConfig{
+			Images: config.ImageCatalog{TagPolicy: "distro-latest"},
+		},
+		Images: map[string]config.Image{
+			"mavlink_router":    {Repository: "navlab/mavlink-router"},
+			"official_baseline": {Repository: "navlab/official-baseline"},
+		},
+	}
+	plan := helpers.ExecutionPlan{
+		TaskID:      "hover",
+		DurationSec: 90,
+		ROSProbes: []helpers.ROSProbePlan{
+			{
+				HelperID:     "slam-hover",
+				Name:         "slam_hover_probe",
+				ScriptPath:   "slam_hover_probe.py",
+				OutputPath:   "slam_hover_probe.json",
+				RuntimeImage: "images.runtime",
+			},
+			{
+				HelperID:     "frame-contract",
+				Name:         "frame_contract_probe",
+				ScriptPath:   "frame_contract_probe.py",
+				OutputPath:   "frame_contract_probe.json",
+				RuntimeImage: "images.runtime",
+			},
+		},
+	}
+
+	bundle, err := BuildRuntimeSpecs(project, plan, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hoverProbe := probeByName(bundle.Probes, "slam_hover_probe")
+	if hoverProbe == nil || hoverProbe.Required {
+		t.Fatalf("slam_hover_probe spec = %#v, want diagnostic-only required=false", hoverProbe)
+	}
+	frameProbe := probeByName(bundle.Probes, "frame_contract_probe")
+	if frameProbe == nil || !frameProbe.Required {
+		t.Fatalf("frame_contract_probe spec = %#v, want required=true", frameProbe)
+	}
+}
+
 func TestBuildRuntimeSpecsUsesRuntimeRosDistroOverride(t *testing.T) {
 	t.Setenv("NAVLAB_SIM_DISTRO", "jazzy")
 	t.Setenv("NAVLAB_SIM_IMAGE_TAG", "")
@@ -631,6 +686,15 @@ func serviceByName(services []simruntime.ServiceSpec, name string) *simruntime.S
 	for index := range services {
 		if services[index].Name == name {
 			return &services[index]
+		}
+	}
+	return nil
+}
+
+func probeByName(probes []simruntime.ProbeSpec, name string) *simruntime.ProbeSpec {
+	for index := range probes {
+		if probes[index].Name == name {
+			return &probes[index]
 		}
 	}
 	return nil

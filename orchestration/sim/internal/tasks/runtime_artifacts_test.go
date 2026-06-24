@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -156,6 +157,7 @@ func TestGenerateRuntimeArtifactsFromConfiguredTasks(t *testing.T) {
 				assertFileMissing(t, filepath.Join(artifactDir, "hover_cartographer_odom_prior.py"))
 				assertProbeScriptRetriesTopicEcho(t, filepath.Join(artifactDir, "frame_contract_probe.py"))
 				assertProbeScriptRetriesTopicEcho(t, filepath.Join(artifactDir, "slam_hover_probe.py"))
+				assertHoverProbeKeepsLandingStatusOptional(t, filepath.Join(artifactDir, "slam_hover_probe.py"))
 				assertHoverMissionRuntimeUsesAPLandPolicy(t, filepath.Join(artifactDir, "hover_mission_runtime.py"))
 			}
 			if tt.taskID == "hover-slam-only" {
@@ -193,6 +195,140 @@ func assertHoverMissionRuntimeUsesAPLandPolicy(t *testing.T, path string) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("hover mission runtime missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestGenerateRuntimeArtifactsHoverSlamDirectUsesRawSlamOdomInput(t *testing.T) {
+	loader := config.NewLoader("../../config.toml")
+	project, err := loader.LoadProject()
+	if err != nil {
+		t.Fatalf("LoadProject() error = %v", err)
+	}
+	taskConfig, err := loader.LoadTask(project, "hover")
+	if err != nil {
+		t.Fatalf("LoadTask(hover) error = %v", err)
+	}
+	runtimeConfig, err := config.BuildTaskRuntimeConfig(project, taskConfig)
+	if err != nil {
+		t.Fatalf("BuildTaskRuntimeConfig(hover) error = %v", err)
+	}
+	task, err := DefaultRegistry().ConfigureOne(taskConfig)
+	if err != nil {
+		t.Fatalf("ConfigureOne(hover) error = %v", err)
+	}
+	plan, err := task.Plan(PlanOptions{SimulationProfile: "slam-direct"}, helpers.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("Plan(hover slam-direct) error = %v", err)
+	}
+	runtimeConfig, err = ApplySimulationProfile(runtimeConfig, plan)
+	if err != nil {
+		t.Fatalf("ApplySimulationProfile(hover slam-direct) error = %v", err)
+	}
+
+	artifactDir := t.TempDir()
+	if _, err := GenerateRuntimeArtifacts(project, plan, runtimeConfig, artifactDir); err != nil {
+		t.Fatalf("GenerateRuntimeArtifacts(hover slam-direct) error = %v", err)
+	}
+	assertSlamRuntimeExternalNavInput(t, filepath.Join(artifactDir, "slam_runtime.toml"), "/slam/odom")
+	assertExternalNavBridgeInput(t, filepath.Join(artifactDir, "external_nav_bridge_params.yaml"), "/slam/odom")
+}
+
+func TestGenerateRuntimeArtifactsHoverSlamDirectNoOdomPriorUsesNoOdomConfig(t *testing.T) {
+	loader := config.NewLoader("../../config.toml")
+	project, err := loader.LoadProject()
+	if err != nil {
+		t.Fatalf("LoadProject() error = %v", err)
+	}
+	taskConfig, err := loader.LoadTask(project, "hover")
+	if err != nil {
+		t.Fatalf("LoadTask(hover) error = %v", err)
+	}
+	runtimeConfig, err := config.BuildTaskRuntimeConfig(project, taskConfig)
+	if err != nil {
+		t.Fatalf("BuildTaskRuntimeConfig(hover) error = %v", err)
+	}
+	task, err := DefaultRegistry().ConfigureOne(taskConfig)
+	if err != nil {
+		t.Fatalf("ConfigureOne(hover) error = %v", err)
+	}
+	plan, err := task.Plan(PlanOptions{SimulationProfile: "slam-direct-no-odom-prior"}, helpers.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("Plan(hover slam-direct-no-odom-prior) error = %v", err)
+	}
+	runtimeConfig, err = ApplySimulationProfile(runtimeConfig, plan)
+	if err != nil {
+		t.Fatalf("ApplySimulationProfile(hover slam-direct-no-odom-prior) error = %v", err)
+	}
+
+	artifactDir := t.TempDir()
+	if _, err := GenerateRuntimeArtifacts(project, plan, runtimeConfig, artifactDir); err != nil {
+		t.Fatalf("GenerateRuntimeArtifacts(hover slam-direct-no-odom-prior) error = %v", err)
+	}
+	slamRuntimePath := filepath.Join(artifactDir, "slam_runtime.toml")
+	assertSlamRuntimeExternalNavInput(t, slamRuntimePath, "/slam/odom")
+	assertSlamRuntimeCartographerConfig(t, slamRuntimePath, helpers.HoverNoOdomPriorConfigBasename)
+	assertExternalNavBridgeInput(t, filepath.Join(artifactDir, "external_nav_bridge_params.yaml"), "/slam/odom")
+	assertCartographerConfigUsesOdometry(t, filepath.Join(artifactDir, helpers.HoverNoOdomPriorConfigBasename), false)
+	assertFileDoesNotContain(t, slamRuntimePath, "cartographer_configuration_basename = 'navlab_cartographer_2d_real.lua'")
+	assertFileDoesNotContain(t, slamRuntimePath, "external_nav_input_odom_topic = '/odometry'")
+}
+
+func assertSlamRuntimeExternalNavInput(t *testing.T, path string, wantTopic string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated slam runtime config: %v", err)
+	}
+	want := fmt.Sprintf("external_nav_input_odom_topic = '%s'", wantTopic)
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("slam runtime missing %q:\n%s", want, string(data))
+	}
+}
+
+func assertSlamRuntimeCartographerConfig(t *testing.T, path string, wantBasename string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated slam runtime config: %v", err)
+	}
+	want := fmt.Sprintf("cartographer_configuration_basename = '%s'", wantBasename)
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("slam runtime missing %q:\n%s", want, string(data))
+	}
+}
+
+func assertCartographerConfigUsesOdometry(t *testing.T, path string, want bool) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated cartographer config: %v", err)
+	}
+	wantText := fmt.Sprintf("use_odometry = %v", want)
+	if !strings.Contains(string(data), wantText) {
+		t.Fatalf("cartographer config missing %q:\n%s", wantText, string(data))
+	}
+}
+
+func assertFileDoesNotContain(t *testing.T, path string, forbidden string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated file: %v", err)
+	}
+	if strings.Contains(string(data), forbidden) {
+		t.Fatalf("file %s must not contain %q:\n%s", path, forbidden, string(data))
+	}
+}
+
+func assertExternalNavBridgeInput(t *testing.T, path string, wantTopic string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated external nav bridge params: %v", err)
+	}
+	want := fmt.Sprintf("input_odom_topic: %s", wantTopic)
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("external nav params missing %q:\n%s", want, string(data))
 	}
 }
 
@@ -456,6 +592,11 @@ func assertProbeScriptRetriesTopicEcho(t *testing.T, path string) {
 	text := string(data)
 	for _, want := range []string{
 		"while time.monotonic() < deadline:",
+		"TOPIC_SAMPLE_TIMEOUT_SEC",
+		"STRING_BATCH_TIMEOUT_SEC",
+		"STRING_READY_TIMEOUT_SEC",
+		"deadline = time.monotonic() + TOPIC_SAMPLE_TIMEOUT_SEC",
+		"deadline = time.monotonic() + STRING_READY_TIMEOUT_SEC",
 		"attempts += 1",
 		`"does not appear to be published yet"`,
 		`"Failed to find a free participant index"`,
@@ -472,6 +613,25 @@ func assertProbeScriptRetriesTopicEcho(t *testing.T, path string) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated probe script missing retry evidence %q:\n%s", want, text)
+		}
+	}
+}
+
+func assertHoverProbeKeepsLandingStatusOptional(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated hover probe script: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`TOPICS = json.loads("[\"/ap/v1/pose/filtered\",\"/slam/odom\",\"/navlab/slam/status\",\"/external_nav/status\",\"/external_nav/odom_candidate\",\"/external_nav/source_selector/status\",\"/navlab/scan_reference_drift/odom\",\"/navlab/scan_reference_drift/status\",\"/mavlink_external_nav/status\",\"/sim/x2/status\",\"/navlab/hover/status\",\"/navlab/landing/status\"]")`,
+		`OPTIONAL_TOPICS = set(json.loads("[\"/navlab/landing/status\"]"))`,
+		`"optional_topics": sorted(OPTIONAL_TOPICS)`,
+		`"optional_blockers": optional_blockers`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated hover probe missing optional landing status evidence %q:\n%s", want, text)
 		}
 	}
 }

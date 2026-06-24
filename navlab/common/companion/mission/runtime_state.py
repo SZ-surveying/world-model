@@ -435,6 +435,7 @@ class MissionRuntimeStateAdapter:
                 imu_ready=inputs.imu_ready,
                 slam_quality=inputs.slam_quality,
                 slam_quality_good=inputs.slam_quality_good,
+                slam_quality_reason=self.external_nav_slam_quality_reason,
                 ready_elapsed_sec=inputs.ready_elapsed_sec,
                 slam_quality_loss_duration_sec=inputs.slam_quality_loss_duration_sec,
                 external_nav_loss_duration_sec=inputs.external_nav_loss_duration_sec,

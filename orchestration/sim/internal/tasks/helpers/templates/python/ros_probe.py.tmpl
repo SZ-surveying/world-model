@@ -6,7 +6,11 @@ import time
 
 SPEC = json.loads({{ printf "%q" .SpecJSON }})
 TOPICS = json.loads({{ printf "%q" .TopicsJSON }})
+OPTIONAL_TOPICS = set(json.loads({{ printf "%q" .OptionalTopicsJSON }}))
 PROBE_TIMEOUT_SEC = max(1.0, float(SPEC.get("probe_timeout_sec", SPEC.get("ProbeTimeoutSec", 8.0))))
+TOPIC_SAMPLE_TIMEOUT_SEC = max(0.5, min(2.0, PROBE_TIMEOUT_SEC / 6.0))
+STRING_BATCH_TIMEOUT_SEC = max(0.5, min(3.0, PROBE_TIMEOUT_SEC / 6.0))
+STRING_READY_TIMEOUT_SEC = max(STRING_BATCH_TIMEOUT_SEC, PROBE_TIMEOUT_SEC)
 
 def main() -> int:
     samples = sample_string_topics([topic for topic in TOPICS if is_string_topic(topic)])
@@ -15,19 +19,26 @@ def main() -> int:
             continue
         samples[topic] = sample_topic(topic)
     blockers = []
+    optional_blockers = []
     for topic, sample in samples.items():
         if not effective_sample_ok(topic, sample, samples):
-            blockers.append("topic_sample_missing:" + topic)
+            blocker = "topic_sample_missing:" + topic
+            if topic in OPTIONAL_TOPICS:
+                optional_blockers.append(blocker)
+            else:
+                blockers.append(blocker)
     ok = len(blockers) == 0
     result = {
         "node": {{ printf "%q" .NodeName }},
         "topics": TOPICS,
+        "optional_topics": sorted(OPTIONAL_TOPICS),
         "spec": SPEC,
         "started_ms": int(time.time() * 1000),
         "status": "sampled",
         "ok": ok,
         "samples": samples,
         "blockers": blockers,
+        "optional_blockers": optional_blockers,
     }
     print(json.dumps(result, sort_keys=True))
     return 0 if ok else 20
@@ -73,14 +84,14 @@ def sample_topic(topic: str) -> dict:
     import subprocess
 
     started = time.time()
-    deadline = time.monotonic() + PROBE_TIMEOUT_SEC
+    deadline = time.monotonic() + TOPIC_SAMPLE_TIMEOUT_SEC
     attempts = 0
     result = None
     stdout = ""
     stderr = ""
     while time.monotonic() < deadline:
         attempts += 1
-        remaining = max(0.2, min(2.0, deadline - time.monotonic()))
+        remaining = max(0.2, min(TOPIC_SAMPLE_TIMEOUT_SEC, deadline - time.monotonic()))
         command = ["timeout", str(remaining), "ros2", "topic", "echo", "--once", topic]
         result = subprocess.run(command, check=False, capture_output=True, text=True)
         stdout = result.stdout.strip()
@@ -132,7 +143,7 @@ def sample_message_topic(topic: str) -> dict:
     try:
         rclpy.init(args=None)
         node = rclpy.create_node("navlab_probe_message_topic")
-        type_deadline = time.monotonic() + min(2.0, PROBE_TIMEOUT_SEC)
+        type_deadline = time.monotonic() + TOPIC_SAMPLE_TIMEOUT_SEC
         topic_type = ""
         while rclpy.ok() and time.monotonic() < type_deadline:
             for name, types in node.get_topic_names_and_types():
@@ -151,7 +162,7 @@ def sample_message_topic(topic: str) -> dict:
             holder["msg"] = msg
 
         subscription = node.create_subscription(msg_type, topic, on_msg, qos_profile_sensor_data)
-        deadline = time.monotonic() + PROBE_TIMEOUT_SEC
+        deadline = time.monotonic() + TOPIC_SAMPLE_TIMEOUT_SEC
         spins = 0
         while rclpy.ok() and time.monotonic() < deadline and holder["msg"] is None:
             spins += 1
@@ -260,7 +271,7 @@ def sample_string_topics(topics: list[str]) -> dict:
         return on_msg
 
     subscriptions = [node.create_subscription(String, topic, make_callback(topic), 10) for topic in topics]
-    deadline = time.monotonic() + PROBE_TIMEOUT_SEC
+    deadline = time.monotonic() + STRING_READY_TIMEOUT_SEC
     while rclpy.ok() and time.monotonic() < deadline:
         rclpy.spin_once(node, timeout_sec=0.1)
         if all(string_holder_ok(holder) for holder in holders.values()):
