@@ -161,6 +161,9 @@ func TestRuntimeScriptTemplatesRenderMissionAndNavigationWrappers(t *testing.T) 
 				`OPTIONAL_TOPICS = set(json.loads("[]"))`,
 				`\"ProbeTimeoutSec\":3`,
 				`STRING_READY_TIMEOUT_SEC = max(STRING_BATCH_TIMEOUT_SEC, PROBE_TIMEOUT_SEC)`,
+				`sample["failure_kind"] = "sample_stdout_present_timeout"`,
+				`"failure_kind": "topic_type_missing"`,
+				`sample["failure_kind"] = "topic_sample_missing"`,
 			},
 		},
 		{

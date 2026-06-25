@@ -110,11 +110,16 @@ def sample_topic(topic: str) -> dict:
             returncode = 124
         result = EmptyResult()
     sample = {
-        "ok": result.returncode == 0 and bool(stdout),
+        "ok": bool(stdout),
         "return_code": result.returncode,
         "latency_sec": round(time.time() - started, 3),
         "attempts": attempts,
+        "sample_method": "ros2_topic_echo",
     }
+    if stdout and result.returncode == 124:
+        sample["failure_kind"] = "sample_stdout_present_timeout"
+    elif not stdout:
+        sample["failure_kind"] = "topic_sample_missing"
     if stdout:
         sample["stdout"] = stdout[-4000:]
         data = parse_std_msgs_string(stdout)
@@ -154,7 +159,7 @@ def sample_message_topic(topic: str) -> dict:
                 break
             rclpy.spin_once(node, timeout_sec=0.1)
         if not topic_type:
-            return {"ok": False, "return_code": 124, "latency_sec": round(time.time() - started, 3), "error": "topic_type_missing"}
+            return {"ok": False, "return_code": 124, "latency_sec": round(time.time() - started, 3), "error": "topic_type_missing", "failure_kind": "topic_type_missing"}
         msg_type = get_message(topic_type)
         holder["type"] = topic_type
 
@@ -177,6 +182,8 @@ def sample_message_topic(topic: str) -> dict:
             "sample_method": "rclpy_subscription",
             "type": topic_type,
         }
+        if msg is None:
+            sample["failure_kind"] = "topic_sample_missing"
         if msg is not None:
             data = getattr(msg, "data", None)
             if isinstance(data, str):

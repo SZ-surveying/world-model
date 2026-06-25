@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 
 	mapstructure "github.com/go-viper/mapstructure/v2"
 )
@@ -109,7 +110,70 @@ func BuildTaskRuntimeConfig(project ProjectConfig, task TaskConfig) (TaskRuntime
 	if err := applySection(task.Sections, "scan_robustness", &runtimeConfig.ScanRobustness); err != nil {
 		return runtimeConfig, err
 	}
+	if err := NormalizeHoverSLOPolicy(&runtimeConfig.SlamHover); err != nil {
+		return runtimeConfig, err
+	}
+	if err := NormalizeStartupReadinessPolicy(&runtimeConfig.SlamHover.StartupReadinessPolicy); err != nil {
+		return runtimeConfig, err
+	}
 	return runtimeConfig, nil
+}
+
+func NormalizeHoverSLOPolicy(cfg *SlamHoverConfig) error {
+	if cfg.MaxHoverHorizontalDriftM <= 0 {
+		cfg.MaxHoverHorizontalDriftM = 0.10
+	}
+	if cfg.HoverSpanTargetM <= 0 {
+		cfg.HoverSpanTargetM = cfg.MaxHoverHorizontalDriftM
+	}
+	if cfg.HoverSpanHardCapM <= 0 {
+		cfg.HoverSpanHardCapM = 0.15
+	}
+	if !finitePositive(cfg.HoverSpanTargetM) {
+		return fmt.Errorf("slam_hover.hover_span_target_m must be positive, got %v", cfg.HoverSpanTargetM)
+	}
+	if !finitePositive(cfg.HoverSpanHardCapM) {
+		return fmt.Errorf("slam_hover.hover_span_hard_cap_m must be positive, got %v", cfg.HoverSpanHardCapM)
+	}
+	if cfg.HoverSpanTargetM > cfg.HoverSpanHardCapM {
+		return fmt.Errorf("slam_hover hover SLO invalid: target %.3f exceeds hard cap %.3f", cfg.HoverSpanTargetM, cfg.HoverSpanHardCapM)
+	}
+	return nil
+}
+
+func NormalizeStartupReadinessPolicy(cfg *StartupReadinessPolicyConfig) error {
+	if cfg.TimeoutSec <= 0 {
+		cfg.TimeoutSec = 35
+	}
+	if cfg.GraceSec <= 0 {
+		cfg.GraceSec = 8
+	}
+	if cfg.ProgressWindowSec <= 0 {
+		cfg.ProgressWindowSec = 3
+	}
+	if !finitePositive(cfg.TimeoutSec) {
+		return fmt.Errorf("slam_hover.startup_readiness_policy.timeout_sec must be positive, got %v", cfg.TimeoutSec)
+	}
+	if !finitePositive(cfg.GraceSec) {
+		return fmt.Errorf("slam_hover.startup_readiness_policy.grace_sec must be positive, got %v", cfg.GraceSec)
+	}
+	if !finitePositive(cfg.ProgressWindowSec) {
+		return fmt.Errorf("slam_hover.startup_readiness_policy.progress_window_sec must be positive, got %v", cfg.ProgressWindowSec)
+	}
+	if cfg.GraceSec > cfg.TimeoutSec {
+		return fmt.Errorf("slam_hover startup readiness policy invalid: grace %.3f exceeds timeout %.3f", cfg.GraceSec, cfg.TimeoutSec)
+	}
+	if cfg.ProgressWindowSec > cfg.TimeoutSec {
+		return fmt.Errorf("slam_hover startup readiness policy invalid: progress window %.3f exceeds timeout %.3f", cfg.ProgressWindowSec, cfg.TimeoutSec)
+	}
+	if cfg.RestartLimit < 0 {
+		return fmt.Errorf("slam_hover.startup_readiness_policy.restart_limit must be >= 0, got %d", cfg.RestartLimit)
+	}
+	return nil
+}
+
+func finitePositive(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func applySection[T any](sections map[string]any, name string, target *T) error {

@@ -30,11 +30,50 @@ func TestBuildTaskRuntimeConfigAppliesTaskOverrides(t *testing.T) {
 	if runtimeConfig.SlamHover.HoverWindowSec != 18 {
 		t.Fatalf("hover window = %v", runtimeConfig.SlamHover.HoverWindowSec)
 	}
+	if runtimeConfig.SlamHover.HoverSpanTargetM != 0.10 || runtimeConfig.SlamHover.HoverSpanHardCapM != 0.15 {
+		t.Fatalf("hover SLO policy = target %v hard cap %v", runtimeConfig.SlamHover.HoverSpanTargetM, runtimeConfig.SlamHover.HoverSpanHardCapM)
+	}
+	policy := runtimeConfig.SlamHover.StartupReadinessPolicy
+	if policy.TimeoutSec != 35 || policy.GraceSec != 8 || policy.ProgressWindowSec != 3 || policy.RestartLimit != 0 {
+		t.Fatalf("startup readiness policy = %#v", policy)
+	}
 	if runtimeConfig.Landing.HoverPolicy != "ap_land_mode_after_hover" {
 		t.Fatalf("hover landing policy = %q", runtimeConfig.Landing.HoverPolicy)
 	}
 	if runtimeConfig.FrameContract.MapFrameID != "map" {
 		t.Fatalf("default frame contract not preserved: %#v", runtimeConfig.FrameContract)
+	}
+}
+
+func TestNormalizeHoverSLOPolicyRejectsHardCapBelowTarget(t *testing.T) {
+	cfg := SlamHoverConfig{
+		MaxHoverHorizontalDriftM: 0.10,
+		HoverSpanTargetM:         0.10,
+		HoverSpanHardCapM:        0.05,
+	}
+	if err := NormalizeHoverSLOPolicy(&cfg); err == nil {
+		t.Fatal("NormalizeHoverSLOPolicy() error = nil, want invalid policy error")
+	}
+}
+
+func TestNormalizeStartupReadinessPolicyRejectsInvalidPolicy(t *testing.T) {
+	cfg := StartupReadinessPolicyConfig{
+		TimeoutSec:        5,
+		GraceSec:          8,
+		ProgressWindowSec: 3,
+	}
+	if err := NormalizeStartupReadinessPolicy(&cfg); err == nil {
+		t.Fatal("NormalizeStartupReadinessPolicy() error = nil, want invalid grace/timeout policy error")
+	}
+
+	cfg = StartupReadinessPolicyConfig{
+		TimeoutSec:        35,
+		GraceSec:          8,
+		ProgressWindowSec: 3,
+		RestartLimit:      -1,
+	}
+	if err := NormalizeStartupReadinessPolicy(&cfg); err == nil {
+		t.Fatal("NormalizeStartupReadinessPolicy() error = nil, want invalid restart limit error")
 	}
 }
 

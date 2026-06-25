@@ -236,6 +236,9 @@ func FinalizeRunArtifacts(
 			"rosbag":       filepath.Join(result.ArtifactDir, "rosbag", "rosbag_0.mcap"),
 		},
 	}
+	if policy := startupReadinessPolicyFromPlan(plan); policy != nil {
+		runConfig["startup_readiness_policy"] = policy
+	}
 	if err := writeTOML(runConfigPath, runConfig); err != nil {
 		return nil, err
 	}
@@ -247,6 +250,28 @@ func FinalizeRunArtifacts(
 		{Type: "run_config", Path: runConfigPath},
 		{Type: "summary_markdown", Path: summaryMDPath},
 	}, nil
+}
+
+func startupReadinessPolicyFromPlan(plan tasks.Plan) map[string]any {
+	raw, ok := plan.Execution.TaskParameters["runtime_config"]
+	if !ok {
+		return nil
+	}
+	runtimeConfig, ok := raw.(config.TaskRuntimeConfig)
+	if !ok {
+		return nil
+	}
+	policy := runtimeConfig.SlamHover.StartupReadinessPolicy
+	if policy.TimeoutSec <= 0 && policy.GraceSec <= 0 && policy.ProgressWindowSec <= 0 && policy.RestartLimit == 0 {
+		return nil
+	}
+	return map[string]any{
+		"owner":               "go_runtime_config",
+		"timeout_sec":         policy.TimeoutSec,
+		"grace_sec":           policy.GraceSec,
+		"progress_window_sec": policy.ProgressWindowSec,
+		"restart_limit":       policy.RestartLimit,
+	}
 }
 
 func AppendManifestArtifacts(manifestPath string, artifactDir string, generated []GeneratedArtifact) error {

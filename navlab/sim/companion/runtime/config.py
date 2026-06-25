@@ -435,6 +435,8 @@ class MissionNodeConfig(EndpointNodeConfig):
     hover_altitude_tolerance_m: float = 0.18
     hover_hold_sec: float = 20.0
     max_horizontal_drift_m: float = 1.0
+    hover_span_target_m: float = 1.0
+    hover_span_hard_cap_m: float = 1.0
     max_altitude_drift_m: float = 0.6
     origin_lat_deg: float = -35.363262
     origin_lon_deg: float = 149.165237
@@ -481,6 +483,14 @@ class MissionNodeConfig(EndpointNodeConfig):
             hover_altitude_tolerance_m=_float(data.get("hover_altitude_tolerance_m"), 0.18),
             hover_hold_sec=_float(data.get("hover_hold_sec"), 20.0),
             max_horizontal_drift_m=_float(data.get("max_horizontal_drift_m"), 1.0),
+            hover_span_target_m=_float(
+                data.get("hover_span_target_m"),
+                _float(data.get("max_horizontal_drift_m"), 1.0),
+            ),
+            hover_span_hard_cap_m=_float(
+                data.get("hover_span_hard_cap_m"),
+                _float(data.get("max_horizontal_drift_m"), 1.0),
+            ),
             max_altitude_drift_m=_float(data.get("max_altitude_drift_m"), 0.6),
             origin_lat_deg=_float(data.get("origin_lat_deg"), -35.363262),
             origin_lon_deg=_float(data.get("origin_lon_deg"), 149.165237),
@@ -526,6 +536,8 @@ class MissionNodeConfig(EndpointNodeConfig):
         _append_flag(argv, "--hover-altitude-tolerance-m", self.hover_altitude_tolerance_m)
         _append_flag(argv, "--hover-hold-sec", self.hover_hold_sec)
         _append_flag(argv, "--max-horizontal-drift-m", self.max_horizontal_drift_m)
+        _append_flag(argv, "--hover-span-target-m", self.hover_span_target_m)
+        _append_flag(argv, "--hover-span-hard-cap-m", self.hover_span_hard_cap_m)
         _append_flag(argv, "--max-altitude-drift-m", self.max_altitude_drift_m)
         _append_flag(argv, "--origin-lat-deg", self.origin_lat_deg)
         _append_flag(argv, "--origin-lon-deg", self.origin_lon_deg)

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"navlab/orchestration-sim/internal/artifactlayout"
 )
 
 func TestHoverMetricSpecClassifyUsesTargetHardCapAndReviewOnly(t *testing.T) {
@@ -83,6 +85,86 @@ func TestBuildHoverHealthCohortAggregatesRunBandsAndMetrics(t *testing.T) {
 	}
 }
 
+func TestBuildHoverHealthCohortAggregatesMissionHoverSpanPercentiles(t *testing.T) {
+	runA := writeHoverHealthArtifact(t, nil)
+	writeMissionHoverSpan(t, runA, 0.103)
+	runB := writeHoverHealthArtifact(t, nil)
+	writeMissionHoverSpan(t, runB, 0.118)
+	runC := writeHoverHealthArtifact(t, nil)
+	writeMissionHoverSpan(t, runC, 0.034)
+
+	cohort, err := BuildHoverHealthCohort([]string{runA, runB, runC})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metric := mapFromAny(cohort.Metrics["mission_hover_horizontal_span_m"])
+	if metric == nil {
+		t.Fatalf("mission hover span metric missing: %#v", cohort.Metrics)
+	}
+	if got := metricInt(metric, "target_exceed_count"); got != 2 {
+		t.Fatalf("target_exceed_count = %d, want 2; metric=%#v", got, metric)
+	}
+	if got := metricInt(metric, "hard_cap_exceed_count"); got != 0 {
+		t.Fatalf("hard_cap_exceed_count = %d, want 0; metric=%#v", got, metric)
+	}
+	if got := metricFloat(metric, "target_exceed_rate"); got < 0.66 || got > 0.67 {
+		t.Fatalf("target_exceed_rate = %v, want 2/3; metric=%#v", got, metric)
+	}
+}
+
+func TestBuildHoverHealthCohortKeepsTraceLinksAndExcludesPreflightFromSpan(t *testing.T) {
+	validA := writeHoverHealthArtifact(t, nil)
+	writeMissionHoverSpan(t, validA, 0.05)
+	validB := writeHoverHealthArtifact(t, nil)
+	writeMissionHoverSpan(t, validB, 0.12)
+	preflight := writeHoverHealthArtifact(t, []map[string]any{{"code": "preflight_timeout", "message": "rangefinder not ready"}})
+	if err := os.Remove(filepath.Join(preflight, "mission_summary.json")); err != nil {
+		t.Fatal(err)
+	}
+	writeStartupReadinessRuntimeArtifact(t, preflight, "fail_fast", "startup_readiness_no_progress")
+
+	cohort, err := BuildHoverHealthCohort([]string{validA, validB, preflight})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metric := mapFromAny(cohort.Metrics["mission_hover_horizontal_span_m"])
+	if metric == nil {
+		t.Fatalf("mission hover span metric missing: %#v", cohort.Metrics)
+	}
+	if got := metricInt(metric, "count"); got != 2 {
+		t.Fatalf("span metric count = %d, want only valid mission span samples; metric=%#v", got, metric)
+	}
+	if got := metricInt(metric, "target_exceed_count"); got != 1 {
+		t.Fatalf("target_exceed_count = %d, want 1; metric=%#v", got, metric)
+	}
+	if len(cohort.Runs) != 3 {
+		t.Fatalf("run count = %d, want 3", len(cohort.Runs))
+	}
+	preflightRow := mapFromAny(cohort.Runs[2])
+	if _, ok := preflightRow["mission_hover_span"]; ok {
+		t.Fatalf("preflight row should not carry mission hover span: %#v", preflightRow)
+	}
+	for _, key := range []string{
+		"summary_artifact",
+		"mission_summary_artifact",
+		"hover_health_artifact",
+		"contract_audit_artifact",
+		"trajectory_audit_artifact",
+	} {
+		if preflightRow[key] == "" {
+			t.Fatalf("run row missing trace link %s: %#v", key, preflightRow)
+		}
+	}
+	if preflightRow["startup_readiness_policy_outcome"] != "fail_fast:startup_readiness_no_progress" {
+		t.Fatalf("preflight startup readiness outcome = %#v", preflightRow)
+	}
+	outcomes := mapFromAny(cohort.Metrics["startup_readiness_policy_outcomes"])
+	counts, _ := outcomes["counts"].(map[string]int)
+	if counts["fail_fast:startup_readiness_no_progress"] != 1 {
+		t.Fatalf("startup policy outcome counts = %#v", outcomes)
+	}
+}
+
 func writeHoverHealthArtifact(t *testing.T, blockers []map[string]any) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -103,5 +185,59 @@ func writeHoverHealthArtifact(t *testing.T, blockers []map[string]any) string {
 	if err := os.WriteFile(filepath.Join(dir, "summary.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	writeMissionHoverSpan(t, dir, 0.03)
 	return dir
+}
+
+func writeMissionHoverSpan(t *testing.T, dir string, span float64) {
+	t.Helper()
+	tier := "green"
+	if span > 0.15 {
+		tier = "red"
+	} else if span > 0.10 {
+		tier = "yellow"
+	}
+	payload := map[string]any{
+		"ok":                    span <= 0.15,
+		"reason":                "hover_complete",
+		"hover_span_target_m":   0.10,
+		"hover_span_hard_cap_m": 0.15,
+		"hover_drift": map[string]any{
+			"horizontal_span_m":           span,
+			"hover_span_target_m":         0.10,
+			"hover_span_hard_cap_m":       0.15,
+			"horizontal_span_tier":        tier,
+			"horizontal_span_target_ok":   span <= 0.10,
+			"horizontal_span_hard_cap_ok": span <= 0.15,
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mission_summary.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeStartupReadinessRuntimeArtifact(t *testing.T, dir string, action string, reason string) {
+	t.Helper()
+	path := artifactlayout.Audit(dir, "startup_readiness_runtime.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	payload := map[string]any{
+		"schemaVersion": "navlab.startup_readiness_runtime.v1",
+		"final_decision": map[string]any{
+			"action": action,
+			"reason": reason,
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

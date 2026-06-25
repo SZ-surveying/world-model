@@ -153,6 +153,54 @@ func TestUploadForcesLiteSelection(t *testing.T) {
 	}
 }
 
+func TestUploadAutoBuildsLiteReplayWhenMissing(t *testing.T) {
+	repoRoot := t.TempDir()
+	runDir := filepath.Join(repoRoot, "artifacts", "sim", "hover", "20260614T020000Z")
+	mustMkdir(t, runDir)
+	mustWriteJSON(t, filepath.Join(runDir, "summary.json"), validTaskSummary("hover"))
+	writeTestMCAP(t, filepath.Join(runDir, rawMCAPRelative("hover")), []string{
+		"/navlab/official_maze/map",
+		"/tf",
+		"/tf_static",
+		"/map",
+		"/scan",
+		"/slam/odom",
+	})
+	mustWriteLiteProfile(t, runDir, "hover", `
+overlay /navlab/official_maze/map
+required /tf interval=all
+required /tf_static interval=all
+required /map interval=all
+required /scan interval=all
+required /slam/odom interval=all
+`)
+
+	result, err := Upload(context.Background(), Options{
+		RepoRoot:     repoRoot,
+		ArtifactRoot: "artifacts/sim",
+		Run:          "20260614T020000Z",
+		Task:         "hover",
+		DryRun:       true,
+		Stdout:       io.Discard,
+		Stderr:       io.Discard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 3 {
+		t.Fatalf("files = %#v", result.Files)
+	}
+	if !fileExists(filepath.Join(runDir, "rosbag_foxglove", "rosbag_foxglove_0.mcap")) {
+		t.Fatal("lite replay MCAP was not generated")
+	}
+	if !fileExists(filepath.Join(runDir, defaultReplaySummary)) {
+		t.Fatal("lite replay summary was not generated")
+	}
+	if !strings.Contains(result.Files[0].Filename, "_lite_") {
+		t.Fatalf("lite target did not get digest suffix: %#v", result.Files[0])
+	}
+}
+
 func TestPrintTargetsUsesReadableSections(t *testing.T) {
 	var stdout strings.Builder
 	printTargets(&stdout, "Foxglove Upload Targets", Result{

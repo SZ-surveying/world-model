@@ -22,6 +22,7 @@ type ServiceSpec struct {
 	Detach        bool
 	Remove        bool
 	Required      bool
+	Restartable   bool
 	LogPath       string
 	ServiceRole   string
 }

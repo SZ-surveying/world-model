@@ -2,10 +2,15 @@ package tasks
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
+	"navlab/orchestration-sim/internal/config"
 	simruntime "navlab/orchestration-sim/internal/runtime"
 )
 
@@ -13,7 +18,9 @@ type fakeRuntimeBackend struct {
 	events           []string
 	failService      string
 	probeResults     map[string]simruntime.ProbeResult
+	probeSequences   map[string][]simruntime.ProbeResult
 	probeErrors      map[string]error
+	probeDelays      map[string]time.Duration
 	waitReturnCodes  map[string]int
 	waitErrors       map[string]error
 	stopErrors       map[string]error
@@ -55,6 +62,14 @@ func (backend *fakeRuntimeBackend) StartRosbag(spec simruntime.RosbagSpec) (simr
 
 func (backend *fakeRuntimeBackend) RunProbe(spec simruntime.ProbeSpec) (simruntime.ProbeResult, error) {
 	backend.events = append(backend.events, "probe:"+spec.Name)
+	if delay := backend.probeDelays[spec.Name]; delay > 0 {
+		time.Sleep(delay)
+	}
+	if sequence := backend.probeSequences[spec.Name]; len(sequence) > 0 {
+		result := sequence[0]
+		backend.probeSequences[spec.Name] = sequence[1:]
+		return result, backend.probeErrors[spec.Name]
+	}
 	if result, ok := backend.probeResults[spec.Name]; ok {
 		return result, backend.probeErrors[spec.Name]
 	}
@@ -146,6 +161,104 @@ func TestExecuteRuntimeSpecsEmitsRuntimeEvents(t *testing.T) {
 	}
 }
 
+func TestExecuteRuntimeSpecsStopsRosbagAfterPostTaskGrace(t *testing.T) {
+	backend := newFakeRuntimeBackend()
+	sink := &captureEventSink{}
+	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
+		Rosbags: []simruntime.RosbagSpec{{Name: "hover_rosbag"}},
+		Probes:  []simruntime.ProbeSpec{{Name: "slam_hover_probe", Required: true}},
+	}, RuntimeExecutionOptions{
+		WaitForRosbags:         true,
+		RosbagPostTaskGraceSec: 0.001,
+		TaskID:                 "hover",
+		EventSink:              sink,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRuntimeSpecs() error = %v", err)
+	}
+	assertEvents(t, backend.events, []string{
+		"start-rosbag:hover_rosbag",
+		"probe:slam_hover_probe",
+		"stop:hover_rosbag",
+	})
+	phases := make([]string, 0, len(sink.events))
+	for _, event := range sink.events {
+		phases = append(phases, event.Phase)
+	}
+	if !containsString(phases, "rosbag.post_task_grace") {
+		t.Fatalf("phases missing rosbag.post_task_grace: %#v", phases)
+	}
+}
+
+func TestExecuteRuntimeSpecsTimesOutWhenProbeDoesNotFinishBeforeDeadline(t *testing.T) {
+	backend := newFakeRuntimeBackend()
+	backend.probeDelays["slam_hover_probe"] = 50 * time.Millisecond
+	sink := &captureEventSink{}
+	artifactDir := t.TempDir()
+	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
+		Services: []simruntime.ServiceSpec{{Name: "hover_mission", LogPath: artifactDir + "/hover_mission.log"}},
+		Rosbags:  []simruntime.RosbagSpec{{Name: "hover_rosbag"}},
+		Probes:   []simruntime.ProbeSpec{{Name: "slam_hover_probe", Required: true}},
+	}, RuntimeExecutionOptions{
+		WaitForRosbags:  true,
+		TaskDeadlineSec: 0.005,
+		TaskID:          "hover",
+		ArtifactDir:     artifactDir,
+		EventSink:       sink,
+	})
+	if err == nil || !strings.Contains(err.Error(), "task_runtime_timeout") {
+		t.Fatalf("ExecuteRuntimeSpecs() error = %v, want task runtime timeout", err)
+	}
+	assertEvents(t, backend.events, []string{
+		"start-service:hover_mission",
+		"start-rosbag:hover_rosbag",
+		"probe:slam_hover_probe",
+		"logs:hover_mission",
+		"stop:hover_rosbag",
+		"stop:hover_mission",
+	})
+	phases := make([]string, 0, len(sink.events))
+	for _, event := range sink.events {
+		phases = append(phases, event.Phase)
+	}
+	if !containsString(phases, "run.timeout") {
+		t.Fatalf("phases missing run.timeout: %#v", phases)
+	}
+	missionData, readErr := os.ReadFile(filepath.Join(artifactDir, "mission_summary.json"))
+	if readErr != nil {
+		t.Fatalf("read timeout mission summary: %v", readErr)
+	}
+	if !strings.Contains(string(missionData), "task_runtime_timeout") {
+		t.Fatalf("mission summary missing timeout reason:\n%s", missionData)
+	}
+}
+
+func TestTaskRuntimeTimeoutSummaryDoesNotOverwritePythonDurationTimeout(t *testing.T) {
+	artifactDir := t.TempDir()
+	path := filepath.Join(artifactDir, "mission_summary.json")
+	existing := `{"ok":false,"reason":"duration_timeout","mission_abort_reason":"duration_timeout"}`
+	if err := os.WriteFile(path, []byte(existing+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskRuntimeTimeoutMissionSummary(artifactDir, "probes:slam_hover_probe", 90)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(data)) != existing {
+		t.Fatalf("mission summary overwritten:\n%s", data)
+	}
+	blockers := hoverMissionBlockers(map[string]any{
+		"ok":                   false,
+		"reason":               "duration_timeout",
+		"mission_abort_reason": "duration_timeout",
+	})
+	if !stringSliceContains(blockers, "hover_mission_not_ok") ||
+		!stringSliceContains(blockers, "hover_mission_abort:duration_timeout") {
+		t.Fatalf("duration timeout blockers = %#v", blockers)
+	}
+}
+
 func TestExecuteRuntimeSpecsDoesNotFailCompletedRunOnCleanupWarning(t *testing.T) {
 	backend := newFakeRuntimeBackend()
 	backend.stopErrors["slam"] = errors.New("could not kill container")
@@ -187,6 +300,115 @@ func TestExecuteRuntimeSpecsFailsRequiredProbeAndCleansUp(t *testing.T) {
 		"probe:frame_probe",
 		"logs:gazebo",
 		"stop:gazebo",
+	})
+}
+
+func TestExecuteRuntimeSpecsDelaysHoverMissionUntilStartupReadiness(t *testing.T) {
+	backend := newFakeRuntimeBackend()
+	backend.probeResults["startup_readiness_probe"] = simruntime.ProbeResult{
+		Backend:    "fake",
+		Name:       "startup_readiness_probe",
+		ReturnCode: 0,
+		Stdout:     startupReadinessProbePayload(true, true, true, 10),
+	}
+	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
+		Services: []simruntime.ServiceSpec{
+			{Name: "gazebo_sensor", Restartable: true},
+			{Name: "hover_mission"},
+		},
+		StartupReadinessProbe: &simruntime.ProbeSpec{Name: "startup_readiness_probe"},
+	}, RuntimeExecutionOptions{
+		TaskID:                 "hover",
+		ArtifactDir:            t.TempDir(),
+		StartupReadinessPolicy: configStartupReadinessPolicyForTest(0),
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRuntimeSpecs() error = %v", err)
+	}
+	assertEvents(t, backend.events, []string{
+		"start-service:gazebo_sensor",
+		"probe:startup_readiness_probe",
+		"start-service:hover_mission",
+		"stop:hover_mission",
+		"stop:gazebo_sensor",
+	})
+}
+
+func TestExecuteRuntimeSpecsWritesStartupReadinessArtifactAndBlocks(t *testing.T) {
+	backend := newFakeRuntimeBackend()
+	backend.probeResults["startup_readiness_probe"] = simruntime.ProbeResult{
+		Backend:    "fake",
+		Name:       "startup_readiness_probe",
+		ReturnCode: 20,
+		Stdout:     startupReadinessProbePayload(false, false, false, 0),
+	}
+	artifactDir := t.TempDir()
+	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
+		Services:              []simruntime.ServiceSpec{{Name: "gazebo_sensor", Restartable: true, LogPath: artifactDir + "/gazebo.log"}, {Name: "hover_mission"}},
+		StartupReadinessProbe: &simruntime.ProbeSpec{Name: "startup_readiness_probe"},
+	}, RuntimeExecutionOptions{
+		TaskID:                 "hover",
+		ArtifactDir:            artifactDir,
+		StartupReadinessPolicy: configStartupReadinessPolicyForTest(0),
+	})
+	if err == nil || !strings.Contains(err.Error(), "startup readiness blocked") {
+		t.Fatalf("ExecuteRuntimeSpecs() error = %v, want startup readiness blocked", err)
+	}
+	data, readErr := os.ReadFile(artifactlayout.Audit(artifactDir, "startup_readiness_runtime.json"))
+	if readErr != nil {
+		t.Fatalf("read startup readiness artifact: %v", readErr)
+	}
+	text := string(data)
+	for _, expected := range []string{"startup_readiness_no_progress", "gazebo_sensor"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("startup readiness artifact missing %q:\n%s", expected, text)
+		}
+	}
+	missionData, missionErr := os.ReadFile(artifactDir + "/mission_summary.json")
+	if missionErr != nil {
+		t.Fatalf("read mission summary: %v", missionErr)
+	}
+	if !strings.Contains(string(missionData), "startup_readiness_failed") ||
+		!strings.Contains(string(missionData), "startup_readiness_no_progress") {
+		t.Fatalf("mission summary missing startup readiness reason:\n%s", missionData)
+	}
+	assertEvents(t, backend.events, []string{
+		"start-service:gazebo_sensor",
+		"probe:startup_readiness_probe",
+		"probe:startup_readiness_probe",
+		"logs:gazebo_sensor",
+		"stop:gazebo_sensor",
+	})
+}
+
+func TestExecuteRuntimeSpecsRestartsLeafBeforeHoverMissionWhenAllowed(t *testing.T) {
+	backend := newFakeRuntimeBackend()
+	backend.probeSequences["startup_readiness_probe"] = []simruntime.ProbeResult{
+		{Backend: "fake", Name: "startup_readiness_probe", ReturnCode: 20, Stdout: startupReadinessProbePayload(false, false, false, 0)},
+		{Backend: "fake", Name: "startup_readiness_probe", ReturnCode: 20, Stdout: startupReadinessProbePayload(false, false, false, 0)},
+		{Backend: "fake", Name: "startup_readiness_probe", ReturnCode: 0, Stdout: startupReadinessProbePayload(true, true, true, 1)},
+	}
+	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
+		Services:              []simruntime.ServiceSpec{{Name: "gazebo_sensor", Restartable: true}, {Name: "hover_mission"}},
+		StartupReadinessProbe: &simruntime.ProbeSpec{Name: "startup_readiness_probe"},
+	}, RuntimeExecutionOptions{
+		TaskID:                 "hover",
+		ArtifactDir:            t.TempDir(),
+		StartupReadinessPolicy: configStartupReadinessPolicyForTest(1),
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRuntimeSpecs() error = %v", err)
+	}
+	assertEvents(t, backend.events, []string{
+		"start-service:gazebo_sensor",
+		"probe:startup_readiness_probe",
+		"probe:startup_readiness_probe",
+		"stop:gazebo_sensor",
+		"start-service:gazebo_sensor",
+		"probe:startup_readiness_probe",
+		"start-service:hover_mission",
+		"stop:hover_mission",
+		"stop:gazebo_sensor",
 	})
 }
 
@@ -256,12 +478,46 @@ func TestExecuteRuntimeSpecsCleansUpAfterServiceStartFailure(t *testing.T) {
 func newFakeRuntimeBackend() *fakeRuntimeBackend {
 	return &fakeRuntimeBackend{
 		probeResults:     map[string]simruntime.ProbeResult{},
+		probeSequences:   map[string][]simruntime.ProbeResult{},
 		probeErrors:      map[string]error{},
+		probeDelays:      map[string]time.Duration{},
 		waitReturnCodes:  map[string]int{},
 		waitErrors:       map[string]error{},
 		stopErrors:       map[string]error{},
 		serviceStartTime: time.Date(2026, 6, 12, 1, 2, 3, 0, time.UTC),
 	}
+}
+
+func configStartupReadinessPolicyForTest(restartLimit int) config.StartupReadinessPolicyConfig {
+	return config.StartupReadinessPolicyConfig{
+		TimeoutSec:        0.004,
+		GraceSec:          0.0005,
+		ProgressWindowSec: 0.001,
+		RestartLimit:      restartLimit,
+	}
+}
+
+func startupReadinessProbePayload(rangeReady bool, rangeSampleOK bool, heightReady bool, inputCount int) string {
+	readyText := "false"
+	if rangeReady {
+		readyText = "true"
+	}
+	rangeOKText := "false"
+	rangeReturnCode := "124"
+	if rangeSampleOK {
+		rangeOKText = "true"
+		rangeReturnCode = "0"
+	}
+	heightOKText := "false"
+	if heightReady {
+		heightOKText = "true"
+	}
+	return `{"ok":` + rangeOKText + `,"samples":{` +
+		`"/rangefinder/down/status":{"ok":true,"parsed":{"ready":` + readyText + `,"input_count":` + fmt.Sprint(inputCount) + `}},` +
+		`"/rangefinder/down/range":{"ok":` + rangeOKText + `,"return_code":` + rangeReturnCode + `},` +
+		`"/height/estimate":{"ok":` + heightOKText + `},` +
+		`"/external_nav/status":{"ok":true,"parsed":{"height":{"ready":` + heightOKText + `}}}` +
+		`}}`
 }
 
 func assertEvents(t *testing.T, got []string, want []string) {

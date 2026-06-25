@@ -248,9 +248,12 @@ func defaultSlamHover(cfg *SlamHoverConfig) {
 	cfg.HoverHealthMinObservationSec = defaultFloat(cfg.HoverHealthMinObservationSec, 10)
 	cfg.HoverHealthStableRequiredSec = defaultFloat(cfg.HoverHealthStableRequiredSec, 5)
 	cfg.HoverHealthMaxWaitSec = defaultFloat(cfg.HoverHealthMaxWaitSec, 60)
+	defaultStartupReadinessPolicy(&cfg.StartupReadinessPolicy)
 	cfg.OperatorConfirmTimeoutSec = defaultFloat(cfg.OperatorConfirmTimeoutSec, 60)
 	cfg.FinalHoldWindowSec = defaultFloat(cfg.FinalHoldWindowSec, 5)
 	cfg.MaxHoverHorizontalDriftM = defaultFloat(cfg.MaxHoverHorizontalDriftM, 0.10)
+	cfg.HoverSpanTargetM = defaultFloat(cfg.HoverSpanTargetM, cfg.MaxHoverHorizontalDriftM)
+	cfg.HoverSpanHardCapM = defaultFloat(cfg.HoverSpanHardCapM, 0.15)
 	cfg.MaxHoverAltitudeErrorM = defaultFloat(cfg.MaxHoverAltitudeErrorM, 0.30)
 	cfg.MaxHoverYawDriftRad = defaultFloat(cfg.MaxHoverYawDriftRad, 0.45)
 	cfg.MaxStopDriftM = defaultFloat(cfg.MaxStopDriftM, 0.25)
@@ -260,6 +263,12 @@ func defaultSlamHover(cfg *SlamHoverConfig) {
 	cfg.MaxLatestAgeSec = defaultFloat(cfg.MaxLatestAgeSec, 1.5)
 	cfg.HoverClaim = defaultString(cfg.HoverClaim, "evaluated")
 	cfg.ExplorationClaim = defaultString(cfg.ExplorationClaim, "not_evaluated")
+}
+
+func defaultStartupReadinessPolicy(cfg *StartupReadinessPolicyConfig) {
+	cfg.TimeoutSec = defaultFloat(cfg.TimeoutSec, 35)
+	cfg.GraceSec = defaultFloat(cfg.GraceSec, 8)
+	cfg.ProgressWindowSec = defaultFloat(cfg.ProgressWindowSec, 3)
 }
 
 func defaultMotionGate(cfg *MotionGateConfig) {

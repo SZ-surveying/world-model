@@ -140,6 +140,11 @@ func TestLoaderReadsProjectAndYAMLTasks(t *testing.T) {
 	if strings.Join(gotTaskIDs, ",") != strings.Join(wantTaskIDs, ",") {
 		t.Fatalf("task IDs = %#v, want %#v", gotTaskIDs, wantTaskIDs)
 	}
+	for _, task := range tasks {
+		if task.ID == "hover" && task.Task.SimulationProfile != "slam-direct-no-odom-prior" {
+			t.Fatalf("hover default simulation profile = %q, want slam-direct-no-odom-prior", task.Task.SimulationProfile)
+		}
+	}
 }
 
 func TestLoaderRejectsUnknownTask(t *testing.T) {

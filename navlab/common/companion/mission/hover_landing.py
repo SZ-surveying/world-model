@@ -53,6 +53,8 @@ class HoverPipelineConfig:
     hover_hold_sec: float
     duration_tolerance_sec: float
     max_horizontal_drift_m: float
+    hover_span_target_m: float
+    hover_span_hard_cap_m: float
     max_altitude_drift_m: float
 
 
@@ -218,6 +220,8 @@ class HoverMissionPipelineRunner:
             hold_sec=self._hover_config.hover_hold_sec,
             duration_tolerance_sec=self._hover_config.duration_tolerance_sec,
             max_horizontal_drift_m=self._hover_config.max_horizontal_drift_m,
+            hover_span_target_m=self._hover_config.hover_span_target_m,
+            hover_span_hard_cap_m=self._hover_config.hover_span_hard_cap_m,
             max_altitude_drift_m=self._hover_config.max_altitude_drift_m,
             local_position_count=runtime.local_position_count,
             crash_detected=runtime.crash_detected,

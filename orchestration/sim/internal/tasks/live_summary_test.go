@@ -54,6 +54,10 @@ func TestBuildLiveRunSummaryRuntimeSuccessStillEvaluatesGateBlockers(t *testing.
 	if summary.SchemaVersion != "navlab.orchestration.task_result.v1" || summary.Status != "TASK_STATUS_BLOCKED" {
 		t.Fatalf("summary contract fields = schema:%q status:%q", summary.SchemaVersion, summary.Status)
 	}
+	if summary.StartupReadinessPolicy["owner"] != "go_runtime_config" ||
+		summary.StartupReadinessPolicy["timeout_sec"] != float64(35) {
+		t.Fatalf("startup readiness policy = %#v", summary.StartupReadinessPolicy)
+	}
 	if summary.SourceEvidence["rangefinderSource"] != "ardupilot_serial7_benewake_tfmini" ||
 		summary.SourceEvidence["rangefinderSimulationFidelity"] != "benewake_serial_emulated" {
 		t.Fatalf("rangefinder evidence = %#v", summary.SourceEvidence)

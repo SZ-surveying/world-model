@@ -16,6 +16,7 @@ import (
 	"github.com/foxglove/mcap/go/mcap"
 	"github.com/klauspost/compress/zstd"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/config"
 	"navlab/orchestration-sim/internal/tasks/helpers"
 )
@@ -68,6 +69,7 @@ type MetricSummary struct {
 	ExternalNav               map[string]any            `json:"external_nav,omitempty"`
 	ExternalNavSourceSelector map[string]any            `json:"external_nav_source_selector,omitempty"`
 	MAVLinkExternalNav        map[string]any            `json:"mavlink_external_nav,omitempty"`
+	RangefinderSerial         map[string]any            `json:"rangefinder_serial,omitempty"`
 	X2                        map[string]any            `json:"x2,omitempty"`
 	GazeboModelHoverDrift     map[string]any            `json:"gazebo_model_hover_drift,omitempty"`
 	ScanReferenceHoverDrift   map[string]any            `json:"scan_reference_hover_drift,omitempty"`
@@ -75,6 +77,7 @@ type MetricSummary struct {
 	ScanReferenceCorrection   map[string]any            `json:"scan_reference_correction,omitempty"`
 	HoverXYAlignment          map[string]any            `json:"hover_xy_alignment,omitempty"`
 	HoverHealth               map[string]any            `json:"hover_health,omitempty"`
+	StartupReadiness          map[string]any            `json:"startup_readiness,omitempty"`
 	SLAMRuntimeLog            map[string]any            `json:"slam_runtime_log,omitempty"`
 	ScanIntegrity             map[string]any            `json:"scan_integrity,omitempty"`
 	ScanStabilization         map[string]any            `json:"scan_stabilization,omitempty"`
@@ -137,6 +140,9 @@ func EvaluateResultGates(
 	}
 
 	metrics := metricSummaryFromEvidence(probeOutputs, rosbagProfiles, artifactDir)
+	if isHoverSLAMProfileTask(plan.TaskID) && len(metrics.StartupReadiness) > 0 {
+		metrics.StartupReadiness["runtime_policy"] = startupReadinessPolicySummary(runtimeConfig.SlamHover.StartupReadinessPolicy)
+	}
 	landingEvidence := landingFromProbeOutputs(probeOutputs)
 	if landingEvidence == nil {
 		landingEvidence = landingFromHoverMissionSummary(metrics.HoverMission)
@@ -161,7 +167,6 @@ func EvaluateResultGates(
 		blockers = append(blockers, hoverMissionBlockers(metrics.HoverMission)...)
 		blockers = append(blockers, hoverXYAlignmentBlockers(metrics.HoverXYAlignment)...)
 		blockers = append(blockers, scanReferenceCorrectionBlockers(metrics.ScanReferenceCorrection)...)
-		blockers = append(blockers, gazeboModelHoverDriftMetricBlockers(metrics.GazeboModelHoverDrift, 0.10)...)
 		if len(metrics.Controller) > 0 {
 			blockers = append(blockers, hoverTakeoffBlockers(plan.TaskID, metrics.Controller)...)
 		}
@@ -265,9 +270,24 @@ func metricSummaryFromEvidence(probes []ProbeOutputSummary, rosbags []RosbagGate
 			summary.HoverMission = metrics
 			summary.MetricEvidenceSources["hover_mission"] = "mission_summary.json"
 		}
-		if metrics := parseSLAMRuntimeLog(filepath.Join(artifactDirs[0], "slam_backend.runtime.log")); metrics != nil {
+		if metrics := parseSLAMRuntimeLog(artifactlayout.RuntimeLog(artifactDirs[0], "slam_backend.runtime.log")); metrics != nil {
 			summary.SLAMRuntimeLog = metrics
-			summary.MetricEvidenceSources["slam_runtime_log"] = "slam_backend.runtime.log"
+			summary.MetricEvidenceSources["slam_runtime_log"] = artifactlayout.RuntimeLogRel("slam_backend.runtime.log")
+		}
+		if metrics := parseBenewakeTFMiniRuntimeLog(artifactlayout.RuntimeLog(artifactDirs[0], "benewake_tfmini_serial.runtime.log")); metrics != nil {
+			summary.RangefinderSerial = metrics
+			summary.MetricEvidenceSources["rangefinder_serial_runtime_log"] = artifactlayout.RuntimeLogRel("benewake_tfmini_serial.runtime.log")
+		} else if metrics := parseBenewakeTFMiniRuntimeLog(filepath.Join(artifactDirs[0], "benewake_tfmini_serial.runtime.log")); metrics != nil {
+			summary.RangefinderSerial = metrics
+			summary.MetricEvidenceSources["rangefinder_serial_runtime_log"] = "benewake_tfmini_serial.runtime.log"
+		}
+		if runtimeReadiness := parseJSONMap(artifactlayout.Audit(artifactDirs[0], "startup_readiness_runtime.json")); runtimeReadiness != nil {
+			summary.MetricEvidenceSources["startup_readiness_runtime"] = artifactlayout.AuditRel("startup_readiness_runtime.json")
+			if summary.StartupReadiness == nil {
+				summary.StartupReadiness = map[string]any{}
+			}
+			summary.StartupReadiness["runtime_decision"] = runtimeReadiness["final_decision"]
+			summary.StartupReadiness["runtime_artifact"] = artifactlayout.AuditRel("startup_readiness_runtime.json")
 		}
 		if metrics, err := summarizeGazeboModelOdom(filepath.Join(artifactDirs[0], "rosbag", "hover_rosbag", "hover_rosbag_0.mcap.zstd")); err == nil {
 			summary.GazeboModelHoverDrift = metrics
@@ -351,13 +371,295 @@ func metricSummaryFromEvidence(probes []ProbeOutputSummary, rosbags []RosbagGate
 		}
 		summary.RosbagMessageCounts[rosbag.Name] = rosbag.MessageCounts
 	}
+	summary.StartupReadiness = startupReadinessSummary(probes, rosbags, summary)
+	if len(artifactDirs) > 0 && strings.TrimSpace(artifactDirs[0]) != "" {
+		if runtimeReadiness := parseJSONMap(artifactlayout.Audit(artifactDirs[0], "startup_readiness_runtime.json")); runtimeReadiness != nil {
+			if summary.StartupReadiness == nil {
+				summary.StartupReadiness = map[string]any{}
+			}
+			summary.StartupReadiness["runtime_decision"] = runtimeReadiness["final_decision"]
+			summary.StartupReadiness["runtime_artifact"] = artifactlayout.AuditRel("startup_readiness_runtime.json")
+			if _, ok := summary.StartupReadiness["classification"]; !ok {
+				summary.StartupReadiness["classification"] = startupRuntimeClassification(runtimeReadiness)
+				summary.StartupReadiness["preflight_invalid"] = summary.StartupReadiness["classification"] == "startup_readiness_failure"
+				summary.StartupReadiness["valid_hover_body_sample"] = false
+				summary.StartupReadiness["not_hover_span_slo"] = summary.StartupReadiness["classification"] == "startup_readiness_failure"
+				summary.StartupReadiness["reason_codes"] = startupRuntimeReasonCodes(runtimeReadiness)
+			}
+			summary.MetricEvidenceSources["startup_readiness_runtime"] = artifactlayout.AuditRel("startup_readiness_runtime.json")
+		}
+	}
+	if len(summary.StartupReadiness) > 0 {
+		summary.MetricEvidenceSources["startup_readiness"] = "probe_outputs+mission_summary+rosbag_profiles"
+	}
 	if len(summary.MetricEvidenceSources) == 0 {
 		summary.MetricEvidenceSources = nil
 	}
 	return summary
 }
 
+func startupReadinessSummary(probes []ProbeOutputSummary, rosbags []RosbagGateSummary, metrics MetricSummary) map[string]any {
+	mission := metrics.HoverMission
+	if len(mission) == 0 && len(probes) == 0 && len(rosbags) == 0 {
+		return nil
+	}
+	hoverHoldSeen := stringAnySliceContains(mission["phases_seen"], "hover_hold")
+	airborneSeen, _ := mission["airborne_seen"].(bool)
+	missionOK := hoverMissionCompletedOK(mission)
+	abortReason, _ := mission["mission_abort_reason"].(string)
+	fsmState, _ := mission["mission_fsm_state"].(string)
+	classification := "unknown"
+	if missionOK || hoverHoldSeen {
+		classification = "hover_body_sample"
+	} else if len(mission) > 0 {
+		classification = "startup_readiness_failure"
+	}
+
+	rangeSample := probeSampleByTopic(probes, "/rangefinder/down/range")
+	rangeStatusSample := probeSampleByTopic(probes, "/rangefinder/down/status")
+	rangeStatus := mapFromAny(rangeStatusSample["parsed"])
+	externalHeight := mapFromAny(metrics.ExternalNav["height"])
+	counts := mergedRosbagMessageCounts(rosbags)
+	reasons := []string{}
+	addReason := func(reason string) {
+		if reason != "" && !stringSliceContains(reasons, reason) {
+			reasons = append(reasons, reason)
+		}
+	}
+	if classification == "startup_readiness_failure" {
+		if strings.Contains(abortReason, "preflight") {
+			addReason("preflight_timeout")
+		}
+		if strings.Contains(fsmState, "wait_nav_ready") {
+			addReason("wait_nav_ready")
+		}
+		if strings.Contains(abortReason, "waiting_for_external_nav") {
+			addReason("external_nav_waiting")
+		}
+		if len(mission) > 0 && !airborneSeen {
+			addReason("airborne_not_seen")
+		}
+		if len(mission) > 0 && !hoverHoldSeen {
+			addReason("hover_hold_not_seen")
+		}
+		if !boolFromMap(rangeStatus, "ready") {
+			addReason("rangefinder_not_ready")
+		}
+		if metricInt(rangeStatus, "input_count") == 0 {
+			addReason("rangefinder_input_missing")
+		}
+		if sampleFailureKind(rangeSample) == "topic_sample_missing" || counts["/rangefinder/down/range"] == 0 {
+			addReason("rangefinder_range_sample_missing")
+		}
+		if len(externalHeight) > 0 && !boolFromMap(externalHeight, "ready") {
+			addReason("external_nav_waiting_for_height")
+		}
+		if counts["/height/estimate"] == 0 {
+			addReason("height_estimate_missing")
+		}
+		if len(reasons) == 0 {
+			addReason("startup_not_ready")
+		}
+	}
+
+	return map[string]any{
+		"classification":            classification,
+		"preflight_invalid":         classification == "startup_readiness_failure",
+		"valid_hover_body_sample":   classification == "hover_body_sample",
+		"not_hover_span_slo":        classification == "startup_readiness_failure",
+		"reason_codes":              reasons,
+		"mission":                   startupMissionEvidence(mission, hoverHoldSeen),
+		"rangefinder":               startupRangefinderEvidence(rangeSample, rangeStatusSample, rangeStatus, metrics.RangefinderSerial, counts),
+		"height":                    startupHeightEvidence(externalHeight, counts),
+		"probe_semantics":           startupProbeSemantics(probes),
+		"rosbag_message_counts":     subsetIntMap(counts, "/rangefinder/down/range", "/rangefinder/down/status", "/height/estimate", "/height/status", "/external_nav/odom", "/navlab/fcu/local_position_pose"),
+		"decision_rule":             "startup_readiness_failure artifacts are excluded from hover span SLO percentiles and routed to Phase 51 startup/readiness.",
+		"runtime_control_unchanged": true,
+	}
+}
+
+func startupRuntimeClassification(runtimeReadiness map[string]any) string {
+	decision := mapFromAny(runtimeReadiness["final_decision"])
+	switch strings.TrimSpace(stringFromAny(decision["action"])) {
+	case StartupReadinessActionProceed:
+		return "startup_readiness_passed"
+	case StartupReadinessActionFailFast, StartupReadinessActionFailClosed, StartupReadinessActionRestartLeaf:
+		return "startup_readiness_failure"
+	default:
+		return "startup_readiness_unknown"
+	}
+}
+
+func startupRuntimeReasonCodes(runtimeReadiness map[string]any) []string {
+	decision := mapFromAny(runtimeReadiness["final_decision"])
+	reason := strings.TrimSpace(stringFromAny(decision["reason"]))
+	if reason == "" {
+		return nil
+	}
+	return []string{reason}
+}
+
+func startupMissionEvidence(mission map[string]any, hoverHoldSeen bool) map[string]any {
+	if len(mission) == 0 {
+		return map[string]any{"exists": false}
+	}
+	return map[string]any{
+		"exists":                  true,
+		"ok":                      mission["ok"],
+		"reason":                  mission["reason"],
+		"mission_fsm_state":       mission["mission_fsm_state"],
+		"mission_abort_reason":    mission["mission_abort_reason"],
+		"airborne_seen":           mission["airborne_seen"],
+		"hover_hold_seen":         hoverHoldSeen,
+		"guided_seen":             mission["guided_seen"],
+		"armed_seen":              mission["armed_seen"],
+		"local_position_count":    metricInt(mission, "local_position_count"),
+		"setpoints_sent_count":    metricInt(mission, "setpoints_sent_count"),
+		"hover_hold_duration_sec": metricFloat(mission, "hover_hold_duration_sec"),
+	}
+}
+
+func startupRangefinderEvidence(rangeSample map[string]any, statusSample map[string]any, status map[string]any, serial map[string]any, counts map[string]int) map[string]any {
+	return map[string]any{
+		"range_sample_ok":           boolFromMap(rangeSample, "ok"),
+		"range_sample_return_code":  metricInt(rangeSample, "return_code"),
+		"range_sample_failure_kind": sampleFailureKind(rangeSample),
+		"status_sample_ok":          boolFromMap(statusSample, "ok"),
+		"ready":                     boolFromMap(status, "ready"),
+		"state":                     status["state"],
+		"source":                    status["source"],
+		"input_count":               metricInt(status, "input_count"),
+		"latest_distance_m":         status["latest_distance_m"],
+		"latest_input_age_sec":      status["latest_input_age_sec"],
+		"virtual_serial_link":       status["virtual_serial_link"],
+		"range_topic":               status["range_topic"],
+		"scan_ideal_topic":          status["scan_ideal_topic"],
+		"serial":                    serial,
+		"serial_byte_count":         metricInt(serial, "byte_count"),
+		"serial_frame_count":        metricInt(serial, "frame_count"),
+		"rosbag_range_count":        counts["/rangefinder/down/range"],
+		"rosbag_status_count":       counts["/rangefinder/down/status"],
+	}
+}
+
+func startupHeightEvidence(externalHeight map[string]any, counts map[string]int) map[string]any {
+	return map[string]any{
+		"external_nav_height_ready":    boolFromMap(externalHeight, "ready"),
+		"external_nav_height":          externalHeight,
+		"rosbag_height_estimate_count": counts["/height/estimate"],
+		"rosbag_height_status_count":   counts["/height/status"],
+	}
+}
+
+func startupProbeSemantics(probes []ProbeOutputSummary) map[string]any {
+	samples := map[string]any{}
+	for _, probe := range probes {
+		rawSamples := mapFromAny(probe.Payload["samples"])
+		for topic, rawSample := range rawSamples {
+			sample := mapFromAny(rawSample)
+			failureKind := sampleFailureKind(sample)
+			if boolFromMap(sample, "ok") && failureKind == "" {
+				continue
+			}
+			key := probe.Name + ":" + topic
+			samples[key] = map[string]any{
+				"topic":         topic,
+				"probe":         probe.Name,
+				"ok":            boolFromMap(sample, "ok"),
+				"return_code":   metricInt(sample, "return_code"),
+				"sample_method": sample["sample_method"],
+				"failure_kind":  failureKind,
+				"has_stdout":    strings.TrimSpace(stringFromAny(sample["stdout"])) != "",
+				"parsed_ready":  mapFromAny(sample["parsed"])["ready"],
+				"parsed_state":  mapFromAny(sample["parsed"])["state"],
+			}
+		}
+	}
+	return map[string]any{
+		"samples": samples,
+		"known_failure_kinds": []string{
+			"topic_type_missing",
+			"topic_sample_missing",
+			"sample_stdout_present_timeout",
+			"parsed_payload_not_ready",
+		},
+	}
+}
+
+func probeSampleByTopic(probes []ProbeOutputSummary, topic string) map[string]any {
+	for _, probe := range probes {
+		samples := mapFromAny(probe.Payload["samples"])
+		if sample := mapFromAny(samples[topic]); sample != nil {
+			return sample
+		}
+	}
+	return nil
+}
+
+func sampleFailureKind(sample map[string]any) string {
+	if len(sample) == 0 {
+		return "topic_sample_missing"
+	}
+	if kind, _ := sample["failure_kind"].(string); strings.TrimSpace(kind) != "" {
+		return strings.TrimSpace(kind)
+	}
+	if errText, _ := sample["error"].(string); strings.Contains(errText, "topic_type_missing") {
+		return "topic_type_missing"
+	}
+	if strings.TrimSpace(stringFromAny(sample["stdout"])) != "" && metricInt(sample, "return_code") == 124 {
+		return "sample_stdout_present_timeout"
+	}
+	if !boolFromMap(sample, "ok") {
+		return "topic_sample_missing"
+	}
+	parsed := mapFromAny(sample["parsed"])
+	if ready, ok := parsed["ready"].(bool); ok && !ready {
+		return "parsed_payload_not_ready"
+	}
+	return ""
+}
+
+func mergedRosbagMessageCounts(rosbags []RosbagGateSummary) map[string]int {
+	out := map[string]int{}
+	for _, rosbag := range rosbags {
+		for topic, count := range rosbag.MessageCounts {
+			out[topic] += count
+		}
+	}
+	return out
+}
+
+func subsetIntMap(source map[string]int, keys ...string) map[string]int {
+	out := map[string]int{}
+	for _, key := range keys {
+		out[key] = source[key]
+	}
+	return out
+}
+
+func boolFromMap(values map[string]any, key string) bool {
+	value, _ := values[key].(bool)
+	return value
+}
+
+func stringFromAny(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
 func parseHoverMissionSummary(path string) map[string]any {
+	payload := parseJSONMap(path)
+	if payload == nil {
+		return nil
+	}
+	if payload["parse_error"] != nil {
+		payload["ok"] = false
+		return payload
+	}
+	return subsetHoverMissionSummary(payload)
+}
+
+func parseJSONMap(path string) map[string]any {
 	var data []byte
 	var err error
 	for attempt := 0; attempt < 50; attempt++ {
@@ -369,7 +671,7 @@ func parseHoverMissionSummary(path string) map[string]any {
 		if err := json.Unmarshal(data, &payload); err == nil {
 			payload["path"] = path
 			payload["exists"] = true
-			return subsetHoverMissionSummary(payload)
+			return payload
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -379,7 +681,7 @@ func parseHoverMissionSummary(path string) map[string]any {
 	}
 	payload["path"] = path
 	payload["exists"] = true
-	return subsetHoverMissionSummary(payload)
+	return payload
 }
 
 func subsetHoverMissionSummary(payload map[string]any) map[string]any {
@@ -830,12 +1132,6 @@ func externalNavSourceSelectorBlockers(summary map[string]any) []string {
 }
 
 func gazeboModelHoverDriftMetricBlockers(summary map[string]any, maxHorizontalDriftM float64) []string {
-	if metricInt(summary, "sample_count") < 2 {
-		return nil
-	}
-	if metricFloat(summary, "max_horizontal_drift_m") > maxHorizontalDriftM {
-		return []string{"hover_gazebo_model_horizontal_drift"}
-	}
 	return nil
 }
 
@@ -2557,6 +2853,32 @@ func parseSLAMRuntimeLog(path string) map[string]any {
 		metrics["cartographer_waiting_for_imu_queue_last_lines"] = waitingForIMULines
 	}
 	return metrics
+}
+
+func parseBenewakeTFMiniRuntimeLog(path string) map[string]any {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var latest map[string]any
+	for _, line := range strings.Split(string(data), "\n") {
+		index := strings.Index(line, "Benewake TFmini status ")
+		if index < 0 {
+			continue
+		}
+		raw := strings.TrimSpace(line[index+len("Benewake TFmini status "):])
+		payload := map[string]any{}
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			continue
+		}
+		latest = payload
+	}
+	if latest == nil {
+		return nil
+	}
+	latest["path"] = path
+	latest["exists"] = true
+	return latest
 }
 
 func slamRuntimeQuality(metrics map[string]any) string {

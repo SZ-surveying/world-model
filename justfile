@@ -65,10 +65,6 @@ navlab-real-run task *args='':
 foxglove-upload date='' *args='':
     {{sim_cmd}} foxglove upload {{date}} --force {{args}}
 
-# Upload an existing Foxglove-lite sim MCAP while ignoring HTTP proxy environment variables.
-foxglove-upload-direct date='' *args='':
-    cd orchestration/sim && {{direct_net_env}} go run ./cmd/navlab-sim foxglove upload {{date}} --force {{args}}
-
 # Run the serial bridge from the scripts/command Python 3.11 project.
 serial-bridge *args='':
     {{command_cmd}} serial bridge {{args}}

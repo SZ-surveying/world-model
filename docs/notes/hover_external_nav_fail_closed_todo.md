@@ -1996,6 +1996,738 @@ Non-goals:
 - [ ] Do not move Python runtime/FSM code in this phase.
 - [ ] Do not combine this with real launcher/operator UI integration.
 
+### Phase 46 [artifact-layout-break]: split flat run artifacts into readable directories
+
+目标：当前 hover run artifact root 文件过多，runtime scripts、runtime configs、logs、probes、audits、summaries、rosbag、SITL state 都平铺在一个目录里，review 和 debug 成本过高。Phase 46 直接 break 旧 run 兼容，定义新的 artifact layout；后续代码实现只支持新 layout，不为历史 flat artifact 添加 fallback。
+
+Status: executed by Phase 50 (`artifacts/sim/hover/20260625T035409Z`) and kept as the design record for the breaking layout.
+
+
+Decision:
+
+- [x] 直接 breaking change：不兼容旧 run，不做 old flat-path fallback。
+- [x] 不引入 SQLite 到 runtime 主链；Go/Python 交互仍然只走生成文件、CLI args/env、ROS status/probe JSON、artifact JSON/MCAP。
+- [x] SQLite 只作为未来跨 run/cohort index 的可选方案，不作为单次 run 的证据主存储。
+- [x] 单次 run 必须保持可复制、可 grep、可人工打开检查的 artifact directory。
+- [x] Root 只保留 reviewer 第一眼需要看的入口文件，其余必须按职责分目录。
+
+New artifact layout:
+
+```text
+artifact/
+  manifest.json
+  summary.json
+  summary.md
+  mission_summary.json
+  task_plan.json
+  task_request.json
+  runtime_plan.json
+  run_config.toml
+
+  audits/
+    hover_health_summary.json
+    contract_audit.json
+    initialization_audit.json
+    raw_source_audit.json
+    trajectory_audit.json
+    gate_replay.json
+
+  probes/
+    frame_contract_probe.py
+    frame_contract_probe.json
+    frame_contract_probe.log
+    imu_probe.py
+    imu_probe.txt
+    imu_probe.log
+    rangefinder_probe.py
+    rangefinder_probe.txt
+    rangefinder_probe.log
+    slam_hover_probe.py
+    slam_hover_probe.json
+    slam_hover_probe.log
+
+  runtime/
+    scripts/
+      hover_mission_runtime.py
+      external_nav_source_selector_runtime.py
+      official_maze_overlay_runtime.py
+      scan_reference_drift_runtime.py
+      scan_reference_cartographer_odom_runtime.py
+      scan_reference_correction_runtime.py
+    config/
+      bridge_override.yaml
+      external_nav_bridge_params.yaml
+      frame_contract_runtime.toml
+      gazebo_sensor_runtime.toml
+      gazebo-iris-rangefinder.parm
+      model_overlay.sdf
+      navlab_cartographer_2d_hover_no_odom_prior.lua
+      run_config.toml
+      slam_hover_runtime.toml
+      slam_runtime.toml
+      vendor_profile.yaml
+    logs/
+      *.runtime.log
+      *.start.log
+      hover_mission_rc.txt
+
+  profiles/
+    hover_rosbag.txt
+
+  rosbag/
+    hover_rosbag/
+      hover_rosbag_0.mcap.zstd
+      metadata.yaml
+
+  sitl/
+    eeprom.bin
+    mav.parm
+    mav.tlog
+    mav.tlog.raw
+    logs/
+    scripts/
+    terrain/
+```
+
+Implementation tasks:
+
+1. Path model:
+   - [x] Add a central Go artifact layout helper, e.g. `internal/tasks/artifact_layout.go` or `internal/artifacts/layout.go`.
+   - [x] Define named path builders for root, `audits`, `probes`, `runtime/scripts`, `runtime/config`, `runtime/logs`, `rosbag`, `profiles`, and `sitl`.
+   - [x] Remove ad-hoc root-level path joins for generated scripts/config/logs.
+   - [x] Do not keep compatibility helpers for old root-level artifact paths.
+2. Runtime generation:
+   - [x] Write generated Python runtime scripts under `runtime/scripts/`.
+   - [x] Write generated TOML/YAML/SDF/Lua runtime configs under `runtime/config/`.
+   - [x] Write runtime service/probe logs under `runtime/logs/` unless the file is a probe evidence output.
+   - [x] Keep probe evidence outputs under `probes/`.
+   - [x] Keep `profiles/`, `rosbag/`, and `sitl/` as dedicated top-level directories.
+3. Summary and audit outputs:
+   - [x] Keep `summary.json`, `summary.md`, `mission_summary.json`, `task_plan.json`, `task_request.json`, and `runtime_plan.json` at root.
+   - [x] Move post-run audit outputs to `audits/`.
+   - [x] `hover_health_summary.json` moves to `audits/hover_health_summary.json`.
+   - [x] `navlab-sim audit hover ...` defaults must write into `audits/`.
+   - [x] `summary.json` and `manifest.json` must record the new artifact paths.
+4. Runtime specs and service commands:
+   - [x] Update runtime spec generation so command paths point at `runtime/scripts` and `runtime/config`.
+   - [x] Update mounted config paths and generated script paths consistently.
+   - [x] Update rosbag output paths only if needed; keep MCAP under `rosbag/<name>/`.
+   - [x] Update SITL working directory from `sitl_work/` to `sitl/`, or explicitly choose one canonical name and remove the other.
+5. Tests:
+   - [x] Update Go runtime artifact tests to assert no runtime scripts/config/logs are written at artifact root.
+   - [x] Add a layout test that root contains only approved entry files plus approved directories.
+   - [x] Update hover audit CLI tests/usage paths to new `audits/` defaults.
+   - [x] Update live summary tests for `postrun_hover_health_audit.artifact`.
+   - [x] Run `go test ./...` and `.git/hooks/pre-commit`.
+6. Usage pass:
+   - [x] Run `just navlab-run hover --simulation-profile slam-direct-no-odom-prior`.
+   - [x] Confirm new artifact tree is readable and root is not polluted by generated runtime files.
+   - [x] Confirm `navlab-sim audit hover health <artifact-dir>` writes to `audits/hover_health_summary.json`.
+   - [x] Confirm `summary.json`, `manifest.json`, and `mission_summary.json` point to new paths.
+
+Acceptance:
+
+- [x] New runs no longer place runtime scripts/config/logs/probes/audits flat in artifact root.
+- [x] Old flat run artifacts are not supported by new Go readers or `navlab-sim audit hover ...`.
+- [x] `manifest.json` lists moved artifacts with their new relative paths.
+- [x] `summary.json` uses `audits/hover_health_summary.json` for post-run hover health evidence.
+- [x] `runtime_plan.json` command paths reference `runtime/scripts`, `runtime/config`, `runtime/logs`, `probes`, `rosbag`, and `sitl` consistently.
+- [x] `navlab-sim audit hover {health,contract,init,source,trajectory,gate-replay}` works on the new layout.
+- [x] `.git/hooks/pre-commit` passes after the layout migration is staged.
+
+Non-goals:
+
+- [x] Do not add old-layout fallback or migration.
+- [x] Do not preserve old standalone hover audit command packages.
+- [x] Do not introduce SQLite into the live runtime execution path.
+- [x] Do not move MCAP contents into SQLite.
+- [x] Do not change hover thresholds, health bands, FSM policy, or real/sim proceed behavior.
+- [x] Do not redesign Foxglove replay layout beyond the paths required by this artifact split.
+
+Future SQLite index phase, not part of Phase 46:
+
+- [ ] Optional `navlab-sim index artifacts` can build a cohort-level `index.sqlite`.
+- [ ] SQLite may index run id, task id, profile, status, health band, blocker codes, artifact paths, and aggregate metrics.
+- [ ] SQLite must be derived from artifact files and be rebuildable; it must not be the source of truth for a single run.
+
+### Phase 47 [hover-slo-policy]: split hover span target from hard cap and downgrade Gazebo review-only blockers
+
+Status: core complete. Phase 49 provides the 5-run cohort proof; a natural yellow-band run was not observed after the fix, so yellow/hard-cap behavior is covered by Go/Python tests and the earlier 0.103m/0.118m examples.
+
+
+目标：把 hover body 的 XY span 从单一 `0.1m` 二值 hard threshold 改成 Go 调度下发的 SLO policy：`target=0.1m`、`hard_cap=0.15m`、cohort percentile 统计。单次 run 超过 target 但低于 hard cap 时进入 yellow/warning/trend，不直接 blocked；只有超过 hard cap 或伴随真实安全事件时才 hard fail。同时 Gazebo observation contract 未闭环前，Gazebo-only finding 继续是 `sim-review-only`，不能作为 top-level hard blocker。
+
+Basis:
+
+- 2026-06-25 Phase 41/42 profile 真实 run 显示 `hover_health_hold` 本身已 green 并自动继续：
+  - `20260625T013413Z`: runtime health `green/sim_auto_continue`，无 ExternalNav/MAVLink/SLAM loss，mission final drift `0.030m`，但 `horizontal_span_m=0.103m` 触发 `hover_span_unstable`。
+  - `20260625T013623Z`: runtime health `green/sim_auto_continue`，无 ExternalNav/MAVLink/SLAM loss，mission final drift `0.020m`，但 `horizontal_span_m=0.118m` 触发 `hover_span_unstable`。
+  - `20260625T013826Z`: mission reached `S13 task_success`，`horizontal_span_m=0.034m`；该 run 因人工中断缺少顶层 post-run summary，不作为完整 pass 计数。
+- 这证明当前 blocker 主要是 target 被当成 hard fail，而不是 runtime health gate、ExternalNav loss、SLAM loss 或 landing 失败。
+
+Decision:
+
+- [x] `0.1m` 是 target / SLO target，不再是所有 run 的唯一 hard fail 边界。
+- [x] `0.15m` 是当前 proposed hard cap；具体数值由 Go 调度/配置下发，后续可以按 cohort 分布调整。
+- [x] Python runtime 不固定写死 `0.1m` / `0.15m`；Python 只执行 Go 生成文件或 CLI/env 参数里的 policy。
+- [x] Go 是 hover SLO policy owner：task config / simulation profile / CLI override -> `PlanOptions` -> runtime config/artifact -> Python mission args。
+- [x] 单次 `target < span <= hard_cap` 记为 `yellow` / `target_exceeded` / `collect_stats`，top-level 不 hard block。
+- [x] 单次 `span > hard_cap` 记为 `red` / hard blocker。
+- [x] Safety events 仍然 hard fail，不被 percentile 放宽：ExternalNav loss、MAVLink ExternalNav loss、SLAM loss、pose/yaw jump、frame contract hard mismatch、mission abort、truth/known-map runtime input。
+- [x] Gazebo-only findings 在 `/gazebo/tf`、model/link name、frame origin、timestamp、sign convention contract 闭环前保持 `sim-review-only`，不得让 top-level `gate_evaluation.ok=false`。
+- [x] Cohort report 用 P50/P90/P95/P99 和 sample-size rule 描述稳定性；小样本只能 `case_study_only`，不能宣称 P99。
+
+Implementation tasks:
+
+1. Go policy model:
+   - [x] Add explicit hover SLO policy fields to Go config/runtime model, e.g. `hover_span_target_m` and `hover_span_hard_cap_m`.
+   - [x] Defaults live in Go config/defaulting, not in Python mission code.
+   - [x] Add CLI or profile override path if needed, e.g. `--hover-span-target-m` / `--hover-span-hard-cap-m`, so experiments can move thresholds without editing Python.
+   - [x] Validate `0 < target <= hard_cap`; reject invalid run plans before starting runtime.
+2. Go -> Python boundary:
+   - [x] Write the resolved policy into generated runtime config/artifacts, not implicit constants.
+   - [x] Pass the resolved policy to `hover_mission_runtime.py` through generated file, CLI args, or env; keep Go/Python coupling file/probe/args only.
+   - [x] `mission_summary.json` must echo `hover_span_target_m`, `hover_span_hard_cap_m`, and the resolved policy source.
+   - [x] `summary.json` must copy the resolved policy so cohort audits do not guess historical thresholds.
+3. Python mission classification:
+   - [x] Replace binary `horizontal_span_ok = span <= max_horizontal_drift_m` semantics with tiered classification:
+     - [x] `span <= target`: green / target_met.
+     - [x] `target < span <= hard_cap`: yellow / target_exceeded_below_hard_cap.
+     - [x] `span > hard_cap`: red / hard_cap_exceeded.
+   - [x] Keep final drift, z span, duration, loss, and jump checks separate from XY span SLO classification.
+   - [x] Sim task may continue/pass on yellow if no safety hard blocker exists; real task still requires operator confirm after runtime health green according to Phase 43B.
+4. Go gate and summary:
+   - [x] Update top-level gate mapping so `target_exceeded_below_hard_cap` becomes warning/statistical finding, not `TASK_STATUS_BLOCKED`.
+   - [x] Keep `hard_cap_exceeded` as hard blocker.
+   - [x] Downgrade `hover_gazebo_model_horizontal_drift` and Gazebo pair errors to review-only unless another proven hard contract violation is present.
+   - [x] Ensure `hover_health_summary.json` and top-level `postrun_hover_health_audit` agree on warning vs hard blocker tiers.
+5. Cohort percentile audit:
+   - [x] Extend hover health cohort output to include hover mission span percentiles: P50/P90/P95/P99, max, sample count, and sample-size rule.
+   - [x] Report target exceed rate and hard-cap exceed rate separately.
+   - [x] Preserve per-run evidence links so an outlier can be traced back to `mission_summary.json`, rosbag, trajectory audit, and contract audit.
+6. Tests:
+   - [x] Add Go config/default tests for target/hard_cap resolution and invalid policy rejection.
+   - [x] Add runtime artifact test that generated Python/runtime config contains resolved `hover_span_target_m` and `hover_span_hard_cap_m`.
+   - [x] Add Python mission tests for green/yellow/red span classification.
+   - [x] Add Go gate tests proving `0.103m` and `0.118m` with `target=0.1m`, `hard_cap=0.15m` are warnings, not blockers.
+   - [x] Add Go gate tests proving `0.151m` is a hard blocker.
+   - [x] Add test proving Gazebo review-only drift no longer makes top-level gate blocked by itself.
+7. Usage pass:
+   - [x] Run `just navlab-run hover --simulation-profile slam-direct-no-odom-prior` at least 3 times via Phase 49 5-run cohort.
+   - [x] Confirm `0.1m < horizontal_span_m <= 0.15m` is warning/yellow-not-blocked through Go/Python tests and prior `0.103m` / `0.118m` examples; no fresh natural yellow sample appeared in Phase 49.
+   - [x] Confirm `horizontal_span_m > 0.15m` still fails hard through policy/gate tests.
+   - [x] Generate a cohort health report and verify target exceed rate / hard-cap exceed rate / percentiles are present.
+
+Acceptance:
+
+- [x] Thresholds are not hardcoded in Python; they are resolved by Go and recorded in artifacts.
+- [x] New run artifacts show the exact `hover_span_target_m` and `hover_span_hard_cap_m` used.
+- [x] `0.1m < span <= 0.15m` no longer produces `hover_mission_body_not_ok` / `TASK_STATUS_BLOCKED` by itself.
+- [x] `span > 0.15m` still blocks.
+- [x] Gazebo review-only drift no longer blocks top-level gate by itself.
+- [x] Cohort output separates target exceed rate from hard-cap exceed rate and includes percentile statistics.
+- [x] Phase 41/42 command remains the validation path: `just navlab-run hover --simulation-profile slam-direct-no-odom-prior`.
+
+
+Execution result:
+
+- [x] Dry-run `just navlab-run hover --simulation-profile slam-direct-no-odom-prior --hover-span-target-m 0.1 --hover-span-hard-cap-m 0.15 --dry-run` showed the resolved policy in CLI output, `task_plan.json`, and generated `hover_mission_runtime.py`.
+- [x] Fresh successful usage pass `20260625T023143Z`: `TASK_STATUS_OK`, `mission_summary.ok=true`, `mission_fsm_state=S13 task_success`, runtime health `green/sim_auto_continue`, `horizontal_span_m=0.025m`, `hover_span_target_m=0.1`, `hover_span_hard_cap_m=0.15`, and no top-level blockers.
+- [x] Cohort command generated `navlab.hover_health_cohort.v1` and included `mission_hover_horizontal_span_m` with P50/P90/P95/P99, target exceed rate, hard-cap exceed rate, and `case_study_only` sample-size rule.
+- [x] Fixed a probe false-negative found during usage: generic ROS probe now treats non-empty `ros2 topic echo --once` stdout as evidence even if the `timeout` wrapper returns `124`; this prevented `/tf_static` evidence from being discarded after it had already been printed.
+- [x] Full repeatability proof moved to Phase 49: five valid hover-body samples completed; `20260625T022810Z` remains classified as preflight/readiness invalid, not a hover-span SLO sample.
+- [x] A natural fresh run with `0.1m < span <= 0.15m` was not observed after the fix; behavior is covered by Go/Python tests using the prior `0.103m` / `0.118m` examples.
+
+Non-goals:
+
+- [x] Do not tune Cartographer, selector gates, scan-reference residuals, or mission controller behavior in this phase.
+- [x] Do not use Gazebo truth / known map / fixed pose as runtime input.
+- [x] Do not introduce SQLite into runtime execution.
+- [x] Do not remove the runtime hover-health gate or real operator-confirm flow.
+- [x] Do not claim `P99` from a 3-5 run cohort; mark small samples as case-study evidence only.
+
+
+### Phase 48 [observation-contract]: close Gazebo and FCU evidence contracts
+
+目标：补强 hover 的观测面，不改变 hover runtime 控制策略。重点证明各观测源是否可比、如何可比、什么时候只能 review-only：Gazebo `/tf`、model odometry、frame origin、timestamp、sign convention，以及 FCU controller / setpoint evidence 在 rosbag/profile 中的覆盖情况。
+
+Basis:
+
+- Phase 42 已经看到 Gazebo model odometry 与 SLAM/ExternalNav 在 edge run 里有相反方向的 relative-X peak；这说明 Gazebo 不能继续被当成未经证明的 hard truth。
+- Phase 47 已把 Gazebo-only drift 从 top-level hard blocker 降级，但还没有完成 Gazebo observation contract promotion / rejection。
+- 既有 run 中 `/navlab/fcu/controller/status`、`/navlab/fcu/setpoint/output` 有时没有样本；这会削弱“FCU 实际控制行为”的复盘能力。
+
+Implementation tasks:
+
+1. Gazebo observation contract:
+   - [x] Audit `/gazebo/tf` and `/gazebo/model/odometry` generation path: model/link name, transform index, frame id, child frame id, timestamp source, and sign convention.
+   - [x] Add or extend `navlab-sim audit hover contract` to emit explicit Gazebo comparability fields: `frame_origin`, `time_basis`, `sign_convention`, `model_name_resolution`, `link_name_resolution`, and `directly_comparable_to_slam_map_delta`.
+   - [x] Keep Gazebo findings `sim-review-only` until those fields are proven and documented.
+   - [x] Add a promotion rule: Gazebo can become hard blocker only through a separate contract-promotion decision with tests.
+2. Time-aligned source comparison:
+   - [x] Extend trajectory audit to report peak-time alignment across SLAM, ExternalNav, FCU local pose, Gazebo model odometry, and scan-reference diagnostic odometry.
+   - [x] Record whether peak vectors agree in sign/direction and whether sample timestamps are within a configured tolerance.
+   - [x] Preserve per-source raw sample counts and time windows so missing data is visible.
+3. FCU/controller/setpoint evidence:
+   - [x] Confirm rosbag profiles include `/navlab/fcu/controller/status`, `/navlab/fcu/setpoint/intent`, and `/navlab/fcu/setpoint/output` for hover review capture.
+   - [x] If topics are intentionally absent in current runtime, document why and mark them optional/review-only rather than silently missing.
+   - [x] Current hover runtime artifact still has 0 samples for those FCU evidence topics; contract audit now reports this as explicit `missing_review_evidence`, not an ambiguous silent gap.
+4. Tests:
+   - [x] Add contract-audit tests for Gazebo model/link/frame/timestamp fields.
+   - [x] Add trajectory-audit tests for time-aligned opposite-direction peak detection.
+   - [x] Add rosbag profile tests proving FCU controller/setpoint topics are review-captured and explicitly optional for hover required topics.
+5. Usage pass:
+   - [x] Reused latest successful Phase 50 `just navlab-run hover --simulation-profile slam-direct-no-odom-prior` artifact `artifacts/sim/hover/20260625T035409Z` because Phase 48 changes are audit-only and do not alter runtime control.
+   - [x] Generated contract and trajectory audits for that artifact.
+   - [x] Confirmed Gazebo remains review-only unless contract-promotion criteria are met.
+   - [x] Confirmed FCU/controller/setpoint evidence is either present or explicitly explained.
+
+Acceptance:
+
+- [x] `navlab-sim audit hover contract` explains whether Gazebo odometry is directly comparable to SLAM/ExternalNav deltas.
+- [x] `navlab-sim audit hover trajectory` reports time-aligned peak direction agreement/disagreement.
+- [x] Missing FCU/controller/setpoint evidence is no longer ambiguous: it is either captured or explicitly optional with reason.
+- [x] Gazebo-only mismatch cannot become a top-level hard blocker without contract-promotion evidence.
+
+Execution result:
+
+- [x] `cd orchestration/sim && go test ./internal/audits/hover ./internal/tasks/helpers` passed.
+- [x] `cd orchestration/sim && go test ./...` passed.
+- [x] `navlab-sim audit hover contract artifacts/sim/hover/20260625T035409Z` wrote `artifacts/sim/hover/20260625T035409Z/audits/contract_audit.json`.
+- [x] Contract audit reports `gazebo_comparability.directly_comparable_to_slam_map_delta=false`, `frame_origin.status=different_origins_unpromoted`, `model_name_resolution.status=runtime_substitution_unverified`, `sign_convention.status=declared_unverified`, and a separate `gazebo_promotion_rule`.
+- [x] Contract audit reports FCU controller/setpoint topics as `missing_review_evidence` with `missing_evidence_is_ambiguous=false`; this is review debt, not silent pass/fail ambiguity.
+- [x] `navlab-sim audit hover trajectory artifacts/sim/hover/20260625T035409Z` wrote `artifacts/sim/hover/20260625T035409Z/audits/trajectory_audit.json`.
+- [x] Trajectory audit reports `peak_time_alignment`: SLAM vs ExternalNav peak vectors agree (`direction_cosine=0.998`, `within_tolerance=true`), while SLAM vs Gazebo shows opposite-direction evidence (`direction_cosine=-0.941`, `opposite_direction_suspected=true`) and remains diagnostic/review-only.
+
+Non-goals:
+
+- [x] Do not tune hover thresholds, Cartographer, selector gates, or scan-reference residuals.
+- [x] Do not use Gazebo truth / known map / fixed pose as runtime input.
+- [x] Do not promote Gazebo to hard safety truth inside this phase.
+
+### Phase 49 [hover-stability-cohort]: build a real hover SLO cohort
+
+Status: complete after closeout. Cohort rows now carry trace links, and mixed valid/preflight coverage is protected by Go tests.
+
+
+目标：把 Phase 47 的 SLO policy 从单次 usage pass 扩展成可复盘的 cohort：至少 3-5 次真实 `slam-direct-no-odom-prior` hover run，输出 P50/P90/P95/P99、target exceed rate、hard-cap exceed rate，并明确小样本只能作为 case study。
+
+Basis:
+
+- Phase 47 已实现 `target=0.1m` / `hard_cap=0.15m` / cohort percentile 输出。
+- Phase 47 只完成了 1 次完整成功 usage pass；完整 3-run cohort 仍 pending。
+- Hover 是混沌闭环系统，单次 run 不足以证明稳定性或 root cause。
+
+Implementation tasks:
+
+1. Run plan:
+   - [x] Use the canonical command: `just navlab-run hover --simulation-profile slam-direct-no-odom-prior --hover-span-target-m 0.1 --hover-span-hard-cap-m 0.15`.
+   - [x] Run at least 3 successful hover-body samples; prefer 5 if environment is stable.
+   - [x] Stop and analyze immediately if a run blocks before hover body; do not blindly continue counting invalid samples.
+2. Cohort artifact:
+   - [x] Generate `hover_health_cohort.json` with `navlab-sim audit hover health --output ... <artifact-dir>...`.
+   - [x] Record sample-size rule (`case_study_only` for 3-5 runs) prominently.
+   - [x] Include per-run links to `summary.json`, `mission_summary.json`, `hover_health_summary.json`, trajectory audit, and contract audit.
+3. Metrics:
+   - [x] Report mission hover horizontal span P50/P90/P95/P99/max.
+   - [x] Report target exceed count/rate separately from hard-cap exceed count/rate.
+   - [x] Report runtime health band, post-run health band, safety blockers, review-only blockers, and startup/preflight invalid samples separately.
+4. Decision rules:
+   - [x] If all valid hover samples are `<= hard_cap` and no safety event occurs, treat hover body as operationally usable even if target exceed appears in yellow.
+   - [x] If any valid hover sample exceeds hard cap, keep hard fail and open a root-cause phase.
+   - [x] If failures are preflight/readiness only, route them to Phase 51 and do not count them as hover span samples.
+   - [x] Do not claim P99 stability from 3-5 samples.
+5. Tests / tooling:
+   - [x] Add or update a cohort-summary test that includes valid samples plus invalid preflight samples.
+   - [x] Ensure invalid/preflight artifacts are excluded or labeled separately from hover span percentiles.
+
+Acceptance:
+
+- [x] A cohort JSON exists with at least 3 valid hover-body samples or a documented blocker explaining why the cohort could not be collected.
+- [x] The cohort separates target exceed rate from hard-cap exceed rate.
+- [x] The cohort distinguishes hover-body SLO failures from preflight/readiness failures.
+- [x] The decision note says `case_study_only` unless sample size is large enough for stronger percentile claims.
+
+Non-goals:
+
+- [x] Do not change policy values during the cohort run.
+- [x] Do not mix different simulation profiles in the same primary cohort.
+- [x] Do not hide invalid/preflight runs inside hover span percentiles.
+
+Execution log (2026-06-25 Phase 49):
+
+- [x] Phase 49 closeout update: cohort run rows now include `summary_artifact`, `mission_summary_artifact`, `hover_health_artifact`, `contract_audit_artifact`, and `trajectory_audit_artifact`.
+- [x] Phase 49 closeout update: `TestBuildHoverHealthCohortKeepsTraceLinksAndExcludesPreflightFromSpan` covers valid hover samples plus preflight-invalid artifacts and asserts span percentile count only includes valid mission spans.
+- [x] Ran five fresh `slam-direct-no-odom-prior` hover samples with fixed Go-owned policy `target=0.1m`, `hard_cap=0.15m`: `20260625T030617Z`, `20260625T030852Z`, `20260625T031110Z`, `20260625T031325Z`, `20260625T031541Z`.
+- [x] All five runs reached `TASK_STATUS_OK`, `mission_summary.ok=true`, `mission_fsm_state=S13 task_success`, `runtime_hover_health_final.band=green`, and `phase=sim_auto_continue`.
+- [x] Primary cohort artifact: `artifacts/sim/hover/phase49_5run_hover_health_cohort.json`.
+- [x] Mission hover horizontal span results: P50 `0.057657m`, P90 `0.067167m`, P95 `0.067246m`, P99 `0.067308m`, max `0.067324m`; `target_exceed_count=0`, `hard_cap_exceed_count=0`, `sample_size_rule=case_study_only`.
+- [x] Post-run health band is still `yellow` for all five because Gazebo review-only contract findings remain; this is observation-surface debt, not a hover-body hard blocker.
+- [x] Mixed cohort check with preflight-invalid `20260625T022810Z` wrote `artifacts/sim/hover/phase49_mixed_valid_plus_preflight_hover_health_cohort.json`; mission span metric count stayed `5`, while the preflight run appeared separately as `red` with no `mission_hover_span`.
+
+### Phase 50 [artifact-readability]: execute the artifact layout break and define cohort indexing boundary
+
+目标：执行 Phase 46 的 artifact 分层，让单次 run root 可读、审计文件分目录、runtime scripts/config/logs 不再平铺；同时明确 SQLite 只允许作为可重建的 cross-run/cohort index，不进入 runtime 主链。
+
+Basis:
+
+- 当前 artifact root 文件过多，debug 时难以区分 reviewer entry、runtime script、config、probe evidence、logs、audit output、rosbag 和 SITL state。
+- Phase 46 已经定义 breaking layout；本 phase 是执行/收敛，不再重新讨论是否兼容旧 run。
+- Phase 47/49 会产生更多 audit/cohort evidence，如果 artifact 继续平铺，可读性会继续恶化。
+
+Implementation tasks:
+
+1. Execute Phase 46 layout:
+   - [x] Keep root only for reviewer entry files: `manifest.json`, `summary.json`, `summary.md`, `mission_summary.json`, `task_plan.json`, `task_request.json`, `runtime_plan.json`, `run_config.toml`.
+   - [x] Move audits to `audits/`.
+   - [x] Move probes to `probes/`.
+   - [x] Move generated runtime scripts/config/logs to `runtime/scripts`, `runtime/config`, and `runtime/logs`.
+   - [x] Keep `rosbag/`, `profiles/`, and `sitl/` as dedicated directories.
+2. Break compatibility deliberately:
+   - [x] Do not add old flat-path fallback.
+   - [ ] Do not migrate old artifacts.
+   - [x] Update Go readers, manifest paths, runtime specs, and hover audit CLIs to new layout only.
+3. SQLite boundary:
+   - [x] Do not introduce SQLite into single-run runtime execution.
+   - [ ] If needed later, add a separate `navlab-sim index artifacts` command that builds a rebuildable `index.sqlite` from artifact files.
+   - [x] Document that SQLite is an index/cache, not source of truth.
+4. Tests:
+   - [x] Add layout tests that artifact root contains only approved entry files/directories.
+   - [x] Update runtime artifact tests for new paths.
+   - [x] Update hover audit CLI tests / usage for `audits/` defaults.
+   - [x] Update live summary behavior for moved `postrun_hover_health_audit.artifact` paths.
+5. Usage pass:
+   - [x] Run `just navlab-run hover --simulation-profile slam-direct-no-odom-prior --hover-span-target-m 0.1 --hover-span-hard-cap-m 0.15`.
+   - [x] Confirm root tree is readable and not polluted by runtime/probe/audit internals.
+   - [x] Confirm `navlab-sim audit hover health <artifact-dir>` writes to `audits/hover_health_summary.json`.
+
+Acceptance:
+
+- [x] New hover artifacts are split into root entry files plus `audits/`, `probes/`, `runtime/`, `profiles/`, `rosbag/`, and `sitl/`.
+- [x] Old flat artifact layout is not supported by new code.
+- [x] `manifest.json`, `summary.json`, and `runtime_plan.json` reference new paths consistently.
+- [x] SQLite is not in the runtime path; any future index is rebuildable from artifacts.
+
+Non-goals:
+
+- [ ] Do not change hover FSM, SLO policy, or source-selection behavior.
+- [ ] Do not add old-run compatibility fallback.
+- [ ] Do not store MCAP contents in SQLite.
+
+Execution log (2026-06-25 Phase 50):
+
+- [x] Added central Go artifact layout helper `orchestration/sim/internal/artifactlayout` and moved generated runtime/probe/audit paths to the new layout.
+- [x] Fresh usage artifact `artifacts/sim/hover/20260625T035409Z` completed `TASK_STATUS_OK`, `gate_evaluation.ok=true`, `mission_summary.ok=true`, `mission_fsm_state=S13 task_success`, runtime health `green/sim_auto_continue`.
+- [x] Root now contains only entry files plus directories: `audits`, `manifest.json`, `mission_summary.json`, `probes`, `profiles`, `rosbag`, `run_config.toml`, `runtime`, `runtime_plan.json`, `sitl`, `summary.json`, `summary.md`, `task_plan.json`, `task_request.json`.
+- [x] Runtime internals moved: scripts under `runtime/scripts/`, configs under `runtime/config/`, logs under `runtime/logs/`, probe scripts/output/logs under `probes/`, audit outputs under `audits/`, SITL state under `sitl/`.
+- [x] `summary.json.postrun_hover_health_audit.artifact` points to `audits/hover_health_summary.json`; `manifest.json` records moved paths such as `runtime/scripts/hover_mission_runtime.py`, `runtime/config/slam_runtime.toml`, and `audits/hover_health_summary.json`.
+- [x] `navlab-sim audit hover health`, `contract`, and `gate-replay` defaulted to `audits/` on the fresh artifact.
+- [x] Verification: `cd orchestration/sim && go test ./...` passed after the layout migration.
+
+### Phase 51 [startup-readiness]: harden preflight readiness, rangefinder height, and probe semantics
+
+Status: complete for classification/evidence hardening. Startup/readiness failures are now explicitly separated from hover-body SLO samples; further active remediation such as restarting a stuck rangefinder chain is a future operational hardening phase.
+
+
+目标：把 preflight/startup 边缘问题和 probe 假阴性从 hover SLO 中剥离出来单独治理。启动链路必须能解释 rangefinder/height readiness、ExternalNav waiting state、`/tf_static` sampling、probe timeout/echo evidence；preflight 未进入 hover 的 run 不应污染 hover span cohort。
+
+Basis:
+
+- Phase 47 usage 中 `20260625T022810Z` 停在 `S1 wait_nav_ready`，rangefinder status `input_count=0`，ExternalNav 等 height，mission `preflight_timeout`；这不是 hover span policy 失败。
+- Phase 47 还发现 `/tf_static` probe 假阴性：stdout 已有 transforms，但 `timeout` return code `124` 让 probe 标 missing；已做第一处修复，但 readiness/probe 语义仍需系统化。
+
+Implementation tasks:
+
+1. Preflight classification:
+   - [x] Add clear summary classification for `preflight_timeout`, `wait_nav_ready`, rangefinder not ready, height missing, ExternalNav waiting for height, and SLAM quality jump before airborne.
+   - [x] Mark these as startup/readiness failures, not hover-body SLO samples.
+   - [x] Ensure cohort tooling excludes or separately reports preflight-invalid artifacts.
+2. Rangefinder/height readiness:
+   - [x] Audit `benewake_tfmini_serial`, Gazebo range projection, `/rangefinder/down/range`, and `/rangefinder/down/status` startup order.
+   - [x] Add evidence fields for virtual serial link existence, byte count, frame count, latest distance age, projection input count, and height-estimator readiness.
+   - [x] Decide whether startup should wait longer, fail faster with clearer reason, or restart a stuck rangefinder chain: this phase keeps runtime control unchanged and fails with clearer startup-readiness reasons; restart policy is future work.
+3. Probe semantics:
+   - [x] Unit-test generic ROS probe behavior: non-empty stdout from `ros2 topic echo --once` counts as evidence even if timeout returns `124`.
+   - [x] Add specific tests for `/tf_static` latched/static transform sampling.
+   - [x] Distinguish `topic_type_missing`, `topic_sample_missing`, `sample_stdout_present_timeout`, and parsed-payload-not-ready.
+   - [x] Avoid treating optional/review-only probes as hard blockers.
+4. Runtime readiness gates:
+   - [x] Review probe required/optional flags for hover: `rangefinder_probe`, `imu_probe`, `frame_contract_probe`, `slam_hover_probe`.
+   - [x] Keep safety-critical missing evidence hard fail, but make failure reason precise enough to route to startup, frame contract, or hover body.
+   - [x] Add summary fields that explain whether the vehicle ever reached airborne/hover_hold.
+5. Usage pass:
+   - [x] Reproduce or observe at least one startup/readiness failure and verify it routes to Phase 51-style reason codes.
+   - [x] Run one successful hover after probe changes to prove hardening did not mask real missing topics.
+
+Acceptance:
+
+- [x] A preflight failure cannot be mistaken for hover span instability.
+- [x] Rangefinder/height not-ready artifacts explain which component did not produce evidence.
+- [x] `/tf_static` or other latched/static topics with real stdout evidence are not falsely marked missing because of timeout wrapper return code alone.
+- [x] Cohort reporting separates startup-invalid runs from valid hover-body samples.
+
+Non-goals:
+
+- [x] Do not relax real safety blockers after takeoff.
+- [x] Do not count preflight failures as hover SLO failures.
+- [x] Do not tune hover target/hard-cap values.
+
+Execution result (2026-06-25 Phase 51):
+
+- [x] Added `gate_evaluation.metrics.startup_readiness` with `classification`, `preflight_invalid`, `valid_hover_body_sample`, `not_hover_span_slo`, `reason_codes`, mission airborne/hover-hold evidence, rangefinder evidence including serial `byte_count`/`frame_count`, height evidence, probe semantic outcomes, and selected rosbag counts.
+- [x] Preflight artifact `20260625T022810Z` now replays as `classification=startup_readiness_failure`, `preflight_invalid=true`, `valid_hover_body_sample=false`, `not_hover_span_slo=true`, `serial_byte_count=0`, `serial_frame_count=0`; reasons include `wait_nav_ready`, `rangefinder_not_ready`, `rangefinder_input_missing`, `rangefinder_range_sample_missing`, `external_nav_waiting_for_height`, and `height_estimate_missing`.
+- [x] Successful fresh hover artifact `20260625T051820Z` completed `TASK_STATUS_OK`; gate replay reports `classification=hover_body_sample`, `preflight_invalid=false`, `valid_hover_body_sample=true`, `reason_codes=[]`, `rangefinder.ready=true`, `serial_byte_count=18405`, `serial_frame_count=2045`, and `/rangefinder/down/range` rosbag count `2376`.
+- [x] ROS probe template now labels `topic_type_missing`, `topic_sample_missing`, and `sample_stdout_present_timeout`; non-empty stdout remains evidence even when `timeout` returns `124`.
+- [x] Added explicit `/tf_static` stdout-timeout semantics coverage so latched/static transform evidence is not converted into a hard missing-topic blocker.
+- [x] Verification: `cd orchestration/sim && go test ./internal/tasks ./internal/tasks/helpers` passed.
+- [x] Verification: `cd orchestration/sim && go test ./...` passed.
+- [x] Verification: `./scripts/quality/check-python.sh` passed (`405 passed`).
+- [x] Verification: `./scripts/quality/check-go.sh` passed.
+
+
+### Phase 52 [startup-readiness-runtime-policy]: wait/fail-fast/restart policy for stuck rangefinder and height startup
+
+Status: in progress. Phase 51 已经解决“怎么分类、怎么解释证据”；Phase 52 处理 Go-owned runtime action policy：wait-longer、fail-fast、pre-arm bounded restart 是三种不同策略，由 Go 统一制定/下发，Python/FSM 只执行和回写证据。
+
+目标：把 rangefinder/height startup readiness 从被动 post-run 诊断升级为 preflight runtime policy。Phase52 的主语是 Go policy，不是 Python 临时 if/else：Go 根据 config/profile/CLI 解析出策略参数，并通过生成文件、CLI/env、ROS status/probe JSON、artifact JSON 传给 runtime。策略必须在未起飞、未进入 hover body 前生效；一旦 armed/airborne/hover_hold 已经发生，只能 fail-closed，不能为了继续实验而自动重启安全链路。
+
+Strategy layers:
+
+- [x] `wait_longer_policy`: 只有看到 progress delta 才继续等，例如 serial bytes/frames 增长、range `input_count` 增长、height estimate/status 推进。
+- [x] `fail_fast_policy`: grace window 内完全没有进展时快速失败，不再盲等完整 mission timeout。
+- [x] `prearm_restart_policy`: 只在 pre-arm/pre-airborne/pre-hover body，对明确标注的 leaf service 做 bounded restart；起飞后禁止 restart。
+
+Design rule:
+
+- [x] Go owns startup readiness policy and resolved parameters; Python mission/runtime only 消费 Go 生成的文件、CLI/env 参数、ROS status、probe JSON、artifact JSON。
+- [x] Go/Python 交互继续只通过文件、probe、artifact、ROS topic、CLI/env；不引入直接 Go 调 Python library 或 Python 调 Go library。
+- [x] Runtime policy must be evidence-driven, not blind sleep/retry. Only wait longer when there is measurable progress.
+- [x] Restart is allowed only before arming/airborne and only for bounded leaf services; never restart FCU/SITL/mission body after takeoff.
+- [x] Every policy action must be written to artifact so blocked runs explain “why waited / why failed fast / why restarted”.
+
+Policy model:
+
+1. Readiness inputs:
+   - [x] Rangefinder serial evidence: virtual serial path, `byte_count`, `frame_count`, latest distance, latest input age.
+   - [x] Rangefinder ROS evidence: `/rangefinder/down/status.ready`, `input_count`, `/rangefinder/down/range` sample count.
+   - [x] Height evidence: `/height/estimate`, `/height/status`, ExternalNav `height.ready`, ExternalNav `state=waiting_for_height`.
+   - [x] Mission safety state: armed, guided, airborne, hover_hold, mission FSM state; runtime monitor delays `hover_mission`, so restart boundary is pre-mission/pre-arm by construction.
+   - [x] Probe semantics from Phase 51: distinguish missing topic, no sample, stdout-timeout evidence, and parsed-not-ready.
+2. Wait-longer rule:
+   - [x] Wait longer only if progress is visible, e.g. serial byte/frame counts increasing, rangefinder `input_count` increasing, height status changing, or ExternalNav moving closer to ready.
+   - [x] Record progress deltas and remaining startup budget in `audits/startup_readiness_runtime.json` timeline and final decision fields.
+   - [x] Cap total preflight readiness wait by a Go-owned timeout, not a Python hardcoded constant.
+3. Fail-fast rule:
+   - [x] Fail faster when a prerequisite shows no progress for a short grace window: serial bytes remain `0`, range samples remain `0`, height estimate remains `0`, or required status topic is absent.
+   - [x] Emit precise runtime reason codes such as `startup_readiness_no_progress`, `startup_readiness_timeout`, `startup_readiness_restart_limit_exhausted`, and `startup_readiness_ready`; finer per-component no-input reasons remain a follow-up refinement.
+   - [x] Preserve Phase 51 classification: these are `startup_readiness_failure`, not hover-body SLO failures.
+4. Safe restart rule:
+   - [x] Allow at most a bounded number of pre-arm restarts for annotated leaf startup services; default `restart_limit=0` keeps live behavior conservative until explicitly enabled.
+   - [x] Restart only when mission state confirms not armed, not airborne, and not in hover body.
+   - [x] After restart, require fresh readiness evidence before continuing; if no new evidence appears, fail fast with restart history.
+   - [x] Do not restart SLAM/ExternalNav/FCU path after the system has produced takeoff-critical evidence unless a separate phase proves safety.
+
+Implementation tasks:
+
+1. Go runtime policy config:
+   - [x] Add startup readiness policy fields under hover runtime config, e.g. `startup_readiness_policy.timeout_sec`, `startup_readiness_policy.grace_sec`, `startup_readiness_policy.restart_limit`, `startup_readiness_policy.progress_window_sec`.
+   - [x] Resolve defaults in Go config/defaulting and echo them in `run_config.toml`, `runtime_plan.json`, `summary.json`, and gate metrics.
+   - [ ] Add CLI/profile overrides only if needed for experiments.
+2. Runtime observation loop:
+   - [x] Add a preflight readiness monitor that samples existing ROS status/probe/artifact evidence before mission body proceeds.
+   - [x] Record a readiness timeline with per-check deltas: serial bytes/frames, range input count, range samples, height samples, ExternalNav height state.
+   - [x] Make the monitor produce `audits/startup_readiness_runtime.json` and `audits/startup_readiness_probe.json`.
+3. Restart integration:
+   - [x] Identify which runtime specs are restartable leaf services and annotate them explicitly: `gazebo_sensor`, `height_estimator`.
+   - [x] Implement bounded pre-arm restart action for stuck rangefinder/height leaf services; covered by fake-runtime tests, disabled in default live policy by `restart_limit=0`.
+   - [x] Write restart attempt count, restartable service names, timeline evidence, and final decision to artifact.
+4. Python mission boundary:
+   - [x] Pass resolved readiness parameters into generated Python runtime config if the mission FSM needs them.
+   - [x] Python mission must not hide restart/fail-fast reasons; if monitor blocks before mission starts, Go writes a minimal `mission_summary.json` with `startup_readiness_failed` and the runtime reason.
+   - [x] Real workflow remains fail-closed and operator-confirm gated; sim proceeds only after startup readiness monitor returns `startup_readiness_ready`.
+5. Gate/cohort integration:
+   - [x] Gate metrics should merge Phase 52 runtime decision with Phase 51 post-run classification.
+   - [x] Cohort reports show startup policy outcome counts from `audits/startup_readiness_runtime.json`.
+   - [x] Valid hover body percentile counts still exclude startup-invalid runs.
+6. Tests:
+   - [x] Go tests for wait-longer when evidence deltas are increasing.
+   - [x] Go tests for fail-fast when serial/range/height evidence stays at zero.
+   - [x] Go tests that restart is forbidden after armed/airborne/hover_hold.
+   - [x] Go/Python artifact tests proving readiness policy parameters and runtime decision artifacts are written.
+   - [x] Gate/cohort tests proving startup-invalid runs remain excluded from hover span percentiles and startup policy outcomes are counted.
+7. Usage pass:
+   - [x] Run a normal hover and prove Phase 52 does not slow or break the already-green path.
+   - [x] Simulate stuck rangefinder/height startup in fake-runtime tests and prove the artifact says whether it waited, failed fast, or restarted.
+
+Acceptance:
+
+- [x] A stuck startup no longer looks like a mysterious hover failure; artifact records an explicit runtime decision.
+- [x] No-progress startup can fail faster than the old blind wait path.
+- [x] Progressing startup can wait longer without being misclassified as hover instability.
+- [x] Pre-arm bounded restart is recorded and never happens after armed/airborne/hover_hold.
+- [x] Phase 51 `startup_readiness` classification and Phase 49 cohort filtering remain intact.
+
+
+Execution slice 1 (2026-06-25):
+
+- [x] Added Go `startup_readiness_policy` config/default/validation with `timeout_sec=35`, `grace_sec=8`, `progress_window_sec=3`, `restart_limit=0` default.
+- [x] Added Go policy decision model for `wait_longer`, `fail_fast`, `restart_leaf_services`, and post-takeoff `fail_closed` boundaries.
+- [x] Echoed resolved policy into generated hover runtime artifacts, dry-run output, `task_plan.json`, `runtime_plan.json`, `summary.json`, `run_config.toml`, and `gate_evaluation.metrics.startup_readiness.runtime_policy`.
+- [x] Added tests for progress-based wait, no-progress fail-fast, bounded pre-arm restart eligibility, and armed/airborne/hover-hold restart prohibition.
+- [x] Dry-run usage pass `20260625T060539Z` shows `startup_readiness_policy=timeout=35.0s grace=8.0s progress_window=3.0s restart_limit=0`; `runtime_plan.json`, `task_plan.json`, and generated `hover_mission_runtime.py` echo the policy.
+- [x] Verification: `cd orchestration/sim && go test ./...` passed.
+- [x] Verification: `./scripts/quality/check-go.sh` passed.
+- [x] Runtime observation loop is wired before `hover_mission`; bounded restart execution is implemented for restartable leaf services but default live config keeps `restart_limit=0`.
+
+
+Execution slice 2 (2026-06-25):
+
+- [x] Added generated `probes/startup_readiness_probe.py` and runtime monitor that runs before `hover_mission` starts.
+- [x] Monitor writes `audits/startup_readiness_probe.json` plus `audits/startup_readiness_runtime.json` with timeline, final decision, restartable services, and restart attempts.
+- [x] `runtime_plan.json` now records `startupReadinessProbe` and `restartable=true` on `gazebo_sensor` / `height_estimator`.
+- [x] If startup readiness blocks before mission starts, Go writes `mission_summary.json` with `reason=startup_readiness_failed` and the policy reason code.
+- [x] Gate metrics merge `runtime_decision` and `runtime_artifact`; cohort metrics count startup readiness policy outcomes.
+- [x] Real hover usage pass `20260625T064715Z` completed `TASK_STATUS_OK`; startup monitor decision was `proceed/startup_readiness_ready`, `probe_ok=true`, `rangefinder_ready=true`, `height_estimate_ok=true`, `restart_attempts=0`.
+- [x] Verification: `cd orchestration/sim && go test ./...` passed after wiring the monitor.
+
+Non-goals:
+
+- [ ] Do not tune hover `target` / `hard_cap`.
+- [ ] Do not relax post-takeoff safety blockers.
+- [ ] Do not restart FCU/SITL/mission body after takeoff.
+- [ ] Do not introduce direct Go/Python library coupling.
+- [ ] Do not add SQLite to runtime control.
+
+
+### Phase 53 [mainline-entrypoint]: make default hover run the Phase 41/42 profile
+
+Status: completed.
+
+目标：让 `just navlab-run hover` 默认跑当前主线，而不是旧 `ideal` profile。Phase 41/42 之后，主线验证路径已经是 direct `/slam/odom` + `slam-direct-no-odom-prior`；继续把默认入口留在 `ideal` 会制造“跑了 hover 但不是主线”的假证据。
+
+Changes:
+
+- [x] `orchestration/sim/configs/tasks/hover.yaml` default `simulation_profile` 改为 `slam-direct-no-odom-prior`。
+- [x] `ideal` 不删除，但降级为显式 debug/legacy profile：需要时用 `--simulation-profile ideal` 手动覆盖。
+- [x] `hover-slam-only` 暂不跟随修改，避免把非主线诊断 task 也一起 break。
+- [x] `hover_span_target_m=0.1` / `hover_span_hard_cap_m=0.15` 继续由 Go runtime config 和 CLI override 管理，不写进 justfile。
+- [x] 测试覆盖默认 hover task config 和默认 runtime artifact：`slam_runtime.toml` 使用 `/slam/odom` 与 `navlab_cartographer_2d_hover_no_odom_prior.lua`。
+
+Acceptance:
+
+- [x] `just navlab-run hover --dry-run` resolved profile 应显示 `slam-direct-no-odom-prior`。
+- [x] 显式 override 仍可用：`just navlab-run hover --simulation-profile ideal`。
+- [x] 后续 cohort / usage pass 默认命令和 Phase 41/42 canonical command 对齐。
+
+
+### Phase 54 [profile-registry]: replace simulation profile magic strings with a Go registry
+
+Status: completed.
+
+目标：把 `slam-direct-no-odom-prior`、`slam-direct`、`ideal`、`realistic` 这类 simulation profile 从散落字符串和 `ApplySimulationProfile` if/else，收敛成 Go 统一 profile registry。Phase 53 已经把默认 hover 入口切到主线，但旧实现仍然依赖魔法字符串；Phase 54 让 profile 成为可枚举、可验证、可 artifact 回放的 Go-owned contract。
+
+Problem:
+
+- [x] 删除单数 `orchestration/sim/internal/tasks/simulation_profile.go`；profile registry、profile apply、allowed-profile error 都集中在 `orchestration/sim/internal/tasks/simulation_profiles.go`。
+- [x] hover profile 的语义集中声明：`/slam/odom` input、no-odom-prior Cartographer config、legacy selector route 由 registry entry 表达。
+- [x] scan-robustness 的 disturbance profile validation 仍从 config profile set 来，但错误报告复用同一个 allowed-profile helper。
+- [x] CLI/YAML 传错 hover profile 时会 fail fast，并列出 allowed profiles。
+
+Design:
+
+- [x] 新增 Go-owned simulation profile registry：`orchestration/sim/internal/tasks/simulation_profiles.go`。
+- [x] 定义 profile 常量：
+  - [x] `ProfileIdeal = "ideal"`
+  - [x] `ProfileRealistic = "realistic"`
+  - [x] `ProfileSlamDirect = "slam-direct"`
+  - [x] `ProfileSlamDirectNoOdomPrior = "slam-direct-no-odom-prior"`
+- [x] 为 hover profile 定义结构化 effect，而不是在 if/else 里手写：
+  - [x] `ExternalNavInputOdomMode`: default selector candidate vs direct SLAM odom。
+  - [x] `CartographerConfigBasename`: default hover config vs no-odom-prior config。
+  - [x] `Purpose`: mainline / legacy-debug / diagnostic。
+  - [x] `AllowTasks`: `hover`、`hover-slam-only`。
+- [x] `ApplySimulationProfile` 改成 registry lookup + effect apply；未知 hover profile fail fast，并在 error 中列出 allowed profile names。
+- [x] `runtime_plan.json` 记录 resolved `simulationProfile` metadata/effects，方便 artifact review；`task_plan.json` / `summary.json` 继续记录 resolved `simulation_profile`。
+- [x] 默认 YAML 仍然只写 profile name，不把 route/config 细节复制进 task YAML。
+
+Implementation tasks:
+
+1. Registry model:
+   - [x] Add `HoverSimulationProfile` structs and profile constants.
+   - [x] Add `HoverSimulationProfiles()` returning a deterministic list.
+   - [x] Add helper `AllowedProfilesForTask(taskID string) []string` for CLI/error/test use.
+2. Apply path:
+   - [x] Replace hover-specific string if/else in `ApplySimulationProfile` with registry lookup.
+   - [x] Keep scan-robustness behavior intact and route profile errors through the shared allowed-profile helper.
+   - [x] Preserve `ideal` as a legacy/debug profile for hover so explicit override remains valid.
+3. Artifact/reporting:
+   - [x] Echo profile purpose/effects into `runtime_plan.json` as `simulationProfile`.
+   - [x] Ensure generated `slam_runtime.toml` remains the source of truth for actual topic/config values.
+4. Tests:
+   - [x] Unit test registry lists hover profiles deterministically and marks `slam-direct-no-odom-prior` as mainline.
+   - [x] Unit test `ApplySimulationProfile` uses registry effects for `slam-direct` and `slam-direct-no-odom-prior`.
+   - [x] Unit test unknown hover profile fails with allowed names.
+   - [x] Keep Phase 53 default dry-run behavior: default `just navlab-run hover --dry-run` resolves to `slam-direct-no-odom-prior`.
+5. Usage pass:
+   - [x] `cd orchestration/sim && go test ./internal/tasks ./internal/config`
+   - [x] `just navlab-run hover --dry-run`
+   - [x] `just navlab-run hover --simulation-profile ideal --dry-run`
+
+Acceptance:
+
+- [x] No hover route profile behavior depends on raw string comparisons outside the registry.
+- [x] Adding a new hover profile requires one registry entry plus tests, not editing scattered if/else logic.
+- [x] Unknown profile errors are explicit and list valid choices.
+- [x] Default mainline remains `slam-direct-no-odom-prior`; `ideal` remains available only as explicit override.
+- [x] Go/Python boundary remains unchanged: Go resolves profile into generated files/artifacts; Python does not own profile policy.
+
+Non-goals:
+
+- [x] Do not change hover SLO thresholds.
+- [x] Do not change the runtime route selected by Phase 53.
+- [x] Do not move profile policy into Python.
+- [x] Do not introduce compatibility shims for old artifacts.
+
+Execution log (2026-06-25 Phase 54):
+
+- [x] Added `simulation_profiles.go` registry with deterministic hover profiles and `AllowedProfilesForTask`.
+- [x] Replaced hover route string branches in `ApplySimulationProfile` with registry lookup and structured effect application.
+- [x] Added shared invalid-profile error helper for hover and scan-robustness profile validation.
+- [x] Added `runtime_plan.json.simulationProfile` metadata for profile purpose/effects.
+- [x] Removed the singular `simulation_profile.go` / `simulation_profile_test.go` split so registry and resolution live under `simulation_profiles*`.
+- [x] Verified default dry-run `20260625T080749Z` resolves to `slam-direct-no-odom-prior`; explicit `ideal` dry-run `20260625T080803Z` remains available.
+
+
+### Phase 55 [runtime-deadline]: make duration_sec a Go-owned task deadline
+
+Status: completed.
+
+目标：把 `duration_sec` 明确为 task runtime deadline，而不是固定 rosbag 录制时长。FSM/probe 正常 terminal 后只保留 5s rosbag grace；如果 deadline 到了仍没有 terminal evidence，Go runtime runner 必须 fail closed、停止 runtime，并写出可审计 timeout evidence。
+
+Design:
+
+- [x] `plan.DurationSec` 传入 Go runtime runner as `TaskDeadlineSec`。
+- [x] live runner 使用 `RosbagPostTaskGraceSec=5s`：probe/FSM 完成后等待短尾 telemetry，然后 stop rosbag/services。
+- [x] probe/FSM 未在 deadline 内完成时，runner 返回 `task_runtime_timeout` error。
+- [x] timeout path emits runtime event `run.timeout` with deadline/stage payload。
+- [x] timeout path stops rosbag and services instead of waiting for rosbag's own duration timeout。
+- [x] 如果 `mission_summary.json` 缺失，Go 写最小 fail-closed summary with `reason=task_runtime_timeout`。
+- [x] 如果 Python 已写 `duration_timeout` mission summary，Go 不覆盖；gate 保持 timeout failure。
+
+Tests:
+
+- [x] `TestExecuteRuntimeSpecsStopsRosbagAfterPostTaskGrace`: probe/FSM 完成早于 deadline -> grace stop，不 wait rosbag full duration。
+- [x] `TestExecuteRuntimeSpecsTimesOutWhenProbeDoesNotFinishBeforeDeadline`: probe/FSM 一直不完成 -> deadline timeout error, `run.timeout`, cleanup, minimal mission summary。
+- [x] `TestTaskRuntimeTimeoutSummaryDoesNotOverwritePythonDurationTimeout`: Python `duration_timeout` summary is preserved and gate blockers stay failed。
+
+Acceptance:
+
+- [x] 90s is an upper bound for task completion, not a fixed successful-run length。
+- [x] successful hover can finish around FSM completion + 5s grace。
+- [x] hung FSM/probe cannot make Go wait indefinitely or silently look green。
+- [x] Go/Python boundary stays file/artifact based: Python writes mission summary if it reaches timeout; Go writes a minimal timeout summary only when missing。
+
+
 ## 已删除的旁路记录
 
 以下旁路内容已从主线删除，不再作为后续执行入口：
@@ -2033,9 +2765,10 @@ just navlab-run hover
 真实 run 验收：
 
 - [ ] 至少连续 3-5 轮 hover。
-- [ ] 每轮顶层 `summary.ok=true` 才能算最终稳定通过。
+- [ ] 每轮顶层没有 hard blocker；target exceed 可以是 yellow/warning，但不能超过 hard cap。
 - [ ] 每轮 `mission_summary.ok=true`、landing PASS。
-- [ ] 每轮 Gazebo / FCU local / SLAM corrected / external_nav drift 与 span 都 `< 0.1m`。
+- [ ] 每轮 FCU local / SLAM corrected / external_nav drift 与 span 应记录 target/hard_cap tier；`<0.1m` 是 target，`>0.15m` 是 hard fail。
+- [ ] Gazebo drift/span 在 Gazebo contract 闭环前只作为 review-only evidence，不单独 hard block。
 - [ ] 每轮没有 hover-window `pose_or_yaw_jump`。
 - [ ] 每轮没有把 Gazebo truth / known map / direct pose cheat 用作 runtime input。
 

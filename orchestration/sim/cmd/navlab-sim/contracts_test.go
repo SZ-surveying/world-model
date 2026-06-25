@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/config"
 	"navlab/orchestration-sim/internal/tasks"
 	"navlab/orchestration-sim/internal/tasks/helpers"
@@ -42,8 +43,12 @@ func TestPrepareTaskRunEmitsGoldenCompatibleContractJSON(t *testing.T) {
 	assertEqualField(t, runtimePlan, goldenRuntimePlan, "taskId")
 	assertFirstNamedObjectField(t, runtimePlan, "services", "official_baseline", "backend", "RUNTIME_BACKEND_DOCKER")
 	assertFirstNamedObjectField(t, runtimePlan, "probes", "slam_hover_probe", "backend", "RUNTIME_BACKEND_DOCKER")
-	assertFirstNamedObjectField(t, runtimePlan, "probes", "slam_hover_probe", "outputPath", filepath.Join(prepared.Result.ArtifactDir, "slam_hover_probe.json"))
+	assertFirstNamedObjectField(t, runtimePlan, "probes", "slam_hover_probe", "outputPath", artifactlayout.Probe(prepared.Result.ArtifactDir, "slam_hover_probe.json"))
 	assertFirstNamedObjectField(t, runtimePlan, "rosbags", "hover_rosbag", "storage", "mcap")
+	startupPolicy, ok := runtimePlan["startupReadinessPolicy"].(map[string]any)
+	if !ok || startupPolicy["owner"] != "go_runtime_config" || startupPolicy["restart_limit"] != float64(0) {
+		t.Fatalf("startup readiness policy = %#v", runtimePlan["startupReadinessPolicy"])
+	}
 
 	manifest := readJSONFile(t, prepared.Result.ManifestPath)
 	if manifest["schemaVersion"] != "navlab.orchestration.artifact_manifest.v1" {

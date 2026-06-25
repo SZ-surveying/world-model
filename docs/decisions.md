@@ -2359,3 +2359,183 @@ handling, and error handling.
 Reason: `navlab-sim` should be the single simulation control-plane CLI. A
 breaking CLI cleanup is acceptable here because it prevents another compatibility
 layer while preserving the audit JSON schemas and default output artifacts.
+
+## 2026-06-25: Hover span SLO policy is Go-owned and tiered
+
+Decision: hover XY span is no longer a single binary `0.1m` hard gate. Go owns
+and records the resolved policy (`hover_span_target_m`,
+`hover_span_hard_cap_m`), passes it to Python through generated runtime files
+and CLI args, and Python classifies span/drift as green, yellow, or red. Target
+exceed below hard cap is warning/statistical evidence, while hard-cap exceed and
+real safety events remain hard blockers. Gazebo-only drift remains review-only
+until its observation contract is promoted.
+
+Basis: Phase 41/42 runs showed runtime health green and no ExternalNav/SLAM
+loss, but mission body blocked only because `horizontal_span_m` slightly
+exceeded `0.1m` (`0.103m`, `0.118m`). A fresh Phase 47 usage pass
+`20260625T023143Z` completed `TASK_STATUS_OK` with the Go-provided policy
+recorded in artifacts.
+
+Reason: hover is a stochastic closed-loop sim/real experiment, not a pure
+function. Treating the SLO target as the hard cap turns normal tail behavior
+into false failures. Separating target, hard cap, and cohort percentiles keeps
+real safety fail-closed while allowing distribution-based review.
+
+## 2026-06-25: Phase 49 hover cohort is case-study evidence, not a P99 claim
+
+Decision: treat the fresh five-run `slam-direct-no-odom-prior` hover cohort as
+evidence that the basic hover body is operationally usable under the current
+Go-owned SLO policy, while explicitly limiting the claim to `case_study_only`.
+The remaining yellow health band is observation-contract debt, not a runtime
+hover-body blocker.
+
+Basis: five consecutive Phase 49 runs (`20260625T030617Z`,
+`20260625T030852Z`, `20260625T031110Z`, `20260625T031325Z`,
+`20260625T031541Z`) completed `TASK_STATUS_OK` with
+`runtime_hover_health_final.band=green` and `sim_auto_continue`. The cohort
+artifact `artifacts/sim/hover/phase49_5run_hover_health_cohort.json` reports
+mission hover span max `0.067324m`, target exceed count `0`, hard-cap exceed
+count `0`, and `sample_size_rule=case_study_only`.
+
+Reason: the valid samples are all below both the `0.1m` target and `0.15m`
+hard cap, so the main hover loop is usable for the current sim profile. Because
+five samples cannot support a strong tail claim, P95/P99 values are descriptive
+case-study statistics only. Gazebo contract findings remain review-only and
+belong to the observation-contract phases.
+
+## 2026-06-25: Hover artifacts use a breaking readable directory layout
+
+Decision: new sim hover artifacts use a deliberately breaking layout: reviewer
+entry files stay at the run root, while runtime scripts/configs/logs, probes,
+audits, rosbag profiles, rosbags, and SITL state live in dedicated
+subdirectories. SQLite is not part of the single-run runtime chain.
+
+Basis: Phase 50 usage artifact `artifacts/sim/hover/20260625T035409Z`
+completed `TASK_STATUS_OK` with `gate_evaluation.ok=true`. Its root contains
+only entry files and directories, while `runtime/scripts`,
+`runtime/config`, `runtime/logs`, `probes`, `audits`, `profiles`, `rosbag`, and
+`sitl` hold the detailed evidence. The post-run hover health artifact moved to
+`audits/hover_health_summary.json`, and `navlab-sim audit hover health`,
+`contract`, and `gate-replay` default to `audits/`.
+
+Reason: keeping one flat artifact directory made debugging and review too
+expensive as hover evidence grew. A compatibility layer for old flat paths would
+preserve the confusion, so the new Go path model owns the layout going forward.
+SQLite remains a future rebuildable cohort index/cache only, not the source of
+truth for a single run.
+
+## 2026-06-25: Gazebo hover evidence stays review-only until contract promotion
+
+Decision: Phase 48 makes Gazebo comparability and FCU/controller evidence explicit
+in hover audits without changing runtime control. `navlab-sim audit hover
+contract` reports Gazebo frame origin, time basis, sign convention,
+model/link-name resolution, and a promotion rule; `navlab-sim audit hover
+trajectory` reports peak-time direction agreement/disagreement across SLAM,
+ExternalNav, FCU local pose, Gazebo model odometry, and scan-reference odometry.
+
+Basis: the latest successful hover artifact `artifacts/sim/hover/20260625T035409Z`
+shows SLAM and ExternalNav peak motion agreeing, while Gazebo model odometry can
+still point in the opposite relative-X direction under the unpromoted contract.
+The same artifact has no FCU controller/setpoint status samples, so the audit
+must label that as explicit review evidence debt instead of silently treating it
+as pass or fail.
+
+Reason: Gazebo is useful as a simulation review source, but it is not a real
+flight safety truth source until frame origin, model/link resolution, timestamp,
+and sign convention are promoted by a separate tested decision. Missing FCU
+control evidence should be obvious to reviewers, but in hover it remains
+optional/review-only until a later phase turns it into a hard runtime gate.
+
+## 2026-06-25: Startup readiness is separate from hover-body SLO
+
+Decision: classify hover artifacts that never reach airborne/`hover_hold` as
+startup/readiness failures rather than hover span SLO samples. The gate metrics
+now emit `startup_readiness` evidence covering mission state, rangefinder input,
+height readiness, Benewake serial byte/frame counts, probe sample semantics, and selected rosbag counts.
+
+Basis: preflight artifact `artifacts/sim/hover/20260625T022810Z` stopped at
+`S1 wait_nav_ready` with rangefinder input count `0`, Benewake serial `byte_count=0` / `frame_count=0`, no `/rangefinder/down/range`
+samples, missing height estimate, and ExternalNav waiting for height. A fresh
+post-change run `artifacts/sim/hover/20260625T051820Z` completed
+`TASK_STATUS_OK` and replays as a valid hover-body sample.
+
+Reason: rangefinder/height startup failures are operational readiness problems,
+not evidence that the hover span policy or controller body is unstable. Keeping
+the classifier in Go gate metrics preserves fail-closed behavior while making
+cohort filtering and debugging explicit.
+
+## 2026-06-25: Startup readiness runtime action policy is Go-owned
+
+Decision: Phase 52 treats startup readiness as a Go-owned runtime action policy
+with three separate strategy layers: `wait_longer_policy`, `fail_fast_policy`,
+and `prearm_restart_policy`. Python mission/FSM code consumes resolved policy
+through generated runtime files/CLI/env and writes evidence back; it does not own
+policy defaults or silently choose wait/restart behavior.
+
+Basis: Phase 51 made `startup_readiness_failure` classification explicit, but it
+only diagnosed stuck rangefinder/height startup after the fact. The next runtime
+slice needs a policy boundary before adding any active restart behavior, because
+restart is only safe before armed/airborne/`hover_hold` and must be bounded and
+artifacted.
+
+Reason: keeping the strategy in Go lets sim/real profiles, CLI overrides,
+artifacts, gate metrics, and cohort reports agree on the same policy. It also
+prevents Python mission code from accumulating hidden, task-specific wait and
+restart heuristics.
+
+## 2026-06-25: Task duration is a runtime timeout, not fixed rosbag time
+
+Decision: live sim runs stop rosbag recording shortly after task completion
+instead of waiting for the configured task duration to elapse. The default
+post-task rosbag grace is 5 seconds; `duration_sec` remains the upper-bound
+timeout used by mission/runtime components, Go runtime watchdog, and rosbag's
+own safety timeout.
+
+Basis: hover missions can complete their FSM in roughly 50 seconds, while the
+task YAML uses `duration_sec=90` as the maximum allowed runtime. The previous
+runtime runner waited for rosbag containers to hit their 90-second timeout after
+probes completed, making successful runs appear to hang for the unused timeout
+budget.
+
+Reason: task completion should be event-driven by the FSM/probe result, with a
+small grace period to capture trailing telemetry. Keeping the 90-second value as
+a safety cap preserves fail-closed timeout behavior without wasting every green
+run's tail. If the FSM/probe path does not complete before the deadline, Go
+emits `run.timeout`, stops runtime, and writes a minimal timeout mission summary
+only when Python did not already write one.
+
+## 2026-06-25: Default hover runs the Phase 41/42 no-odom-prior profile
+
+Decision: `just navlab-run hover` now uses the `slam-direct-no-odom-prior`
+simulation profile by default. The older `ideal` profile remains available only
+as an explicit override for debugging or legacy comparison.
+
+Basis: Phase 41/42 established the current hover mainline as direct
+`/slam/odom` ExternalNav with the no-odom-prior Cartographer config. Later
+Phase 47/49/52 usage passes and cohorts used that command path, while the task
+YAML still defaulted to `ideal`, creating artifacts that looked like mainline
+hover runs but were not testing the active route.
+
+Reason: the default command should produce evidence for the route we actually
+trust and discuss. Keeping thresholds (`target=0.1m`, `hard_cap=0.15m`) in Go
+runtime config/CLI overrides preserves policy ownership while removing the
+accidental old-profile footgun.
+
+## 2026-06-25: Hover simulation profiles are a Go registry
+
+Decision: hover route profiles are now defined by a Go registry instead of raw
+string branches in `ApplySimulationProfile`. The registry and profile
+resolution both live in `simulation_profiles.go`; each hover profile records
+its purpose, allowed tasks, ExternalNav input mode, and Cartographer config
+effect. Unknown hover profiles fail fast with the allowed names.
+
+Basis: after making `slam-direct-no-odom-prior` the default hover profile, the
+profile name still behaved like a magic string. The same route semantics were
+spread across YAML, helper constants, tests, and an if/else block. Phase 54
+centralizes those semantics in `simulation_profiles.go` and echoes the resolved
+profile metadata into `runtime_plan.json`.
+
+Reason: adding or reviewing a hover profile should be a registry-entry change,
+not another scattered control-plane branch. Keeping resolution in Go preserves
+the Go/Python boundary: Python receives generated runtime files and artifacts,
+but does not own profile policy.

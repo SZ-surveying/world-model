@@ -101,7 +101,7 @@ func (spec SlamOnlySpec) RosbagTopics() []string {
 
 func DefaultSensorRuntimeSpec() SensorRuntimeSpec {
 	return SensorRuntimeSpec{
-		RuntimeConfigPath:         "artifacts/gazebo_sensor_runtime.toml",
+		RuntimeConfigPath:         "artifacts/runtime/config/gazebo_sensor_runtime.toml",
 		X2VirtualSerialLink:       "/tmp/navlab_sim_x2",
 		X2ScanInputTopic:          "/lidar",
 		X2ScanTopic:               "/scan",
@@ -180,6 +180,24 @@ func RangefinderProbeScript(spec SensorRuntimeSpec) (string, error) {
 		"range_topic":       spec.RangefinderRangeTopic,
 		"status_topic":      spec.RangefinderStatusTopic,
 	})
+}
+
+func StartupReadinessProbeScript(spec SlamHoverSpec) (string, error) {
+	if spec.SlamOdomTopic == "" {
+		spec = DefaultSlamHoverSpec()
+	}
+	return rosProbeScriptWithOptionalTopics(
+		"navlab_startup_readiness_probe",
+		[]string{
+			spec.RangefinderRangeTopic,
+			spec.RangefinderStatusTopic,
+			"/height/estimate",
+			"/height/status",
+			spec.ExternalNavStatusTopic,
+		},
+		nil,
+		map[string]any{"probe_timeout_sec": 5.0},
+	)
 }
 
 func IMUProbeScript(spec SensorRuntimeSpec) (string, error) {
@@ -467,36 +485,42 @@ func FrameContractProbeScript(spec FrameContractSpec) (string, error) {
 }
 
 type SlamHoverSpec struct {
-	SlamOdomTopic            string
-	SlamStatusTopic          string
-	ExternalNavStatusTopic   string
-	ScanReferenceOdomTopic   string
-	ScanReferenceStatusTopic string
-	FCUPoseTopic             string
-	FCUTwistTopic            string
-	FCUStatusTopic           string
-	CmdVelTopic              string
-	RangefinderRangeTopic    string
-	RangefinderStatusTopic   string
-	IMUTopic                 string
-	TruthDiagnosticTopic     string
-	ControllerStatusTopic    string
-	SetpointIntentTopic      string
-	SetpointOutputTopic      string
-	OwnerStatusTopic         string
-	HoverStatusTopic         string
-	VehicleMarkerTopic       string
-	VehicleMarkerPoseTopic   string
-	VehicleMarkerFrameID     string
-	VehicleMarkerRateHz      float64
-	SettleWindowSec          float64
-	HoverWindowSec           float64
-	FinalHoldWindowSec       float64
-	MaxHoverHorizontalDrift  float64
-	MaxHoverAltitudeError    float64
-	MaxHoverYawDriftRad      float64
-	MaxStopDriftM            float64
-	ProbeTimeoutSec          float64
+	SlamOdomTopic                     string
+	SlamStatusTopic                   string
+	ExternalNavStatusTopic            string
+	ScanReferenceOdomTopic            string
+	ScanReferenceStatusTopic          string
+	FCUPoseTopic                      string
+	FCUTwistTopic                     string
+	FCUStatusTopic                    string
+	CmdVelTopic                       string
+	RangefinderRangeTopic             string
+	RangefinderStatusTopic            string
+	IMUTopic                          string
+	TruthDiagnosticTopic              string
+	ControllerStatusTopic             string
+	SetpointIntentTopic               string
+	SetpointOutputTopic               string
+	OwnerStatusTopic                  string
+	HoverStatusTopic                  string
+	VehicleMarkerTopic                string
+	VehicleMarkerPoseTopic            string
+	VehicleMarkerFrameID              string
+	VehicleMarkerRateHz               float64
+	SettleWindowSec                   float64
+	HoverWindowSec                    float64
+	FinalHoldWindowSec                float64
+	MaxHoverHorizontalDrift           float64
+	HoverSpanTargetM                  float64
+	HoverSpanHardCapM                 float64
+	MaxHoverAltitudeError             float64
+	MaxHoverYawDriftRad               float64
+	MaxStopDriftM                     float64
+	StartupReadinessTimeoutSec        float64
+	StartupReadinessGraceSec          float64
+	StartupReadinessProgressWindowSec float64
+	StartupReadinessRestartLimit      int
+	ProbeTimeoutSec                   float64
 }
 
 type ScanReferenceDriftSpec struct {
@@ -561,81 +585,93 @@ type ExternalNavSourceSelectorSpec struct {
 }
 
 type HoverMissionRuntimeSpec struct {
-	Endpoint                      string
-	SourceSystem                  int
-	SourceComponent               int
-	Mode                          string
-	TakeoffAltM                   float64
-	MinAirborneAltM               float64
-	PreflightReadySec             float64
-	MaxWaitReadySec               float64
-	HoverSettleSec                float64
-	HoverAltitudeToleranceM       float64
-	HoverHoldSec                  float64
-	HoverHealthMinObservationSec  float64
-	HoverHealthStableRequiredSec  float64
-	HoverHealthMaxWaitSec         float64
-	OperatorConfirmRequired       bool
-	OperatorConfirmTimeoutSec     float64
-	MaxHorizontalDriftM           float64
-	MaxAltitudeDriftM             float64
-	StatusTopic                   string
-	LandingStatusTopic            string
-	LandingIntentTopic            string
-	ExternalNavStatusTopic        string
-	MAVLinkExternalNavStatusTopic string
-	IMUStatusTopic                string
-	MAVLinkStatusTopic            string
-	PreLandHoldSec                float64
-	LandingPolicy                 string
-	MaxLandingDurationSec         float64
-	LandingDescentRateMPS         float64
-	LandingLandCommandAltitudeM   float64
-	LandingSetpointLookaheadSec   float64
-	MaxLandingDescentRateMPS      float64
-	TouchdownAltitudeM            float64
-	TouchdownVerticalSpeedMPS     float64
-	ForceDisarmGraceSec           float64
-	RequireDisarm                 bool
-	RequireMotorsSafe             bool
-	RequireExternalNav            bool
-	RequireIMUStatus              bool
-	DisableArmingChecks           bool
-	ForceArm                      bool
+	Endpoint                          string
+	SourceSystem                      int
+	SourceComponent                   int
+	Mode                              string
+	TakeoffAltM                       float64
+	MinAirborneAltM                   float64
+	PreflightReadySec                 float64
+	MaxWaitReadySec                   float64
+	HoverSettleSec                    float64
+	HoverAltitudeToleranceM           float64
+	HoverHoldSec                      float64
+	HoverHealthMinObservationSec      float64
+	HoverHealthStableRequiredSec      float64
+	HoverHealthMaxWaitSec             float64
+	StartupReadinessTimeoutSec        float64
+	StartupReadinessGraceSec          float64
+	StartupReadinessProgressWindowSec float64
+	StartupReadinessRestartLimit      int
+	OperatorConfirmRequired           bool
+	OperatorConfirmTimeoutSec         float64
+	MaxHorizontalDriftM               float64
+	HoverSpanTargetM                  float64
+	HoverSpanHardCapM                 float64
+	MaxAltitudeDriftM                 float64
+	StatusTopic                       string
+	LandingStatusTopic                string
+	LandingIntentTopic                string
+	ExternalNavStatusTopic            string
+	MAVLinkExternalNavStatusTopic     string
+	IMUStatusTopic                    string
+	MAVLinkStatusTopic                string
+	PreLandHoldSec                    float64
+	LandingPolicy                     string
+	MaxLandingDurationSec             float64
+	LandingDescentRateMPS             float64
+	LandingLandCommandAltitudeM       float64
+	LandingSetpointLookaheadSec       float64
+	MaxLandingDescentRateMPS          float64
+	TouchdownAltitudeM                float64
+	TouchdownVerticalSpeedMPS         float64
+	ForceDisarmGraceSec               float64
+	RequireDisarm                     bool
+	RequireMotorsSafe                 bool
+	RequireExternalNav                bool
+	RequireIMUStatus                  bool
+	DisableArmingChecks               bool
+	ForceArm                          bool
 }
 
 func DefaultSlamHoverSpec() SlamHoverSpec {
 	return SlamHoverSpec{
-		SlamOdomTopic:            "/slam/odom",
-		SlamStatusTopic:          "/navlab/slam/status",
-		ExternalNavStatusTopic:   "/external_nav/status",
-		ScanReferenceOdomTopic:   "/navlab/scan_reference_drift/odom",
-		ScanReferenceStatusTopic: "/navlab/scan_reference_drift/status",
-		FCUPoseTopic:             "/ap/v1/pose/filtered",
-		FCUTwistTopic:            "/ap/v1/twist/filtered",
-		FCUStatusTopic:           "/ap/v1/status",
-		CmdVelTopic:              "/ap/v1/cmd_vel",
-		RangefinderRangeTopic:    "/rangefinder/down/range",
-		RangefinderStatusTopic:   "/rangefinder/down/status",
-		IMUTopic:                 "/navlab/slam/imu",
-		TruthDiagnosticTopic:     "/odometry",
-		ControllerStatusTopic:    "/navlab/fcu/controller/status",
-		SetpointIntentTopic:      "/navlab/fcu/setpoint/intent",
-		SetpointOutputTopic:      "/navlab/fcu/setpoint/output",
-		OwnerStatusTopic:         "/navlab/fcu/owner/status",
-		HoverStatusTopic:         "/navlab/hover/status",
-		VehicleMarkerTopic:       "/navlab/vehicle_marker",
-		VehicleMarkerPoseTopic:   "/navlab/vehicle_marker/pose",
-		VehicleMarkerFrameID:     "base_link",
-		VehicleMarkerRateHz:      5.0,
-		SettleWindowSec:          8.0,
-		HoverWindowSec:           18.0,
-		FinalHoldWindowSec:       5.0,
-		MaxHoverHorizontalDrift:  0.10,
-		MaxHoverAltitudeError:    0.30,
-		MaxHoverYawDriftRad:      0.35,
-		MaxStopDriftM:            0.20,
-		ProbeTimeoutSec:          120.0,
+		SlamOdomTopic:                     "/slam/odom",
+		SlamStatusTopic:                   "/navlab/slam/status",
+		ExternalNavStatusTopic:            "/external_nav/status",
+		ScanReferenceOdomTopic:            "/navlab/scan_reference_drift/odom",
+		ScanReferenceStatusTopic:          "/navlab/scan_reference_drift/status",
+		FCUPoseTopic:                      "/ap/v1/pose/filtered",
+		FCUTwistTopic:                     "/ap/v1/twist/filtered",
+		FCUStatusTopic:                    "/ap/v1/status",
+		CmdVelTopic:                       "/ap/v1/cmd_vel",
+		RangefinderRangeTopic:             "/rangefinder/down/range",
+		RangefinderStatusTopic:            "/rangefinder/down/status",
+		IMUTopic:                          "/navlab/slam/imu",
+		TruthDiagnosticTopic:              "/odometry",
+		ControllerStatusTopic:             "/navlab/fcu/controller/status",
+		SetpointIntentTopic:               "/navlab/fcu/setpoint/intent",
+		SetpointOutputTopic:               "/navlab/fcu/setpoint/output",
+		OwnerStatusTopic:                  "/navlab/fcu/owner/status",
+		HoverStatusTopic:                  "/navlab/hover/status",
+		VehicleMarkerTopic:                "/navlab/vehicle_marker",
+		VehicleMarkerPoseTopic:            "/navlab/vehicle_marker/pose",
+		VehicleMarkerFrameID:              "base_link",
+		VehicleMarkerRateHz:               5.0,
+		SettleWindowSec:                   8.0,
+		HoverWindowSec:                    18.0,
+		FinalHoldWindowSec:                5.0,
+		MaxHoverHorizontalDrift:           0.10,
+		HoverSpanTargetM:                  0.10,
+		HoverSpanHardCapM:                 0.15,
+		MaxHoverAltitudeError:             0.30,
+		MaxHoverYawDriftRad:               0.35,
+		MaxStopDriftM:                     0.20,
+		StartupReadinessTimeoutSec:        35.0,
+		StartupReadinessGraceSec:          8.0,
+		StartupReadinessProgressWindowSec: 3.0,
+		StartupReadinessRestartLimit:      0,
+		ProbeTimeoutSec:                   120.0,
 	}
 }
 
@@ -719,47 +755,53 @@ func DefaultHoverMissionRuntimeSpec() HoverMissionRuntimeSpec {
 	fcu := DefaultFCUControllerSpec()
 	hover := DefaultSlamHoverSpec()
 	return HoverMissionRuntimeSpec{
-		Endpoint:                      fcu.MAVLinkBootstrap,
-		SourceSystem:                  fcu.MAVLinkBootstrapSourceSystem,
-		SourceComponent:               fcu.MAVLinkBootstrapSourceComponent,
-		Mode:                          fcu.GuidedMode,
-		TakeoffAltM:                   fcu.TakeoffAltM,
-		MinAirborneAltM:               0.10,
-		PreflightReadySec:             5.0,
-		MaxWaitReadySec:               35.0,
-		HoverSettleSec:                2.0,
-		HoverAltitudeToleranceM:       0.18,
-		HoverHoldSec:                  hover.HoverWindowSec,
-		HoverHealthMinObservationSec:  10.0,
-		HoverHealthStableRequiredSec:  5.0,
-		HoverHealthMaxWaitSec:         60.0,
-		OperatorConfirmRequired:       false,
-		OperatorConfirmTimeoutSec:     60.0,
-		MaxHorizontalDriftM:           hover.MaxHoverHorizontalDrift,
-		MaxAltitudeDriftM:             hover.MaxHoverAltitudeError,
-		StatusTopic:                   hover.HoverStatusTopic,
-		LandingStatusTopic:            "/navlab/landing/status",
-		LandingIntentTopic:            "/navlab/landing/intent",
-		ExternalNavStatusTopic:        hover.ExternalNavStatusTopic,
-		MAVLinkExternalNavStatusTopic: "/mavlink_external_nav/status",
-		IMUStatusTopic:                "/imu/status",
-		MAVLinkStatusTopic:            "/navlab/mavlink/status",
-		PreLandHoldSec:                2.0,
-		LandingPolicy:                 PolicyAPLandModeAfterHover,
-		MaxLandingDurationSec:         35.0,
-		LandingDescentRateMPS:         0.09,
-		LandingLandCommandAltitudeM:   0.18,
-		LandingSetpointLookaheadSec:   0.5,
-		MaxLandingDescentRateMPS:      0.60,
-		TouchdownAltitudeM:            0.12,
-		TouchdownVerticalSpeedMPS:     0.08,
-		ForceDisarmGraceSec:           3.0,
-		RequireDisarm:                 true,
-		RequireMotorsSafe:             true,
-		RequireExternalNav:            true,
-		RequireIMUStatus:              true,
-		DisableArmingChecks:           true,
-		ForceArm:                      false,
+		Endpoint:                          fcu.MAVLinkBootstrap,
+		SourceSystem:                      fcu.MAVLinkBootstrapSourceSystem,
+		SourceComponent:                   fcu.MAVLinkBootstrapSourceComponent,
+		Mode:                              fcu.GuidedMode,
+		TakeoffAltM:                       fcu.TakeoffAltM,
+		MinAirborneAltM:                   0.10,
+		PreflightReadySec:                 5.0,
+		MaxWaitReadySec:                   35.0,
+		HoverSettleSec:                    2.0,
+		HoverAltitudeToleranceM:           0.18,
+		HoverHoldSec:                      hover.HoverWindowSec,
+		HoverHealthMinObservationSec:      10.0,
+		HoverHealthStableRequiredSec:      5.0,
+		HoverHealthMaxWaitSec:             60.0,
+		StartupReadinessTimeoutSec:        35.0,
+		StartupReadinessGraceSec:          8.0,
+		StartupReadinessProgressWindowSec: 3.0,
+		StartupReadinessRestartLimit:      0,
+		OperatorConfirmRequired:           false,
+		OperatorConfirmTimeoutSec:         60.0,
+		MaxHorizontalDriftM:               hover.MaxHoverHorizontalDrift,
+		HoverSpanTargetM:                  hover.HoverSpanTargetM,
+		HoverSpanHardCapM:                 hover.HoverSpanHardCapM,
+		MaxAltitudeDriftM:                 hover.MaxHoverAltitudeError,
+		StatusTopic:                       hover.HoverStatusTopic,
+		LandingStatusTopic:                "/navlab/landing/status",
+		LandingIntentTopic:                "/navlab/landing/intent",
+		ExternalNavStatusTopic:            hover.ExternalNavStatusTopic,
+		MAVLinkExternalNavStatusTopic:     "/mavlink_external_nav/status",
+		IMUStatusTopic:                    "/imu/status",
+		MAVLinkStatusTopic:                "/navlab/mavlink/status",
+		PreLandHoldSec:                    2.0,
+		LandingPolicy:                     PolicyAPLandModeAfterHover,
+		MaxLandingDurationSec:             35.0,
+		LandingDescentRateMPS:             0.09,
+		LandingLandCommandAltitudeM:       0.18,
+		LandingSetpointLookaheadSec:       0.5,
+		MaxLandingDescentRateMPS:          0.60,
+		TouchdownAltitudeM:                0.12,
+		TouchdownVerticalSpeedMPS:         0.08,
+		ForceDisarmGraceSec:               3.0,
+		RequireDisarm:                     true,
+		RequireMotorsSafe:                 true,
+		RequireExternalNav:                true,
+		RequireIMUStatus:                  true,
+		DisableArmingChecks:               true,
+		ForceArm:                          false,
 	}
 }
 
@@ -876,24 +918,33 @@ func HoverMissionRuntimeScript(spec HoverMissionRuntimeSpec, durationSec float64
 		spec = DefaultHoverMissionRuntimeSpec()
 	}
 	payload, err := json.Marshal(map[string]any{
-		"duration_sec":                      durationSec,
-		"endpoint":                          spec.Endpoint,
-		"source_system":                     spec.SourceSystem,
-		"source_component":                  spec.SourceComponent,
-		"mode":                              spec.Mode,
-		"takeoff_alt_m":                     spec.TakeoffAltM,
-		"min_airborne_alt_m":                spec.MinAirborneAltM,
-		"preflight_ready_sec":               spec.PreflightReadySec,
-		"max_wait_ready_sec":                spec.MaxWaitReadySec,
-		"hover_settle_sec":                  spec.HoverSettleSec,
-		"hover_altitude_tolerance_m":        spec.HoverAltitudeToleranceM,
-		"hover_hold_sec":                    spec.HoverHoldSec,
-		"hover_health_min_observation_sec":  spec.HoverHealthMinObservationSec,
-		"hover_health_stable_required_sec":  spec.HoverHealthStableRequiredSec,
-		"hover_health_max_wait_sec":         spec.HoverHealthMaxWaitSec,
+		"duration_sec":                     durationSec,
+		"endpoint":                         spec.Endpoint,
+		"source_system":                    spec.SourceSystem,
+		"source_component":                 spec.SourceComponent,
+		"mode":                             spec.Mode,
+		"takeoff_alt_m":                    spec.TakeoffAltM,
+		"min_airborne_alt_m":               spec.MinAirborneAltM,
+		"preflight_ready_sec":              spec.PreflightReadySec,
+		"max_wait_ready_sec":               spec.MaxWaitReadySec,
+		"hover_settle_sec":                 spec.HoverSettleSec,
+		"hover_altitude_tolerance_m":       spec.HoverAltitudeToleranceM,
+		"hover_hold_sec":                   spec.HoverHoldSec,
+		"hover_health_min_observation_sec": spec.HoverHealthMinObservationSec,
+		"hover_health_stable_required_sec": spec.HoverHealthStableRequiredSec,
+		"hover_health_max_wait_sec":        spec.HoverHealthMaxWaitSec,
+		"startup_readiness_policy": map[string]any{
+			"owner":               "go_runtime_config",
+			"timeout_sec":         spec.StartupReadinessTimeoutSec,
+			"grace_sec":           spec.StartupReadinessGraceSec,
+			"progress_window_sec": spec.StartupReadinessProgressWindowSec,
+			"restart_limit":       spec.StartupReadinessRestartLimit,
+		},
 		"operator_confirm_required":         spec.OperatorConfirmRequired,
 		"operator_confirm_timeout_sec":      spec.OperatorConfirmTimeoutSec,
 		"max_horizontal_drift_m":            spec.MaxHorizontalDriftM,
+		"hover_span_target_m":               spec.HoverSpanTargetM,
+		"hover_span_hard_cap_m":             spec.HoverSpanHardCapM,
 		"max_altitude_drift_m":              spec.MaxAltitudeDriftM,
 		"status_topic":                      spec.StatusTopic,
 		"landing_status_topic":              spec.LandingStatusTopic,

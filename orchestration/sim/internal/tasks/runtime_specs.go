@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/config"
 	simimages "navlab/orchestration-sim/internal/images"
 	simruntime "navlab/orchestration-sim/internal/runtime"
@@ -13,9 +14,10 @@ import (
 )
 
 type RuntimeSpecBundle struct {
-	Services []simruntime.ServiceSpec `json:"services"`
-	Probes   []simruntime.ProbeSpec   `json:"probes"`
-	Rosbags  []simruntime.RosbagSpec  `json:"rosbags"`
+	Services              []simruntime.ServiceSpec `json:"services"`
+	Probes                []simruntime.ProbeSpec   `json:"probes"`
+	Rosbags               []simruntime.RosbagSpec  `json:"rosbags"`
+	StartupReadinessProbe *simruntime.ProbeSpec    `json:"startup_readiness_probe,omitempty"`
 }
 
 func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan, artifactDir string) (RuntimeSpecBundle, error) {
@@ -79,14 +81,14 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 		env := rewriteArtifactEnv(resolveEnv(project, service.Env), containerArtifactDir)
 		volumes := []simruntime.VolumeMount{workspaceMount}
 		if service.ServiceName == "slam_backend" {
-			volumes, err = appendArtifactVolumeIfPresent(volumes, artifactDir, "external_nav_bridge_params.yaml", helpers.OfficialExternalNavBridgeParams)
+			volumes, err = appendArtifactVolumeIfPresent(volumes, artifactDir, artifactlayout.RuntimeConfigRel("external_nav_bridge_params.yaml"), helpers.OfficialExternalNavBridgeParams)
 			if err != nil {
 				return RuntimeSpecBundle{}, err
 			}
 			volumes, err = appendArtifactVolumeIfPresent(
 				volumes,
 				artifactDir,
-				helpers.HoverCartographerConfigBasename,
+				artifactlayout.RuntimeConfigRel(helpers.HoverCartographerConfigBasename),
 				helpers.OfficialCartographerConfigDir+"/"+helpers.HoverCartographerConfigBasename,
 			)
 			if err != nil {
@@ -104,7 +106,8 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 			Networks:      networks(service.Network),
 			Detach:        true,
 			Required:      true,
-			LogPath:       filepath.Join(artifactDir, service.ServiceName+".start.log"),
+			Restartable:   startupReadinessRestartableService(service.ServiceName),
+			LogPath:       artifactlayout.RuntimeLog(artifactDir, service.ServiceName+".start.log"),
 			ServiceRole:   service.HelperID,
 		}
 		if err := spec.ValidateDocker(); err != nil {
@@ -158,7 +161,7 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 				"host",
 			},
 			TimeoutSec:  probeTimeoutSec(probe.Name, plan.DurationSec),
-			LogPath:     filepath.Join(artifactDir, probe.Name+".log"),
+			LogPath:     artifactlayout.Probe(artifactDir, probe.Name+".log"),
 			Required:    probeRequiredForRuntime(probe.Name),
 			ServiceRole: probe.HelperID,
 		}
@@ -166,6 +169,16 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 			return RuntimeSpecBundle{}, err
 		}
 		bundle.Probes = append(bundle.Probes, spec)
+	}
+	if plan.TaskID == "hover" {
+		spec, err := startupReadinessProbeSpec(project, absoluteWorkspaceRoot, containerWorkspace, artifactDir)
+		if err != nil {
+			return RuntimeSpecBundle{}, err
+		}
+		if err := spec.ValidateDocker(); err != nil {
+			return RuntimeSpecBundle{}, err
+		}
+		bundle.StartupReadinessProbe = &spec
 	}
 
 	for _, rosbag := range plan.RosbagRecords {
@@ -193,7 +206,7 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 			CWD:           containerWorkspace,
 			Volumes:       []simruntime.VolumeMount{workspaceMount},
 			Networks:      []string{"host"},
-			LogPath:       filepath.Join(artifactDir, rosbag.Name+".log"),
+			LogPath:       artifactlayout.RuntimeLog(artifactDir, rosbag.Name+".log"),
 			Required:      true,
 			ServiceRole:   rosbag.HelperID,
 		}
@@ -203,6 +216,51 @@ func BuildRuntimeSpecs(project config.ProjectConfig, plan helpers.ExecutionPlan,
 		bundle.Rosbags = append(bundle.Rosbags, spec)
 	}
 	return bundle, nil
+}
+
+func startupReadinessRestartableService(name string) bool {
+	switch name {
+	case "gazebo_sensor", "height_estimator":
+		return true
+	default:
+		return false
+	}
+}
+
+func startupReadinessProbeSpec(
+	project config.ProjectConfig,
+	absoluteWorkspaceRoot string,
+	containerWorkspace string,
+	artifactDir string,
+) (simruntime.ProbeSpec, error) {
+	image, err := resolveImageRef(project, "images.runtime")
+	if err != nil {
+		return simruntime.ProbeSpec{}, err
+	}
+	scriptPath := artifactlayout.Probe(artifactDir, "startup_readiness_probe.py")
+	outputPath := artifactlayout.Audit(artifactDir, "startup_readiness_probe.json")
+	containerScriptPath, err := containerPath(absoluteWorkspaceRoot, containerWorkspace, scriptPath)
+	if err != nil {
+		return simruntime.ProbeSpec{}, err
+	}
+	containerOutputPath, err := containerPath(absoluteWorkspaceRoot, containerWorkspace, outputPath)
+	if err != nil {
+		return simruntime.ProbeSpec{}, err
+	}
+	return simruntime.ProbeSpec{
+		Name:        "startup_readiness_probe",
+		Image:       image,
+		Command:     []string{"bash", "-lc", "python3 " + shellQuote(containerScriptPath) + " > " + shellQuote(containerOutputPath)},
+		Env:         baselineEnv(project),
+		CWD:         containerWorkspace,
+		Volumes:     []simruntime.VolumeMount{{Source: absoluteWorkspaceRoot, Target: containerWorkspace}},
+		OutputPath:  outputPath,
+		Networks:    []string{"host"},
+		TimeoutSec:  8,
+		LogPath:     artifactlayout.RuntimeLog(artifactDir, "startup_readiness_probe.log"),
+		Required:    false,
+		ServiceRole: "startup-readiness",
+	}, nil
 }
 
 func probeRequiredForRuntime(name string) bool {
@@ -367,7 +425,7 @@ func mavlinkRouterServiceSpec(
 		Networks:      []string{"host"},
 		Detach:        true,
 		Required:      true,
-		LogPath:       filepath.Join(artifactDir, "mavlink_router.start.log"),
+		LogPath:       artifactlayout.RuntimeLog(artifactDir, "mavlink_router.start.log"),
 		ServiceRole:   "mavlink-router",
 	}, nil
 }
@@ -397,7 +455,7 @@ func mavlinkExternalNavSenderServiceSpec(
 		"--max-local-position-age-ms 1000",
 		"--max-horizontal-speed-mps 0.25",
 		"--max-yaw-rate-radps 0.6",
-		"> " + shellQuote(containerArtifactDir+"/mavlink_external_nav.runtime.log") + " 2>&1",
+		"> " + shellQuote(containerArtifactDir+"/"+artifactlayout.RuntimeLogRel("mavlink_external_nav.runtime.log")) + " 2>&1",
 	}, " ")
 	command := strings.Join([]string{
 		"source /opt/ros/${ROS_DISTRO:-" + runtimeRosDistro(project) + "}/setup.bash",
@@ -417,7 +475,7 @@ func mavlinkExternalNavSenderServiceSpec(
 		Networks:      []string{"host"},
 		Detach:        true,
 		Required:      true,
-		LogPath:       filepath.Join(artifactDir, "mavlink_external_nav.start.log"),
+		LogPath:       artifactlayout.RuntimeLog(artifactDir, "mavlink_external_nav.start.log"),
 		ServiceRole:   "mavlink-external-nav",
 	}, nil
 }
@@ -443,7 +501,7 @@ func heightEstimatorServiceSpec(
 		"--max-vertical-velocity-output-mps 0.25",
 		"--velocity-smoothing-alpha 0.25",
 		"--max-filter-dt-sec 0.1",
-		"> " + shellQuote(containerArtifactDir+"/height_estimator.runtime.log") + " 2>&1",
+		"> " + shellQuote(containerArtifactDir+"/"+artifactlayout.RuntimeLogRel("height_estimator.runtime.log")) + " 2>&1",
 	}, " ")
 	command := strings.Join([]string{
 		"source /opt/ros/${ROS_DISTRO:-" + runtimeRosDistro(project) + "}/setup.bash",
@@ -463,7 +521,8 @@ func heightEstimatorServiceSpec(
 		Networks:      []string{"host"},
 		Detach:        true,
 		Required:      true,
-		LogPath:       filepath.Join(artifactDir, "height_estimator.start.log"),
+		Restartable:   true,
+		LogPath:       artifactlayout.RuntimeLog(artifactDir, "height_estimator.start.log"),
 		ServiceRole:   "height-estimator",
 	}, nil
 }
@@ -493,11 +552,11 @@ func officialBaselineServiceSpec(
 		"export NAVLAB_OFFICIAL_SDF_ROOTS=/opt/navlab_official_ws/install/ardupilot_gazebo/share:/opt/navlab_official_ws/install/ardupilot_gz_description/share",
 		"export SDF_PATH=${NAVLAB_OFFICIAL_SDF_ROOTS}:${SDF_PATH:-}",
 		"export GZ_SIM_RESOURCE_PATH=${NAVLAB_OFFICIAL_SDF_ROOTS}:${GZ_SIM_RESOURCE_PATH:-}",
-		"mkdir -p " + shellQuote(containerArtifactDir+"/sitl_work/scripts"),
-		"cp " + shellQuote(containerWorkspace+"/docker/profiles/ahrs-set-origin.lua") + " " + shellQuote(containerArtifactDir+"/sitl_work/scripts/ahrs-set-origin.lua"),
-		"test -s " + shellQuote(containerArtifactDir+"/sitl_work/scripts/ahrs-set-origin.lua"),
-		"cd " + shellQuote(containerArtifactDir+"/sitl_work"),
-		"python3 -m navlab.sim.gazebo_sensor.benewake_tfmini_serial --virtual-serial-link " + shellQuote(benewakeSerialLink) + " --log-file " + shellQuote(containerArtifactDir+"/benewake_tfmini_serial.runtime.log") + " &",
+		"mkdir -p " + shellQuote(containerArtifactDir+"/"+artifactlayout.SITLRel("scripts")),
+		"cp " + shellQuote(containerWorkspace+"/docker/profiles/ahrs-set-origin.lua") + " " + shellQuote(containerArtifactDir+"/"+artifactlayout.SITLRel("scripts", "ahrs-set-origin.lua")),
+		"test -s " + shellQuote(containerArtifactDir+"/"+artifactlayout.SITLRel("scripts", "ahrs-set-origin.lua")),
+		"cd " + shellQuote(containerArtifactDir+"/"+artifactlayout.SITLRel()),
+		"python3 -m navlab.sim.gazebo_sensor.benewake_tfmini_serial --virtual-serial-link " + shellQuote(benewakeSerialLink) + " --log-file " + shellQuote(containerArtifactDir+"/"+artifactlayout.RuntimeLogRel("benewake_tfmini_serial.runtime.log")) + " &",
 		"benewake_pid=$!",
 		"trap 'kill ${benewake_pid:-} 2>/dev/null || true' EXIT",
 		"for _ in $(seq 1 200); do [ -e " + shellQuote(benewakeSerialLink) + " ] && break; sleep 0.05; done",
@@ -505,15 +564,15 @@ func officialBaselineServiceSpec(
 		launch + " use_gz_sim_gui:=false rviz:=false use_dds_agent:=true use_gz_sim_server:=true spawn_robot:=true",
 	}, "\n")
 	volumes := []simruntime.VolumeMount{workspaceMount}
-	volumes, err = appendArtifactVolumeIfPresent(volumes, artifactDir, "model_overlay.sdf", helpers.OfficialIrisWithLidarModel)
+	volumes, err = appendArtifactVolumeIfPresent(volumes, artifactDir, artifactlayout.RuntimeConfigRel("model_overlay.sdf"), helpers.OfficialIrisWithLidarModel)
 	if err != nil {
 		return simruntime.ServiceSpec{}, err
 	}
-	volumes, err = appendArtifactVolumeIfPresent(volumes, artifactDir, "gazebo-iris-rangefinder.parm", helpers.OfficialGazeboIrisParams)
+	volumes, err = appendArtifactVolumeIfPresent(volumes, artifactDir, artifactlayout.RuntimeConfigRel("gazebo-iris-rangefinder.parm"), helpers.OfficialGazeboIrisParams)
 	if err != nil {
 		return simruntime.ServiceSpec{}, err
 	}
-	scanRobustnessBridgeOverride := filepath.Join(artifactDir, "scan_robustness_bridge_override.yaml")
+	scanRobustnessBridgeOverride := artifactlayout.RuntimeConfig(artifactDir, "scan_robustness_bridge_override.yaml")
 	if _, err := os.Stat(scanRobustnessBridgeOverride); err == nil {
 		absoluteScanRobustnessBridgeOverride, err := filepath.Abs(scanRobustnessBridgeOverride)
 		if err != nil {
@@ -524,7 +583,7 @@ func officialBaselineServiceSpec(
 			Target: helpers.OfficialIris3DBridgeConfig,
 		})
 	} else {
-		bridgeOverride := filepath.Join(artifactDir, "bridge_override.yaml")
+		bridgeOverride := artifactlayout.RuntimeConfig(artifactDir, "bridge_override.yaml")
 		if _, err := os.Stat(bridgeOverride); err == nil {
 			absoluteBridgeOverride, err := filepath.Abs(bridgeOverride)
 			if err != nil {
@@ -555,7 +614,7 @@ func officialBaselineServiceSpec(
 		Networks:    []string{"host"},
 		Detach:      true,
 		Required:    true,
-		LogPath:     filepath.Join(artifactDir, "official_baseline.start.log"),
+		LogPath:     artifactlayout.RuntimeLog(artifactDir, "official_baseline.start.log"),
 		ServiceRole: "official-baseline",
 	}, nil
 }
@@ -574,7 +633,7 @@ func officialMazeOverlayServiceSpec(
 	containerArtifactDir string,
 	artifactDir string,
 ) (simruntime.ServiceSpec, bool, error) {
-	script := filepath.Join(artifactDir, "official_maze_overlay_runtime.py")
+	script := artifactlayout.RuntimeScript(artifactDir, "official_maze_overlay_runtime.py")
 	if _, err := os.Stat(script); err != nil {
 		if os.IsNotExist(err) {
 			return simruntime.ServiceSpec{}, false, nil
@@ -587,7 +646,7 @@ func officialMazeOverlayServiceSpec(
 	}
 	command := strings.Join([]string{
 		"source /opt/ros/${ROS_DISTRO:-" + runtimeRosDistro(project) + "}/setup.bash",
-		"exec python3 " + shellQuote(containerArtifactDir+"/official_maze_overlay_runtime.py") + " > " + shellQuote(containerArtifactDir+"/official_maze_overlay.runtime.log") + " 2>&1",
+		"exec python3 " + shellQuote(containerArtifactDir+"/"+artifactlayout.RuntimeScriptRel("official_maze_overlay_runtime.py")) + " > " + shellQuote(containerArtifactDir+"/"+artifactlayout.RuntimeLogRel("official_maze_overlay.runtime.log")) + " 2>&1",
 	}, " && ")
 	return simruntime.ServiceSpec{
 		Name:          "official_maze_overlay",
@@ -600,7 +659,7 @@ func officialMazeOverlayServiceSpec(
 		Networks:      []string{"host"},
 		Detach:        true,
 		Required:      true,
-		LogPath:       filepath.Join(artifactDir, "official_maze_overlay.start.log"),
+		LogPath:       artifactlayout.RuntimeLog(artifactDir, "official_maze_overlay.start.log"),
 		ServiceRole:   "foxglove-official-maze-overlay",
 	}, true, nil
 }
@@ -651,7 +710,7 @@ func writeRosbagTopicsProfile(artifactDir string, name string, topics []string) 
 	if len(topics) == 0 {
 		return "", fmt.Errorf("rosbag %s has no topics", name)
 	}
-	path := filepath.Join(artifactDir, "profiles", name+".txt")
+	path := artifactlayout.Profile(artifactDir, name+".txt")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}

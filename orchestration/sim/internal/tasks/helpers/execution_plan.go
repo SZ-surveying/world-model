@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/config"
 )
 
@@ -143,7 +144,29 @@ func BuildExecutionPlan(
 	if plan.TaskID == "hover" {
 		moveRuntimeServiceBefore(&plan, "external_nav_source_selector", "slam_backend")
 	}
+	applyArtifactLayout(&plan)
 	return plan, nil
+}
+
+func applyArtifactLayout(plan *ExecutionPlan) {
+	for index := range plan.GeneratedArtifacts {
+		artifact := &plan.GeneratedArtifacts[index]
+		switch {
+		case strings.Contains(artifact.Kind, "probe_script"):
+			artifact.Path = artifactlayout.ProbeRel(artifact.Path)
+		case strings.Contains(artifact.Kind, "script"):
+			artifact.Path = artifactlayout.RuntimeScriptRel(artifact.Path)
+		case artifact.Kind == "foxglove_notes":
+			artifact.Path = artifactlayout.AuditRel(artifact.Path)
+		default:
+			artifact.Path = artifactlayout.RuntimeConfigRel(artifact.Path)
+		}
+	}
+	for index := range plan.ROSProbes {
+		probe := &plan.ROSProbes[index]
+		probe.ScriptPath = artifactlayout.ProbeRel(probe.ScriptPath)
+		probe.OutputPath = artifactlayout.ProbeRel(probe.OutputPath)
+	}
 }
 
 func moveRuntimeServiceBefore(plan *ExecutionPlan, serviceName string, beforeServiceName string) {
@@ -178,7 +201,7 @@ func addSensorsExecution(plan *ExecutionPlan, task config.TaskConfig) {
 		ContainerName: GazeboSensorContainer,
 		ImageRef:      "images.gazebo_sensor",
 		Network:       "host",
-		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source /opt/navlab_sensor_ws/install/setup.bash && exec /opt/gazebo-sensor-venv/bin/python -m navlab.sim.gazebo_sensor.cli --runtime --log-file artifacts/gazebo_sensor.log"},
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source /opt/navlab_sensor_ws/install/setup.bash && exec /opt/gazebo-sensor-venv/bin/python -m navlab.sim.gazebo_sensor.cli --runtime --log-file artifacts/runtime/logs/gazebo_sensor.runtime.log"},
 		Env: map[string]string{
 			"NAVLAB_CONFIG": spec.RuntimeConfigPath,
 			"ROS_DOMAIN_ID": "from config.toml",
@@ -212,7 +235,7 @@ func addSlamExecution(plan *ExecutionPlan) {
 		ContainerName: SlamBackendContainer,
 		ImageRef:      "images.slam",
 		Network:       "host",
-		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source /opt/navlab_ws/install/setup.bash && exec python3 -m navlab.common.slam.cli launch --config artifacts/slam_runtime.toml --backend cartographer > artifacts/slam_backend.runtime.log 2>&1"},
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source /opt/navlab_ws/install/setup.bash && exec python3 -m navlab.common.slam.cli launch --config artifacts/runtime/config/slam_runtime.toml --backend cartographer > artifacts/runtime/logs/slam_backend.runtime.log 2>&1"},
 		Env:           BaselineROSEnv(),
 		SideEffect:    true,
 		Status:        "ported_command_planning",
@@ -237,7 +260,7 @@ func addFCUExecution(plan *ExecutionPlan, task config.TaskConfig) {
 		ContainerName: FCUControllerContainer,
 		ImageRef:      "images.runtime",
 		Network:       "host",
-		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/fcu_controller_runtime.py > artifacts/fcu_controller.runtime.log 2>&1"},
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/runtime/scripts/fcu_controller_runtime.py > artifacts/runtime/logs/fcu_controller.runtime.log 2>&1"},
 		Env:           BaselineROSEnv(),
 		SideEffect:    true,
 		Status:        "ported_script_generation",
@@ -304,7 +327,7 @@ func addSlamHoverExecution(plan *ExecutionPlan, task config.TaskConfig, duration
 			ContainerName: "navlab-scan-reference-drift",
 			ImageRef:      "images.runtime",
 			Network:       "host",
-			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/scan_reference_drift_runtime.py > artifacts/scan_reference_drift.runtime.log 2>&1"},
+			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/runtime/scripts/scan_reference_drift_runtime.py > artifacts/runtime/logs/scan_reference_drift.runtime.log 2>&1"},
 			Env:           BaselineROSEnv(),
 			SideEffect:    true,
 			Status:        "diagnostic_only_no_control_output",
@@ -315,7 +338,7 @@ func addSlamHoverExecution(plan *ExecutionPlan, task config.TaskConfig, duration
 			ContainerName: "navlab-scan-reference-cartographer-odom",
 			ImageRef:      "images.runtime",
 			Network:       "host",
-			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/scan_reference_cartographer_odom_runtime.py > artifacts/scan_reference_cartographer_odom.runtime.log 2>&1"},
+			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/runtime/scripts/scan_reference_cartographer_odom_runtime.py > artifacts/runtime/logs/scan_reference_cartographer_odom.runtime.log 2>&1"},
 			Env:           BaselineROSEnv(),
 			SideEffect:    true,
 			Status:        "scan_only_cartographer_odometry_prior_no_truth_input",
@@ -326,7 +349,7 @@ func addSlamHoverExecution(plan *ExecutionPlan, task config.TaskConfig, duration
 			ContainerName: "navlab-scan-reference-correction",
 			ImageRef:      "images.runtime",
 			Network:       "host",
-			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/scan_reference_correction_runtime.py > artifacts/scan_reference_correction.runtime.log 2>&1"},
+			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/runtime/scripts/scan_reference_correction_runtime.py > artifacts/runtime/logs/scan_reference_correction.runtime.log 2>&1"},
 			Env:           BaselineROSEnv(),
 			SideEffect:    true,
 			Status:        "fail_closed_external_nav_input_correction",
@@ -337,7 +360,7 @@ func addSlamHoverExecution(plan *ExecutionPlan, task config.TaskConfig, duration
 			ContainerName: "navlab-external-nav-source-selector",
 			ImageRef:      "images.runtime",
 			Network:       "host",
-			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/external_nav_source_selector_runtime.py > artifacts/external_nav_source_selector.runtime.log 2>&1"},
+			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/runtime/scripts/external_nav_source_selector_runtime.py > artifacts/runtime/logs/external_nav_source_selector.runtime.log 2>&1"},
 			Env:           BaselineROSEnv(),
 			SideEffect:    true,
 			Status:        "fail_closed_external_nav_source_selector",
@@ -348,7 +371,7 @@ func addSlamHoverExecution(plan *ExecutionPlan, task config.TaskConfig, duration
 			ContainerName: "navlab-hover-mission",
 			ImageRef:      "images.runtime",
 			Network:       "host",
-			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/hover_mission_runtime.py > artifacts/hover_mission.runtime.log 2>&1"},
+			Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source ${OFFICIAL_WS:-/opt/navlab_official_ws}/install/setup.bash && python3 artifacts/runtime/scripts/hover_mission_runtime.py > artifacts/runtime/logs/hover_mission.runtime.log 2>&1"},
 			Env:           BaselineROSEnv(),
 			SideEffect:    true,
 			Status:        "planned_python_runtime",
@@ -482,7 +505,7 @@ func addExplorationWorkflowExecution(plan *ExecutionPlan, task config.TaskConfig
 		ContainerName: "navlab-exploration-workflow",
 		ImageRef:      "images.runtime",
 		Network:       "host",
-		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && python3 artifacts/exploration_workflow_runtime.py > artifacts/exploration_workflow.runtime.log 2>&1"},
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && python3 artifacts/runtime/scripts/exploration_workflow_runtime.py > artifacts/runtime/logs/exploration_workflow.runtime.log 2>&1"},
 		Env:           BaselineROSEnv(),
 		SideEffect:    true,
 		Status:        "planned_runtime",
@@ -539,7 +562,7 @@ func addNav2NavigationWorkflowExecution(plan *ExecutionPlan, task config.TaskCon
 		ContainerName: "navlab-nav2-navigation",
 		ImageRef:      "images.runtime",
 		Network:       "host",
-		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && ros2 launch nav2_bringup navigation_launch.py use_sim_time:=true params_file:=artifacts/nav2_params.yaml"},
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && ros2 launch nav2_bringup navigation_launch.py use_sim_time:=true params_file:=artifacts/runtime/config/nav2_params.yaml"},
 		Env:           BaselineROSEnv(),
 		SideEffect:    true,
 		Status:        "planned_runtime",
@@ -550,7 +573,7 @@ func addNav2NavigationWorkflowExecution(plan *ExecutionPlan, task config.TaskCon
 		ContainerName: "navlab-navigation-adapter",
 		ImageRef:      "images.runtime",
 		Network:       "host",
-		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && python3 artifacts/navigation_adapter_runtime.py > artifacts/navigation_adapter.runtime.log 2>&1"},
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && python3 artifacts/runtime/scripts/navigation_adapter_runtime.py > artifacts/runtime/logs/navigation_adapter.runtime.log 2>&1"},
 		Env:           BaselineROSEnv(),
 		SideEffect:    true,
 		Status:        "planned_runtime",
@@ -561,7 +584,7 @@ func addNav2NavigationWorkflowExecution(plan *ExecutionPlan, task config.TaskCon
 		ContainerName: "navlab-navigation-mission",
 		ImageRef:      "images.runtime",
 		Network:       "host",
-		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && python3 artifacts/navigation_mission_runtime.py > artifacts/navigation_mission.runtime.log 2>&1"},
+		Command:       []string{"bash", "-lc", "source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && python3 artifacts/runtime/scripts/navigation_mission_runtime.py > artifacts/runtime/logs/navigation_mission.runtime.log 2>&1"},
 		Env:           BaselineROSEnv(),
 		SideEffect:    true,
 		Status:        "planned_runtime",

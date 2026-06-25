@@ -10,6 +10,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/config"
 	"navlab/orchestration-sim/internal/tasks/helpers"
 )
@@ -34,7 +35,7 @@ func TestGenerateRuntimeArtifactsFromConfiguredTasks(t *testing.T) {
 				"rangefinder_probe.py",
 				"imu_probe.py",
 				"slam_runtime.toml",
-				helpers.HoverCartographerConfigBasename,
+				helpers.HoverNoOdomPriorConfigBasename,
 				"external_nav_bridge_params.yaml",
 				"frame_contract_runtime.toml",
 				"frame_contract_probe.py",
@@ -44,6 +45,7 @@ func TestGenerateRuntimeArtifactsFromConfiguredTasks(t *testing.T) {
 				"scan_reference_correction_runtime.py",
 				"external_nav_source_selector_runtime.py",
 				"hover_mission_runtime.py",
+				"startup_readiness_probe.py",
 				"slam_hover_probe.py",
 			},
 		},
@@ -142,35 +144,102 @@ func TestGenerateRuntimeArtifactsFromConfiguredTasks(t *testing.T) {
 			if len(generated) == 0 {
 				t.Fatalf("GenerateRuntimeArtifacts(%q) generated no artifacts", tt.taskID)
 			}
+			generatedByBase := map[string]string{}
+			for _, artifact := range generated {
+				generatedByBase[filepath.Base(artifact.Path)] = artifact.Path
+			}
 			for _, name := range tt.wantFiles {
-				assertFileExists(t, filepath.Join(artifactDir, name))
+				path, ok := generatedByBase[filepath.Base(name)]
+				if !ok {
+					t.Fatalf("generated artifact %s missing from %#v", name, generated)
+				}
+				assertFileExists(t, path)
 			}
 			if tt.taskID == "hover" {
-				assertModelOverlayUsesNavLabRangefinderModel(t, filepath.Join(artifactDir, "model_overlay.sdf"))
-				assertParamOverlayContainsExternalNavAndRangefinder(t, filepath.Join(artifactDir, "gazebo-iris-rangefinder.parm"))
-				assertSensorRuntimeUsesBenewakeSerial(t, filepath.Join(artifactDir, "gazebo_sensor_runtime.toml"))
-				assertHoverSlamRuntimeUsesCartographerAdapter(t, filepath.Join(artifactDir, "slam_runtime.toml"))
-				assertHoverExternalNavUsesCartographerAdapter(t, filepath.Join(artifactDir, "external_nav_bridge_params.yaml"))
-				assertCopiedHoverCartographerConfig(t, filepath.Join(artifactDir, helpers.HoverCartographerConfigBasename))
-				assertScanReferenceCartographerOdomRuntime(t, filepath.Join(artifactDir, "scan_reference_cartographer_odom_runtime.py"))
-				assertHoverOfficialMazeOverlayAvoidsMapAlias(t, filepath.Join(artifactDir, "official_maze_overlay_runtime.py"))
+				assertModelOverlayUsesNavLabRangefinderModel(t, artifactlayout.RuntimeConfig(artifactDir, "model_overlay.sdf"))
+				assertParamOverlayContainsExternalNavAndRangefinder(t, artifactlayout.RuntimeConfig(artifactDir, "gazebo-iris-rangefinder.parm"))
+				assertSensorRuntimeUsesBenewakeSerial(t, artifactlayout.RuntimeConfig(artifactDir, "gazebo_sensor_runtime.toml"))
+				assertSlamRuntimeExternalNavInput(t, artifactlayout.RuntimeConfig(artifactDir, "slam_runtime.toml"), "/slam/odom")
+				assertSlamRuntimeCartographerConfig(t, artifactlayout.RuntimeConfig(artifactDir, "slam_runtime.toml"), helpers.HoverNoOdomPriorConfigBasename)
+				assertExternalNavBridgeInput(t, artifactlayout.RuntimeConfig(artifactDir, "external_nav_bridge_params.yaml"), "/slam/odom")
+				assertCartographerConfigUsesOdometry(t, artifactlayout.RuntimeConfig(artifactDir, helpers.HoverNoOdomPriorConfigBasename), false)
+				assertScanReferenceCartographerOdomRuntime(t, artifactlayout.RuntimeScript(artifactDir, "scan_reference_cartographer_odom_runtime.py"))
+				assertHoverOfficialMazeOverlayAvoidsMapAlias(t, artifactlayout.RuntimeScript(artifactDir, "official_maze_overlay_runtime.py"))
 				assertFileMissing(t, filepath.Join(artifactDir, "hover_cartographer_odom_prior.py"))
-				assertProbeScriptRetriesTopicEcho(t, filepath.Join(artifactDir, "frame_contract_probe.py"))
-				assertProbeScriptRetriesTopicEcho(t, filepath.Join(artifactDir, "slam_hover_probe.py"))
-				assertHoverProbeKeepsLandingStatusOptional(t, filepath.Join(artifactDir, "slam_hover_probe.py"))
-				assertHoverMissionRuntimeUsesAPLandPolicy(t, filepath.Join(artifactDir, "hover_mission_runtime.py"))
+				assertProbeScriptRetriesTopicEcho(t, artifactlayout.Probe(artifactDir, "frame_contract_probe.py"))
+				assertProbeScriptRetriesTopicEcho(t, artifactlayout.Probe(artifactDir, "slam_hover_probe.py"))
+				assertHoverProbeKeepsLandingStatusOptional(t, artifactlayout.Probe(artifactDir, "slam_hover_probe.py"))
+				assertHoverMissionRuntimeUsesAPLandPolicy(t, artifactlayout.RuntimeScript(artifactDir, "hover_mission_runtime.py"))
+				assertStartupReadinessPolicyEchoed(t, artifactlayout.RuntimeConfig(artifactDir, "slam_hover_runtime.toml"), artifactlayout.RuntimeScript(artifactDir, "hover_mission_runtime.py"))
 			}
 			if tt.taskID == "hover-slam-only" {
-				assertModelOverlayUsesNavLabRangefinderModel(t, filepath.Join(artifactDir, "model_overlay.sdf"))
-				assertHoverSlamRuntimeUsesCartographerAdapter(t, filepath.Join(artifactDir, "slam_runtime.toml"))
-				assertHoverExternalNavUsesCartographerAdapter(t, filepath.Join(artifactDir, "external_nav_bridge_params.yaml"))
-				assertCopiedHoverCartographerConfig(t, filepath.Join(artifactDir, helpers.HoverCartographerConfigBasename))
-				assertFileExists(t, filepath.Join(artifactDir, "slam_only_probe.py"))
+				assertModelOverlayUsesNavLabRangefinderModel(t, artifactlayout.RuntimeConfig(artifactDir, "model_overlay.sdf"))
+				assertHoverSlamRuntimeUsesCartographerAdapter(t, artifactlayout.RuntimeConfig(artifactDir, "slam_runtime.toml"))
+				assertHoverExternalNavUsesCartographerAdapter(t, artifactlayout.RuntimeConfig(artifactDir, "external_nav_bridge_params.yaml"))
+				assertCopiedHoverCartographerConfig(t, artifactlayout.RuntimeConfig(artifactDir, helpers.HoverCartographerConfigBasename))
+				assertFileExists(t, artifactlayout.Probe(artifactDir, "slam_only_probe.py"))
 				assertFileMissing(t, filepath.Join(artifactDir, "hover_cartographer_odom_prior.py"))
-				assertFileMissing(t, filepath.Join(artifactDir, "official_maze_overlay_runtime.py"))
+				assertFileMissing(t, artifactlayout.RuntimeScript(artifactDir, "official_maze_overlay_runtime.py"))
 			}
 		})
 	}
+}
+
+func TestGenerateRuntimeArtifactsKeepsHoverRootReadable(t *testing.T) {
+	t.Setenv("NAVLAB_SIM_OVERLAY_SOURCE_MODE", "fixture")
+	loader := config.NewLoader("../../config.toml")
+	project, err := loader.LoadProject()
+	if err != nil {
+		t.Fatalf("LoadProject() error = %v", err)
+	}
+	taskConfig, err := loader.LoadTask(project, "hover")
+	if err != nil {
+		t.Fatalf("LoadTask(hover) error = %v", err)
+	}
+	runtimeConfig, err := config.BuildTaskRuntimeConfig(project, taskConfig)
+	if err != nil {
+		t.Fatalf("BuildTaskRuntimeConfig(hover) error = %v", err)
+	}
+	task, err := DefaultRegistry().ConfigureOne(taskConfig)
+	if err != nil {
+		t.Fatalf("ConfigureOne(hover) error = %v", err)
+	}
+	plan, err := task.Plan(PlanOptions{}, helpers.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("Plan(hover) error = %v", err)
+	}
+	runtimeConfig, err = ApplySimulationProfile(runtimeConfig, plan)
+	if err != nil {
+		t.Fatalf("ApplySimulationProfile(hover) error = %v", err)
+	}
+
+	artifactDir := t.TempDir()
+	if _, err := GenerateRuntimeArtifacts(project, plan, runtimeConfig, artifactDir); err != nil {
+		t.Fatalf("GenerateRuntimeArtifacts(hover) error = %v", err)
+	}
+	entries, err := os.ReadDir(artifactDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowedDirs := map[string]bool{
+		"audits": true, "probes": true, "runtime": true, "profiles": true, "rosbag": true, "sitl": true,
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() {
+			if !allowedDirs[name] {
+				t.Fatalf("unexpected root directory %q", name)
+			}
+			continue
+		}
+		if !artifactlayout.RootEntries[name] {
+			t.Fatalf("unexpected root file %q; generated runtime/probe/audit files must be nested", name)
+		}
+	}
+	assertFileExists(t, artifactlayout.RuntimeScript(artifactDir, "hover_mission_runtime.py"))
+	assertFileExists(t, artifactlayout.RuntimeConfig(artifactDir, "slam_runtime.toml"))
+	assertFileExists(t, artifactlayout.Probe(artifactDir, "slam_hover_probe.py"))
+	assertFileExists(t, artifactlayout.Audit(artifactDir, "motion_foxglove_notes.md"))
 }
 
 func assertHoverMissionRuntimeUsesAPLandPolicy(t *testing.T, path string) {
@@ -185,12 +254,16 @@ func assertHoverMissionRuntimeUsesAPLandPolicy(t *testing.T, path string) {
 		`\"force_disarm_grace_sec\":3`,
 		`\"hover_settle_sec\":8`,
 		`\"max_horizontal_drift_m\":0.1`,
+		`\"hover_span_target_m\":0.1`,
+		`\"hover_span_hard_cap_m\":0.15`,
 		`\"max_landing_descent_rate_mps\":0.6`,
 		`\"max_wait_ready_sec\":35`,
 		`"landing-policy"`,
 		`"max-landing-descent-rate-mps"`,
 		`"force-disarm-grace-sec"`,
 		`"max-wait-ready-sec"`,
+		`"hover-span-target-m"`,
+		`"hover-span-hard-cap-m"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("hover mission runtime missing %q:\n%s", want, text)
@@ -216,7 +289,7 @@ func TestGenerateRuntimeArtifactsHoverSlamDirectUsesRawSlamOdomInput(t *testing.
 	if err != nil {
 		t.Fatalf("ConfigureOne(hover) error = %v", err)
 	}
-	plan, err := task.Plan(PlanOptions{SimulationProfile: "slam-direct"}, helpers.DefaultRegistry())
+	plan, err := task.Plan(PlanOptions{SimulationProfile: ProfileSlamDirect}, helpers.DefaultRegistry())
 	if err != nil {
 		t.Fatalf("Plan(hover slam-direct) error = %v", err)
 	}
@@ -229,8 +302,8 @@ func TestGenerateRuntimeArtifactsHoverSlamDirectUsesRawSlamOdomInput(t *testing.
 	if _, err := GenerateRuntimeArtifacts(project, plan, runtimeConfig, artifactDir); err != nil {
 		t.Fatalf("GenerateRuntimeArtifacts(hover slam-direct) error = %v", err)
 	}
-	assertSlamRuntimeExternalNavInput(t, filepath.Join(artifactDir, "slam_runtime.toml"), "/slam/odom")
-	assertExternalNavBridgeInput(t, filepath.Join(artifactDir, "external_nav_bridge_params.yaml"), "/slam/odom")
+	assertSlamRuntimeExternalNavInput(t, artifactlayout.RuntimeConfig(artifactDir, "slam_runtime.toml"), "/slam/odom")
+	assertExternalNavBridgeInput(t, artifactlayout.RuntimeConfig(artifactDir, "external_nav_bridge_params.yaml"), "/slam/odom")
 }
 
 func TestGenerateRuntimeArtifactsHoverSlamDirectNoOdomPriorUsesNoOdomConfig(t *testing.T) {
@@ -251,7 +324,7 @@ func TestGenerateRuntimeArtifactsHoverSlamDirectNoOdomPriorUsesNoOdomConfig(t *t
 	if err != nil {
 		t.Fatalf("ConfigureOne(hover) error = %v", err)
 	}
-	plan, err := task.Plan(PlanOptions{SimulationProfile: "slam-direct-no-odom-prior"}, helpers.DefaultRegistry())
+	plan, err := task.Plan(PlanOptions{SimulationProfile: ProfileSlamDirectNoOdomPrior}, helpers.DefaultRegistry())
 	if err != nil {
 		t.Fatalf("Plan(hover slam-direct-no-odom-prior) error = %v", err)
 	}
@@ -264,11 +337,11 @@ func TestGenerateRuntimeArtifactsHoverSlamDirectNoOdomPriorUsesNoOdomConfig(t *t
 	if _, err := GenerateRuntimeArtifacts(project, plan, runtimeConfig, artifactDir); err != nil {
 		t.Fatalf("GenerateRuntimeArtifacts(hover slam-direct-no-odom-prior) error = %v", err)
 	}
-	slamRuntimePath := filepath.Join(artifactDir, "slam_runtime.toml")
+	slamRuntimePath := artifactlayout.RuntimeConfig(artifactDir, "slam_runtime.toml")
 	assertSlamRuntimeExternalNavInput(t, slamRuntimePath, "/slam/odom")
 	assertSlamRuntimeCartographerConfig(t, slamRuntimePath, helpers.HoverNoOdomPriorConfigBasename)
-	assertExternalNavBridgeInput(t, filepath.Join(artifactDir, "external_nav_bridge_params.yaml"), "/slam/odom")
-	assertCartographerConfigUsesOdometry(t, filepath.Join(artifactDir, helpers.HoverNoOdomPriorConfigBasename), false)
+	assertExternalNavBridgeInput(t, artifactlayout.RuntimeConfig(artifactDir, "external_nav_bridge_params.yaml"), "/slam/odom")
+	assertCartographerConfigUsesOdometry(t, artifactlayout.RuntimeConfig(artifactDir, helpers.HoverNoOdomPriorConfigBasename), false)
 	assertFileDoesNotContain(t, slamRuntimePath, "cartographer_configuration_basename = 'navlab_cartographer_2d_real.lua'")
 	assertFileDoesNotContain(t, slamRuntimePath, "external_nav_input_odom_topic = '/odometry'")
 }
@@ -663,7 +736,7 @@ func TestNavigationAdapterRuntimeScriptUsesIntentTopicNotDirectFCU(t *testing.T)
 	if _, err := GenerateRuntimeArtifacts(project, plan, runtimeConfig, artifactDir); err != nil {
 		t.Fatalf("GenerateRuntimeArtifacts(navigation) error = %v", err)
 	}
-	script, err := os.ReadFile(filepath.Join(artifactDir, "navigation_adapter_runtime.py"))
+	script, err := os.ReadFile(artifactlayout.RuntimeScript(artifactDir, "navigation_adapter_runtime.py"))
 	if err != nil {
 		t.Fatalf("ReadFile(navigation_adapter_runtime.py) error = %v", err)
 	}
@@ -674,7 +747,7 @@ func TestNavigationAdapterRuntimeScriptUsesIntentTopicNotDirectFCU(t *testing.T)
 	if strings.Contains(text, `"/ap/v1/cmd_vel"`) {
 		t.Fatalf("navigation adapter script directly references FCU cmd_vel:\n%s", text)
 	}
-	missionScript, err := os.ReadFile(filepath.Join(artifactDir, "navigation_mission_runtime.py"))
+	missionScript, err := os.ReadFile(artifactlayout.RuntimeScript(artifactDir, "navigation_mission_runtime.py"))
 	if err != nil {
 		t.Fatalf("ReadFile(navigation_mission_runtime.py) error = %v", err)
 	}
@@ -687,7 +760,7 @@ func TestNavigationAdapterRuntimeScriptUsesIntentTopicNotDirectFCU(t *testing.T)
 			t.Fatalf("navigation mission script missing %q:\n%s", expected, missionText)
 		}
 	}
-	profile, err := os.ReadFile(filepath.Join(artifactDir, "navigation_foxglove_lite_profile.json"))
+	profile, err := os.ReadFile(artifactlayout.RuntimeConfig(artifactDir, "navigation_foxglove_lite_profile.json"))
 	if err != nil {
 		t.Fatalf("ReadFile(navigation_foxglove_lite_profile.json) error = %v", err)
 	}
@@ -726,7 +799,7 @@ func TestFCUControllerRuntimeScriptKeepsSubscriptionsAlive(t *testing.T) {
 	if _, err := GenerateRuntimeArtifacts(project, plan, runtimeConfig, artifactDir); err != nil {
 		t.Fatalf("GenerateRuntimeArtifacts(exploration) error = %v", err)
 	}
-	script, err := os.ReadFile(filepath.Join(artifactDir, "fcu_controller_runtime.py"))
+	script, err := os.ReadFile(artifactlayout.RuntimeScript(artifactDir, "fcu_controller_runtime.py"))
 	if err != nil {
 		t.Fatalf("ReadFile(fcu_controller_runtime.py) error = %v", err)
 	}
@@ -792,7 +865,7 @@ func TestHoverRuntimeScriptCallsPythonMissionRuntime(t *testing.T) {
 	if _, err := GenerateRuntimeArtifacts(project, plan, runtimeConfig, artifactDir); err != nil {
 		t.Fatalf("GenerateRuntimeArtifacts(hover) error = %v", err)
 	}
-	script, err := os.ReadFile(filepath.Join(artifactDir, "hover_mission_runtime.py"))
+	script, err := os.ReadFile(artifactlayout.RuntimeScript(artifactDir, "hover_mission_runtime.py"))
 	if err != nil {
 		t.Fatalf("ReadFile(hover_mission_runtime.py) error = %v", err)
 	}
@@ -843,7 +916,7 @@ func TestGenerateRuntimeArtifactsUsesSimulationProfileForScanRobustness(t *testi
 	if _, err := GenerateRuntimeArtifacts(project, plan, runtimeConfig, artifactDir); err != nil {
 		t.Fatalf("GenerateRuntimeArtifacts(scan-robustness) error = %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(artifactDir, "scan_robustness_runtime.toml"))
+	data, err := os.ReadFile(artifactlayout.RuntimeConfig(artifactDir, "scan_robustness_runtime.toml"))
 	if err != nil {
 		t.Fatalf("ReadFile(scan_robustness_runtime.toml) error = %v", err)
 	}
@@ -872,6 +945,40 @@ func TestGenerateRuntimeArtifactsUsesSimulationProfileForScanRobustness(t *testi
 	}
 	if !reflect.DeepEqual(generated.AirframeDisturbanceGate.Runtime.RequiredProfiles, wantProfiles) {
 		t.Fatalf("gate required profiles = %#v, want %#v", generated.AirframeDisturbanceGate.Runtime.RequiredProfiles, wantProfiles)
+	}
+}
+
+func assertStartupReadinessPolicyEchoed(t *testing.T, hoverConfigPath string, missionScriptPath string) {
+	t.Helper()
+	configData, err := os.ReadFile(hoverConfigPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", hoverConfigPath, err)
+	}
+	configText := string(configData)
+	for _, expected := range []string{
+		"StartupReadinessTimeoutSec = 35",
+		"StartupReadinessGraceSec = 8",
+		"StartupReadinessProgressWindowSec = 3",
+		"StartupReadinessRestartLimit = 0",
+	} {
+		if !strings.Contains(configText, expected) {
+			t.Fatalf("startup readiness policy missing %q in %s:\n%s", expected, hoverConfigPath, configText)
+		}
+	}
+	scriptData, err := os.ReadFile(missionScriptPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", missionScriptPath, err)
+	}
+	scriptText := string(scriptData)
+	for _, expected := range []string{
+		"startup_readiness_policy",
+		"go_runtime_config",
+		"progress_window_sec",
+		"restart_limit",
+	} {
+		if !strings.Contains(scriptText, expected) {
+			t.Fatalf("startup readiness policy missing %q in %s", expected, missionScriptPath)
+		}
 	}
 }
 

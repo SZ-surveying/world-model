@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import time
 from collections.abc import Sequence
@@ -187,6 +188,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--operator-confirm-topic", default="/navlab/hover/operator_confirm")
     parser.add_argument("--operator-confirm-received", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--max-horizontal-drift-m", type=float, default=1.0)
+    parser.add_argument("--hover-span-target-m", type=float, default=0.0)
+    parser.add_argument("--hover-span-hard-cap-m", type=float, default=0.0)
     parser.add_argument("--max-altitude-drift-m", type=float, default=0.6)
     parser.add_argument("--origin-lat-deg", type=float, default=DEFAULT_ORIGIN_LAT_DEG)
     parser.add_argument("--origin-lon-deg", type=float, default=DEFAULT_ORIGIN_LON_DEG)
@@ -247,6 +250,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def run(argv: Sequence[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
+    args.hover_span_target_m = args.hover_span_target_m or args.max_horizontal_drift_m
+    args.hover_span_hard_cap_m = args.hover_span_hard_cap_m or args.max_horizontal_drift_m
+    if (
+        args.hover_span_target_m <= 0
+        or args.hover_span_hard_cap_m <= 0
+        or not math.isfinite(args.hover_span_target_m)
+        or not math.isfinite(args.hover_span_hard_cap_m)
+        or args.hover_span_target_m > args.hover_span_hard_cap_m
+    ):
+        raise SystemExit("invalid hover SLO policy: require 0 < hover-span-target-m <= hover-span-hard-cap-m")
 
     try:
         import rclpy
@@ -417,6 +430,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                     operator_confirm_timeout_sec=args.operator_confirm_timeout_sec,
                     hover_duration_tolerance_sec=HOVER_DURATION_TOLERANCE_SEC,
                     max_horizontal_drift_m=args.max_horizontal_drift_m,
+                    hover_span_target_m=args.hover_span_target_m or args.max_horizontal_drift_m,
+                    hover_span_hard_cap_m=args.hover_span_hard_cap_m or args.max_horizontal_drift_m,
                     max_altitude_drift_m=args.max_altitude_drift_m,
                     preflight_ready_sec=args.preflight_ready_sec,
                     max_wait_ready_sec=args.max_wait_ready_sec,
@@ -513,6 +528,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                     hover_hold_sec=args.hover_hold_sec,
                     duration_tolerance_sec=HOVER_DURATION_TOLERANCE_SEC,
                     max_horizontal_drift_m=args.max_horizontal_drift_m,
+                    hover_span_target_m=args.hover_span_target_m or args.max_horizontal_drift_m,
+                    hover_span_hard_cap_m=args.hover_span_hard_cap_m or args.max_horizontal_drift_m,
                     max_altitude_drift_m=args.max_altitude_drift_m,
                 ),
             )
@@ -712,6 +729,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                     max_altitude_drift_m=args.max_altitude_drift_m,
                     local_position_count=self._runtime.message_counts.get("LOCAL_POSITION_NED", 0),
                     crash_detected=self._runtime.crash_detected,
+                    hover_span_target_m=args.hover_span_target_m,
+                    hover_span_hard_cap_m=args.hover_span_hard_cap_m,
                 )
             self._landing_evidence.start_with_hover_evidence(
                 now,

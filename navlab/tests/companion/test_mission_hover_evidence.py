@@ -140,6 +140,34 @@ def test_hover_completion_rejects_large_span_even_when_endpoint_drift_is_small()
     assert evaluation.acceptance["horizontal_span_ok"] is False
 
 
+def test_hover_completion_allows_target_exceed_below_hard_cap_as_yellow() -> None:
+    recorder = HoverEvidenceRecorder()
+
+    recorder.update_phase(phase="hover_hold", now_monotonic=10.0, terminal=False)
+    _append_sample(recorder, now=10.0, x=0.0, y=0.0)
+    _append_sample(recorder, now=11.0, x=0.118, y=0.0)
+    _append_sample(recorder, now=12.0, x=0.0, y=0.0)
+
+    evaluation = recorder.evaluate_completion(
+        target_alt_m=0.45,
+        altitude_tolerance_m=0.1,
+        hold_sec=2.0,
+        duration_tolerance_sec=0.25,
+        max_horizontal_drift_m=0.1,
+        hover_span_target_m=0.1,
+        hover_span_hard_cap_m=0.15,
+        max_altitude_drift_m=0.1,
+        local_position_count=3,
+        crash_detected=False,
+    )
+
+    assert evaluation.ok is True
+    assert evaluation.reason == "hover_complete"
+    assert evaluation.acceptance["horizontal_span_ok"] is True
+    assert evaluation.acceptance["horizontal_span_target_ok"] is False
+    assert evaluation.acceptance["horizontal_span_tier"] == "yellow"
+
+
 def test_hover_completion_rejects_external_nav_loss_after_airborne() -> None:
     recorder = HoverEvidenceRecorder()
 

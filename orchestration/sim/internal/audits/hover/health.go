@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"navlab/orchestration-sim/internal/artifactlayout"
 )
 
 type HoverHealthFinding struct {
@@ -100,24 +102,77 @@ func BuildHoverHealthCohort(artifactDirs []string) (*HoverHealthCohortSummary, e
 	}
 	metricValues := map[string][]float64{}
 	metricSpecs := map[string]HoverMetricValue{}
+	missionSpanValues := []float64{}
+	missionSpanTargetExceeds := 0
+	missionSpanHardCapExceeds := 0
+	startupPolicyOutcomeCounts := map[string]int{}
 	for _, artifactDir := range artifactDirs {
 		audit, err := BuildHoverHealthAudit(artifactDir)
 		if err != nil {
 			return nil, fmt.Errorf("build health audit for %s: %w", artifactDir, err)
 		}
+		missionSpan := missionHoverSpanMetric(artifactDir)
 		cohort.BandCounts[string(audit.HealthBand)]++
-		cohort.Runs = append(cohort.Runs, map[string]any{
+		runRow := map[string]any{
 			"artifact_dir":                  artifactDir,
+			"summary_artifact":              filepath.Join(artifactDir, "summary.json"),
+			"mission_summary_artifact":      filepath.Join(artifactDir, "mission_summary.json"),
+			"hover_health_artifact":         artifactlayout.Audit(artifactDir, "hover_health_summary.json"),
+			"contract_audit_artifact":       artifactlayout.Audit(artifactDir, "contract_audit.json"),
+			"trajectory_audit_artifact":     artifactlayout.Audit(artifactDir, "trajectory_audit.json"),
 			"health_band":                   audit.HealthBand,
 			"hard_blocker_count":            len(audit.HardBlockers),
 			"statistical_warning_count":     len(audit.StatisticalWarnings),
 			"review_only_finding_count":     len(audit.ReviewOnlyFindings),
 			"sim_auto_continue_allowed":     audit.Proceed.SimAutoContinueAllowed,
 			"real_operator_confirm_allowed": audit.Proceed.RealOperatorConfirmAllowed,
-		})
+		}
+		if missionSpan != nil {
+			runRow["mission_hover_span"] = missionSpan
+			if value, ok := finiteMetric(missionSpan, "horizontal_span_m"); ok {
+				missionSpanValues = append(missionSpanValues, value)
+				if exceeded, _ := missionSpan["target_exceeded"].(bool); exceeded {
+					missionSpanTargetExceeds++
+				}
+				if exceeded, _ := missionSpan["hard_cap_exceeded"].(bool); exceeded {
+					missionSpanHardCapExceeds++
+				}
+			}
+		}
+		if outcome := startupReadinessRuntimeOutcome(artifactDir); outcome != "" {
+			runRow["startup_readiness_policy_outcome"] = outcome
+			runRow["startup_readiness_runtime_artifact"] = artifactlayout.Audit(artifactDir, "startup_readiness_runtime.json")
+			startupPolicyOutcomeCounts[outcome]++
+		}
+		cohort.Runs = append(cohort.Runs, runRow)
 		for _, metric := range audit.Metrics {
 			metricValues[metric.Key] = append(metricValues[metric.Key], metric.Value)
 			metricSpecs[metric.Key] = metric
+		}
+	}
+	if len(missionSpanValues) > 0 {
+		cohort.Metrics["mission_hover_horizontal_span_m"] = map[string]any{
+			"count":                 len(missionSpanValues),
+			"unit":                  "m",
+			"tier":                  HoverTierARealFlightSafety,
+			"target_max":            0.10,
+			"hard_max":              0.15,
+			"sample_size_rule":      cohort.SampleSizeRule,
+			"target_exceed_count":   missionSpanTargetExceeds,
+			"hard_cap_exceed_count": missionSpanHardCapExceeds,
+			"target_exceed_rate":    float64(missionSpanTargetExceeds) / float64(len(missionSpanValues)),
+			"hard_cap_exceed_rate":  float64(missionSpanHardCapExceeds) / float64(len(missionSpanValues)),
+			"p50":                   percentileFloat64(missionSpanValues, 0.50),
+			"p90":                   percentileFloat64(missionSpanValues, 0.90),
+			"p95":                   percentileFloat64(missionSpanValues, 0.95),
+			"p99":                   percentileFloat64(missionSpanValues, 0.99),
+			"max":                   percentileFloat64(missionSpanValues, 1.00),
+		}
+	}
+	if len(startupPolicyOutcomeCounts) > 0 {
+		cohort.Metrics["startup_readiness_policy_outcomes"] = map[string]any{
+			"counts":   startupPolicyOutcomeCounts,
+			"artifact": "audits/startup_readiness_runtime.json",
 		}
 	}
 	for key, values := range metricValues {
@@ -137,6 +192,67 @@ func BuildHoverHealthCohort(artifactDirs []string) (*HoverHealthCohortSummary, e
 		}
 	}
 	return cohort, nil
+}
+
+func missionHoverSpanMetric(artifactDir string) map[string]any {
+	path := filepath.Join(artifactDir, "mission_summary.json")
+	payload := map[string]any{}
+	if err := readHoverHealthJSON(path, &payload); err != nil {
+		return nil
+	}
+	hoverDrift := mapFromAny(payload["hover_drift"])
+	if hoverDrift == nil {
+		return nil
+	}
+	value, ok := finiteMetric(hoverDrift, "horizontal_span_m")
+	if !ok {
+		return nil
+	}
+	target := metricFloat(hoverDrift, "hover_span_target_m")
+	if target <= 0 {
+		target = metricFloat(payload, "hover_span_target_m")
+	}
+	if target <= 0 {
+		target = metricFloat(hoverDrift, "max_horizontal_drift_m")
+	}
+	if target <= 0 {
+		target = 0.10
+	}
+	hardCap := metricFloat(hoverDrift, "hover_span_hard_cap_m")
+	if hardCap <= 0 {
+		hardCap = metricFloat(payload, "hover_span_hard_cap_m")
+	}
+	if hardCap <= 0 {
+		hardCap = target
+	}
+	tier, _ := hoverDrift["horizontal_span_tier"].(string)
+	if tier == "" {
+		switch {
+		case value <= target:
+			tier = "green"
+		case value <= hardCap:
+			tier = "yellow"
+		default:
+			tier = "red"
+		}
+	}
+	return map[string]any{
+		"artifact":          filepath.Join(artifactDir, "mission_summary.json"),
+		"horizontal_span_m": value,
+		"target_m":          target,
+		"hard_cap_m":        hardCap,
+		"tier":              tier,
+		"target_exceeded":   value > target,
+		"hard_cap_exceeded": value > hardCap,
+	}
+}
+
+func finiteMetric(payload map[string]any, key string) (float64, bool) {
+	if !metricNumberPresent(payload, key) {
+		return 0, false
+	}
+	value := metricFloat(payload, key)
+	return value, true
 }
 
 func hoverHealthSampleSizeRule(size int) string {
@@ -381,6 +497,23 @@ func (summary *HoverHealthSummary) finishProceed() {
 	case HoverHealthYellow:
 		summary.Proceed.Reason = "health_yellow_continue_hover_and_collect_stats"
 	}
+}
+
+func startupReadinessRuntimeOutcome(artifactDir string) string {
+	payload := map[string]any{}
+	if err := readHoverHealthJSON(artifactlayout.Audit(artifactDir, "startup_readiness_runtime.json"), &payload); err != nil {
+		return ""
+	}
+	decision := mapFromAny(payload["final_decision"])
+	action, _ := decision["action"].(string)
+	reason, _ := decision["reason"].(string)
+	if strings.TrimSpace(action) == "" {
+		return ""
+	}
+	if strings.TrimSpace(reason) == "" {
+		return action
+	}
+	return action + ":" + reason
 }
 
 func readHoverHealthJSON(path string, out any) error {

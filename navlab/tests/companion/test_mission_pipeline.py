@@ -233,6 +233,8 @@ def test_hover_pipeline_runner_starts_landing_on_terminal_hover() -> None:
             hover_hold_sec=20.0,
             duration_tolerance_sec=0.25,
             max_horizontal_drift_m=0.3,
+            hover_span_target_m=0.3,
+            hover_span_hard_cap_m=0.3,
             max_altitude_drift_m=0.25,
         ),
     )
@@ -329,6 +331,8 @@ def test_landing_pipeline_runner_interprets_stage_complete_and_task_success() ->
             hover_hold_sec=20.0,
             duration_tolerance_sec=0.25,
             max_horizontal_drift_m=0.3,
+            hover_span_target_m=0.3,
+            hover_span_hard_cap_m=0.3,
             max_altitude_drift_m=0.25,
         ),
     )
@@ -379,6 +383,8 @@ def test_landing_pipeline_runner_handles_missing_target_as_abort() -> None:
             hover_hold_sec=20.0,
             duration_tolerance_sec=0.25,
             max_horizontal_drift_m=0.3,
+            hover_span_target_m=0.3,
+            hover_span_hard_cap_m=0.3,
             max_altitude_drift_m=0.25,
         ),
     )

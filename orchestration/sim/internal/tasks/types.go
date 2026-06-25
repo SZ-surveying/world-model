@@ -20,6 +20,8 @@ type ConfiguredTask struct {
 type PlanOptions struct {
 	DurationSec       float64
 	SimulationProfile string
+	HoverSpanTargetM  float64
+	HoverSpanHardCapM float64
 }
 
 type Plan struct {
@@ -27,6 +29,8 @@ type Plan struct {
 	Description       string                `json:"description"`
 	DurationSec       float64               `json:"duration_sec"`
 	SimulationProfile string                `json:"simulation_profile"`
+	HoverSpanTargetM  float64               `json:"hover_span_target_m,omitempty"`
+	HoverSpanHardCapM float64               `json:"hover_span_hard_cap_m,omitempty"`
 	Capabilities      []string              `json:"capabilities"`
 	Steps             []string              `json:"steps"`
 	Helpers           []helpers.Definition  `json:"helpers"`
@@ -58,6 +62,8 @@ func (task ConfiguredTask) Plan(options PlanOptions, helperRegistry *helpers.Reg
 		Description:       task.Config.Description,
 		DurationSec:       durationSec,
 		SimulationProfile: simulationProfile,
+		HoverSpanTargetM:  options.HoverSpanTargetM,
+		HoverSpanHardCapM: options.HoverSpanHardCapM,
 		Capabilities:      append([]string(nil), task.Config.Capabilities...),
 		Steps:             append([]string(nil), task.Definition.Steps...),
 		Helpers:           helperDefinitions,

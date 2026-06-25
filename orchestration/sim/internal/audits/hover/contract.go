@@ -11,6 +11,8 @@ import (
 
 	"github.com/foxglove/mcap/go/mcap"
 	"github.com/klauspost/compress/zstd"
+
+	"navlab/orchestration-sim/internal/artifactlayout"
 )
 
 type hoverContractSpec struct {
@@ -122,6 +124,54 @@ var phase43ContractSpecs = []hoverContractSpec{
 		ComparisonRule:   "Validate field map and freshness; do not compare raw fields without ENU/NED conversion.",
 		RuntimeInfluence: "Sends MAVLink ODOMETRY to FCU.",
 		RealityRelevance: "Primary real-flight FCU/EKF contract.",
+	},
+	{
+		Key:              "fcu_controller_status",
+		Topic:            "/navlab/fcu/controller/status",
+		MessageType:      "std_msgs/msg/String JSON",
+		Scope:            "real-flight-evidence-review",
+		Role:             "FCU controller runtime status evidence",
+		ExpectedFrame:    "",
+		ExpectedChild:    "",
+		Origin:           "FCU controller runtime state machine",
+		Units:            "JSON status counters and booleans",
+		TimestampSource:  "ROS status sample log time; payload fields are controller-owned",
+		Semantics:        "Evidence that controller readiness, takeoff, and setpoint publication behavior were observable.",
+		ComparisonRule:   "Do not compare as pose; use to explain FCU/controller behavior and missing setpoint evidence.",
+		RuntimeInfluence: "Status evidence only.",
+		RealityRelevance: "Real-flight runs need equivalent controller evidence or an explicit optional rationale.",
+	},
+	{
+		Key:              "fcu_setpoint_intent_status",
+		Topic:            "/navlab/fcu/setpoint/intent",
+		MessageType:      "std_msgs/msg/String JSON",
+		Scope:            "real-flight-evidence-review",
+		Role:             "FCU setpoint intent evidence",
+		ExpectedFrame:    "",
+		ExpectedChild:    "",
+		Origin:           "task/mission setpoint owner",
+		Units:            "JSON status payload",
+		TimestampSource:  "ROS status sample log time",
+		Semantics:        "Evidence of intended FCU setpoints before controller output.",
+		ComparisonRule:   "Do not compare as pose; use to explain whether controller output was commanded.",
+		RuntimeInfluence: "Status evidence only.",
+		RealityRelevance: "Real-flight runs need equivalent setpoint-intent evidence or an explicit optional rationale.",
+	},
+	{
+		Key:              "fcu_setpoint_output_status",
+		Topic:            "/navlab/fcu/setpoint/output",
+		MessageType:      "std_msgs/msg/String JSON",
+		Scope:            "real-flight-evidence-review",
+		Role:             "FCU setpoint output evidence",
+		ExpectedFrame:    "",
+		ExpectedChild:    "",
+		Origin:           "FCU controller output publisher",
+		Units:            "JSON status counters and path metrics",
+		TimestampSource:  "ROS status sample log time",
+		Semantics:        "Evidence of actual controller output toward FCU/MAVLink setpoints.",
+		ComparisonRule:   "Do not compare as pose; use counters/path fields to explain controller output behavior.",
+		RuntimeInfluence: "Status evidence only.",
+		RealityRelevance: "Real-flight runs need equivalent setpoint-output evidence or an explicit optional rationale.",
 	},
 	{
 		Key:              "gazebo_model_odometry",
@@ -342,6 +392,8 @@ func summarizeHoverContractAudit(path string, artifactDir string) (map[string]an
 		if row.SampleCount == 0 {
 			if spec.Topic == "/gazebo/tf_static" {
 				blockers = append(blockers, "gazebo_tf_static_missing_review_source")
+			} else if spec.Scope == "real-flight-evidence-review" {
+				continue
 			} else {
 				blockers = append(blockers, "missing:"+spec.Topic)
 			}
@@ -354,8 +406,10 @@ func summarizeHoverContractAudit(path string, artifactDir string) (map[string]an
 			blockers = append(blockers, "child_frame_contract_unproven:"+spec.Topic)
 		}
 	}
-	bridgeEvidence := parseGazeboBridgeOdometryEvidence(filepath.Join(artifactDir, "bridge_override.yaml"))
-	modelEvidence := parseGazeboModelOverlayOdometryEvidence(filepath.Join(artifactDir, "model_overlay.sdf"))
+	bridgeEvidence := parseGazeboBridgeOdometryEvidence(artifactlayout.RuntimeConfig(artifactDir, "bridge_override.yaml"))
+	modelEvidence := parseGazeboModelOverlayOdometryEvidence(artifactlayout.RuntimeConfig(artifactDir, "model_overlay.sdf"))
+	gazeboComparability := gazeboComparabilitySummary(topics, bridgeEvidence, modelEvidence)
+	fcuControlEvidence := fcuControlEvidenceSummary(topics)
 	blockers = append(blockers, gazeboContractBlockers(bridgeEvidence, modelEvidence)...)
 
 	return map[string]any{
@@ -372,10 +426,165 @@ func summarizeHoverContractAudit(path string, artifactDir string) (map[string]an
 		},
 		"topics":                 topics,
 		"blockers":               blockers,
+		"gazebo_comparability":   gazeboComparability,
+		"fcu_control_evidence":   fcuControlEvidence,
 		"gazebo_bridge_evidence": bridgeEvidence,
 		"gazebo_model_evidence":  modelEvidence,
+		"gazebo_promotion_rule":  "Gazebo may become a hard blocker only in a separate contract-promotion phase with model/link/frame/time/sign tests and real-flight-safe gate tests.",
 		"decision_rule":          "No source is treated as truth by this audit. Compare sources only through documented frame/origin/time transforms.",
 	}, nil
+}
+
+func gazeboComparabilitySummary(topics map[string]any, bridgeEvidence map[string]any, modelEvidence map[string]any) map[string]any {
+	gazebo := mapFromAny(topics["gazebo_model_odometry"])
+	gazeboObserved := mapFromAny(gazebo["observed"])
+	slam := mapFromAny(topics["slam_odom"])
+	slamObserved := mapFromAny(slam["observed"])
+	bridgeTopic, _ := bridgeEvidence["bridge_gz_topic_name"].(string)
+	expectedTopic, _ := modelEvidence["expected_bridge_gz_topic_name"].(string)
+	gazeboFrameObserved := contractCountForValueGo(gazeboObserved, "frame_counts", "odom") > 0
+	gazeboChildObserved := contractCountForValueGo(gazeboObserved, "child_frame_counts", "base_link") > 0
+	slamFrameObserved := contractCountForValueGo(slamObserved, "frame_counts", "map") > 0
+	modelResolved := bridgeTopic != "" && expectedTopic != "" && bridgeTopic == expectedTopic && !strings.Contains(bridgeTopic, "{{") && !strings.Contains(bridgeTopic, "}}")
+	signConvention := strings.TrimSpace(stringFromAny(modelEvidence["sdf_gazebo_xyz_to_ned"]))
+	signStatus := "missing"
+	if signConvention != "" {
+		signStatus = "declared_unverified"
+	}
+	timeBasis := "missing_header_stamp"
+	if _, ok := gazeboObserved["first_header_stamp_sec"]; ok {
+		timeBasis = "ros_header_stamp_observed"
+	}
+	return map[string]any{
+		"scope": "sim-review-only",
+		"frame_origin": map[string]any{
+			"gazebo_frame":               "odom",
+			"slam_frame":                 "map",
+			"gazebo_frame_observed":      gazeboFrameObserved,
+			"gazebo_child_observed":      gazeboChildObserved,
+			"slam_frame_observed":        slamFrameObserved,
+			"same_origin_as_slam_map":    false,
+			"status":                     "different_origins_unpromoted",
+			"reason":                     "Gazebo odom and SLAM map origins are not proven identical by this audit.",
+			"required_for_promotion":     []string{"explicit Gazebo model/link origin", "SLAM map origin relation", "time-aligned transform proof"},
+			"review_only_until_promoted": true,
+			"runtime_control_unchanged":  true,
+			"uses_gazebo_truth_as_input": false,
+			"uses_known_map_as_input":    false,
+			"uses_fixed_pose_as_input":   false,
+		},
+		"time_basis": map[string]any{
+			"status":                          timeBasis,
+			"gazebo_first_header_stamp_sec":   gazeboObserved["first_header_stamp_sec"],
+			"gazebo_last_header_stamp_sec":    gazeboObserved["last_header_stamp_sec"],
+			"gazebo_first_log_time_sec":       gazeboObserved["first_log_time_sec_from_bag_start"],
+			"gazebo_last_log_time_sec":        gazeboObserved["last_log_time_sec_from_bag_start"],
+			"requires_aligned_window_compare": true,
+		},
+		"sign_convention": map[string]any{
+			"status":                    signStatus,
+			"sdf_gazebo_xyz_to_ned":     signConvention,
+			"sdf_model_xyz_to_airplane": strings.TrimSpace(stringFromAny(modelEvidence["sdf_model_xyz_to_airplane"])),
+			"requires_direction_test":   true,
+		},
+		"model_name_resolution": map[string]any{
+			"status":                    modelResolutionStatus(bridgeTopic, expectedTopic),
+			"bridge_gz_topic_name":      bridgeTopic,
+			"expected_gz_topic_name":    expectedTopic,
+			"resolved_exact_model":      modelResolved,
+			"sdf_model_name":            modelEvidence["sdf_model_name"],
+			"runtime_substitution_used": strings.Contains(bridgeTopic, "{{") || strings.Contains(bridgeTopic, "}}"),
+		},
+		"link_name_resolution": map[string]any{
+			"status":                  linkResolutionStatus(modelEvidence, gazeboChildObserved),
+			"sdf_robot_base_frame":    modelEvidence["sdf_robot_base_frame"],
+			"gazebo_child_observed":   gazeboChildObserved,
+			"requires_link_transform": true,
+		},
+		"directly_comparable_to_slam_map_delta": false,
+		"direct_comparison_status":              "review_only_unpromoted",
+		"direct_comparison_reason":              "Frame origin, model/link resolution, timestamp basis, and sign convention are not all promoted; compare as review-only relative evidence.",
+	}
+}
+
+func fcuControlEvidenceSummary(topics map[string]any) map[string]any {
+	specs := []struct {
+		key      string
+		topic    string
+		required bool
+	}{
+		{key: "fcu_controller_status", topic: "/navlab/fcu/controller/status", required: false},
+		{key: "fcu_setpoint_intent_status", topic: "/navlab/fcu/setpoint/intent", required: false},
+		{key: "fcu_setpoint_output_status", topic: "/navlab/fcu/setpoint/output", required: false},
+	}
+	out := map[string]any{
+		"scope":                         "real-flight-evidence-review",
+		"missing_evidence_is_ambiguous": false,
+		"missing_policy":                "Topic absence is explicit review debt unless a later phase promotes it to a hard runtime gate.",
+		"topics":                        map[string]any{},
+	}
+	rows := mapFromAny(out["topics"])
+	allPresent := true
+	for _, spec := range specs {
+		topic := mapFromAny(topics[spec.key])
+		observed := mapFromAny(topic["observed"])
+		count := metricInt(observed, "sample_count")
+		status := "present"
+		reason := "captured in hover rosbag/profile"
+		if count == 0 {
+			allPresent = false
+			status = "missing_review_evidence"
+			reason = "missing is explicit and routed to observation-contract review, not silently ignored"
+		}
+		rows[spec.key] = map[string]any{
+			"topic":          spec.topic,
+			"sample_count":   count,
+			"status":         status,
+			"required":       spec.required,
+			"missing_reason": reason,
+			"latest_status":  observed["latest_status"],
+		}
+	}
+	out["all_present"] = allPresent
+	return out
+}
+
+func modelResolutionStatus(bridgeTopic string, expectedTopic string) string {
+	if bridgeTopic == "" || expectedTopic == "" {
+		return "missing_evidence"
+	}
+	if strings.Contains(bridgeTopic, "{{") || strings.Contains(bridgeTopic, "}}") {
+		return "runtime_substitution_unverified"
+	}
+	if bridgeTopic != expectedTopic {
+		return "model_name_mismatch"
+	}
+	return "resolved_exact_model"
+}
+
+func linkResolutionStatus(modelEvidence map[string]any, childObserved bool) string {
+	if strings.TrimSpace(stringFromAny(modelEvidence["sdf_robot_base_frame"])) == "" {
+		return "missing_sdf_robot_base_frame"
+	}
+	if !childObserved {
+		return "child_frame_not_observed"
+	}
+	return "base_link_observed"
+}
+
+func contractCountForValueGo(observed map[string]any, field string, value string) int {
+	for _, raw := range sliceFromAny(observed[field]) {
+		row := mapFromAny(raw)
+		if row["value"] == value {
+			return metricInt(row, "count")
+		}
+	}
+	return 0
+}
+
+func stringFromAny(value any) string {
+	text, _ := value.(string)
+	return text
 }
 
 func gazeboContractBlockers(bridgeEvidence map[string]any, modelEvidence map[string]any) []string {

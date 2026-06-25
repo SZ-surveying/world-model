@@ -24,6 +24,7 @@ var hoverTrajectoryPoseTopics = []struct {
 	{key: "external_nav_odom", topic: "/external_nav/odom", kind: "odometry"},
 	{key: "fcu_local_position_pose", topic: "/navlab/fcu/local_position_pose", kind: "pose_stamped"},
 	{key: "gazebo_model_odometry", topic: "/gazebo/model/odometry", kind: "odometry"},
+	{key: "scan_reference_drift_odom", topic: "/navlab/scan_reference_drift/odom", kind: "odometry"},
 }
 
 var hoverTrajectoryStatusTopics = map[string]string{
@@ -163,6 +164,7 @@ func summarizeHoverTrajectoryAudit(path string) (map[string]any, error) {
 			alignedAtPeaks[spec.key] = alignedTrajectoryRow(absPeakTime, poses, references, statuses, bagStartSec, maxNearestAgeSec)
 		}
 	}
+	peakTimeAlignment := summarizePeakTimeAlignment(peaks, maxNearestAgeSec)
 
 	pairwise := map[string]any{}
 	for _, pair := range [][2]string{
@@ -204,12 +206,95 @@ func summarizeHoverTrajectoryAudit(path string) (map[string]any, error) {
 		"hover_anchor":                     hoverAnchor,
 		"sources":                          sourceSummaries,
 		"peaks":                            peaks,
+		"peak_time_alignment":              peakTimeAlignment,
 		"aligned_at_each_source_peak":      alignedAtPeaks,
 		"pairwise_aligned_relative_motion": pairwise,
 		"timeline_step_sec":                binStepSec,
 		"timeline_max_nearest_age_sec":     maxNearestAgeSec,
 		"timeline":                         timeline,
 	}, nil
+}
+
+func summarizePeakTimeAlignment(peaks map[string]any, toleranceSec float64) map[string]any {
+	sourceKeys := []string{
+		"slam_odom",
+		"external_nav_odom",
+		"fcu_local_position_pose",
+		"gazebo_model_odometry",
+		"scan_reference_drift_odom",
+	}
+	sources := map[string]any{}
+	for _, key := range sourceKeys {
+		peak := mapFromAny(peaks[key])
+		status := "missing"
+		if peak != nil {
+			status, _ = peak["status"].(string)
+		}
+		sources[key] = map[string]any{
+			"status":                         status,
+			"sample_count":                   metricInt(peak, "sample_count"),
+			"peak_time_sec_from_bag_start":   metricFloat(peak, "time_sec_from_bag_start"),
+			"peak_dx_m":                      metricFloat(peak, "dx_m"),
+			"peak_dy_m":                      metricFloat(peak, "dy_m"),
+			"peak_horizontal_m":              metricFloat(peak, "horizontal_m"),
+			"has_evaluated_peak":             status == "evaluated",
+			"time_basis":                     "rosbag_log_time_sec",
+			"relative_vector_reference_rule": "first sample in hover window, or first available source sample when the hover window is empty",
+		}
+	}
+
+	pairs := map[string]any{}
+	for leftIdx := 0; leftIdx < len(sourceKeys); leftIdx++ {
+		for rightIdx := leftIdx + 1; rightIdx < len(sourceKeys); rightIdx++ {
+			leftKey := sourceKeys[leftIdx]
+			rightKey := sourceKeys[rightIdx]
+			pairs[leftKey+"__"+rightKey] = summarizePeakTimePair(peaks, leftKey, rightKey, toleranceSec)
+		}
+	}
+	return map[string]any{
+		"schema":              "navlab.hover_peak_time_alignment.v1",
+		"diagnostic_only":     true,
+		"tolerance_sec":       toleranceSec,
+		"sign_deadband_m":     0.02,
+		"time_basis":          "rosbag_log_time_sec",
+		"sources":             sources,
+		"pairwise_peak_delta": pairs,
+		"interpretation":      "Peak-time and direction disagreement is observation-contract evidence only; it is not a runtime gate by itself.",
+	}
+}
+
+func summarizePeakTimePair(peaks map[string]any, leftKey string, rightKey string, toleranceSec float64) map[string]any {
+	left := mapFromAny(peaks[leftKey])
+	right := mapFromAny(peaks[rightKey])
+	leftStatus, _ := left["status"].(string)
+	rightStatus, _ := right["status"].(string)
+	if leftStatus != "evaluated" || rightStatus != "evaluated" {
+		return map[string]any{
+			"status":       "insufficient_peak_evidence",
+			"left_status":  leftStatus,
+			"right_status": rightStatus,
+		}
+	}
+	leftTime := metricFloat(left, "time_sec_from_bag_start")
+	rightTime := metricFloat(right, "time_sec_from_bag_start")
+	leftVec := [2]float64{metricFloat(left, "dx_m"), metricFloat(left, "dy_m")}
+	rightVec := [2]float64{metricFloat(right, "dx_m"), metricFloat(right, "dy_m")}
+	row := summarizeXYVectorPair(leftVec, rightVec, metricInt(left, "sample_count"), metricInt(right, "sample_count"))
+	peakDelta := math.Abs(leftTime - rightTime)
+	row["status"] = "evaluated"
+	row["left_source"] = leftKey
+	row["right_source"] = rightKey
+	row["left_peak_time_sec_from_bag_start"] = leftTime
+	row["right_peak_time_sec_from_bag_start"] = rightTime
+	row["peak_time_delta_sec"] = peakDelta
+	row["within_tolerance"] = peakDelta <= toleranceSec
+	row["left_peak_dx_m"] = leftVec[0]
+	row["left_peak_dy_m"] = leftVec[1]
+	row["right_peak_dx_m"] = rightVec[0]
+	row["right_peak_dy_m"] = rightVec[1]
+	row["sign_agreement"] = row["x_sign_agreement"] == true && row["y_sign_agreement"] == true
+	row["opposite_direction_suspected"] = metricFloat(row, "direction_cosine") < -0.5
+	return row
 }
 
 func filterPoseWindow(samples []timedPoseSample, startSec float64, endSec float64) []timedPoseSample {

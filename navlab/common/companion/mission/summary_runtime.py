@@ -48,6 +48,8 @@ class HoverMissionSummaryConfig:
     operator_confirm_timeout_sec: float
     hover_duration_tolerance_sec: float
     max_horizontal_drift_m: float
+    hover_span_target_m: float
+    hover_span_hard_cap_m: float
     max_altitude_drift_m: float
     preflight_ready_sec: float
     max_wait_ready_sec: float
@@ -237,6 +239,8 @@ class HoverMissionSummaryRuntime:
             hover_settle_sec=self._config.hover_settle_sec,
             hover_altitude_tolerance_m=self._config.hover_altitude_tolerance_m,
             hover_hold_sec=self._config.hover_hold_sec,
+            hover_span_target_m=self._config.hover_span_target_m,
+            hover_span_hard_cap_m=self._config.hover_span_hard_cap_m,
             hover_health_min_observation_sec=self._config.hover_health_min_observation_sec,
             hover_health_stable_required_sec=self._config.hover_health_stable_required_sec,
             hover_health_max_wait_sec=self._config.hover_health_max_wait_sec,
@@ -353,8 +357,18 @@ class HoverMissionSummaryRuntime:
 
         jump_report = _slam_quality_jump_report(external_nav_status_payload or {})
         jump_seen = slam_quality == "jump" or slam_quality_reason == "pose_or_yaw_jump"
-        horizontal_span_ok = drift.horizontal_span_m <= self._config.max_horizontal_drift_m
-        horizontal_drift_ok = drift.horizontal_drift_m <= self._config.max_horizontal_drift_m
+        horizontal_span_tier = _hover_slo_tier(
+            drift.horizontal_span_m,
+            target_m=self._config.hover_span_target_m,
+            hard_cap_m=self._config.hover_span_hard_cap_m,
+        )
+        horizontal_drift_tier = _hover_slo_tier(
+            drift.horizontal_drift_m,
+            target_m=self._config.hover_span_target_m,
+            hard_cap_m=self._config.hover_span_hard_cap_m,
+        )
+        horizontal_span_ok = horizontal_span_tier in ("green", "yellow")
+        horizontal_drift_ok = horizontal_drift_tier in ("green", "yellow")
         z_span_ok = drift.z_span_m <= self._config.max_altitude_drift_m
         duration_ok = drift.duration_sec >= self._config.hover_hold_sec - self._config.hover_duration_tolerance_sec
         no_slam_quality_loss_after_airborne = slam_quality_loss_duration_sec <= 0.0
@@ -369,12 +383,23 @@ class HoverMissionSummaryRuntime:
             "horizontal_drift_m": json_safe_number(drift.horizontal_drift_m),
             "z_drift_m": json_safe_number(drift.z_drift_m),
             "max_horizontal_drift_m": self._config.max_horizontal_drift_m,
+            "hover_span_target_m": self._config.hover_span_target_m,
+            "hover_span_hard_cap_m": self._config.hover_span_hard_cap_m,
+            "hover_slo_policy_source": "go_runtime_config",
             "max_altitude_drift_m": self._config.max_altitude_drift_m,
             "duration_tolerance_sec": self._config.hover_duration_tolerance_sec,
             "quality": drift_quality,
             "gps_like": drift_quality == "tight" and drift.horizontal_drift_m <= 0.05 and drift.z_span_m <= 0.05,
             "horizontal_span_ok": horizontal_span_ok,
             "horizontal_drift_ok": horizontal_drift_ok,
+            "horizontal_span_target_ok": horizontal_span_tier == "green",
+            "horizontal_drift_target_ok": horizontal_drift_tier == "green",
+            "horizontal_span_hard_cap_ok": horizontal_span_ok,
+            "horizontal_drift_hard_cap_ok": horizontal_drift_ok,
+            "horizontal_span_tier": horizontal_span_tier,
+            "horizontal_drift_tier": horizontal_drift_tier,
+            "horizontal_span_warning": horizontal_span_tier == "yellow",
+            "horizontal_drift_warning": horizontal_drift_tier == "yellow",
             "z_span_ok": z_span_ok,
             "duration_ok": duration_ok,
             "no_slam_quality_loss_after_airborne": no_slam_quality_loss_after_airborne,
@@ -423,6 +448,16 @@ def _finite_number(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _hover_slo_tier(value: float, *, target_m: float, hard_cap_m: float) -> str:
+    if target_m <= 0 or hard_cap_m <= 0 or target_m > hard_cap_m or not math.isfinite(value):
+        return "unusable"
+    if value <= target_m:
+        return "green"
+    if value <= hard_cap_m:
+        return "yellow"
+    return "red"
 
 
 def _slam_quality_jump_report(payload: Mapping[str, object]) -> dict[str, float | None]:

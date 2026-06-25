@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/artifacts"
 	hoveraudit "navlab/orchestration-sim/internal/audits/hover"
 	"navlab/orchestration-sim/internal/config"
@@ -154,6 +155,8 @@ func newRunCommand(ctx *appContext) *cobra.Command {
 	var tuiMode bool
 	var durationSec float64
 	var simulationProfile string
+	var hoverSpanTargetM float64
+	var hoverSpanHardCapM float64
 	cmd := &cobra.Command{
 		Use:   "run <task-id>",
 		Short: "Plan or run one simulation task",
@@ -170,6 +173,8 @@ func newRunCommand(ctx *appContext) *cobra.Command {
 				tasks.PlanOptions{
 					DurationSec:       durationSec,
 					SimulationProfile: simulationProfile,
+					HoverSpanTargetM:  hoverSpanTargetM,
+					HoverSpanHardCapM: hoverSpanHardCapM,
 				},
 			)
 		},
@@ -178,6 +183,8 @@ func newRunCommand(ctx *appContext) *cobra.Command {
 	cmd.Flags().BoolVar(&tuiMode, "tui", false, "open the replay TUI after dry-run artifact generation")
 	cmd.Flags().Float64Var(&durationSec, "duration-sec", 0, "override task duration in seconds")
 	cmd.Flags().StringVar(&simulationProfile, "simulation-profile", "", "override simulation profile")
+	cmd.Flags().Float64Var(&hoverSpanTargetM, "hover-span-target-m", 0, "override hover XY span SLO target in meters")
+	cmd.Flags().Float64Var(&hoverSpanHardCapM, "hover-span-hard-cap-m", 0, "override hover XY span hard cap in meters")
 	return cmd
 }
 
@@ -281,12 +288,12 @@ func newAuditHoverSingleCommand(name string, short string, defaultOutput string,
 				return err
 			}
 			if output == "" {
-				output = filepath.Join(artifactDir, defaultOutput)
+				output = artifactlayout.Audit(artifactDir, defaultOutput)
 			}
 			return writeAuditJSON(output, audit)
 		},
 	}
-	cmd.Flags().StringVar(&output, "output", "", "output JSON path; defaults to <artifact-dir>/"+defaultOutput)
+	cmd.Flags().StringVar(&output, "output", "", "output JSON path; defaults to <artifact-dir>/"+artifactlayout.AuditRel(defaultOutput))
 	return cmd
 }
 
@@ -306,7 +313,7 @@ func newAuditHoverHealthCommand() *cobra.Command {
 				}
 				payload = audit
 				if output == "" {
-					output = filepath.Join(artifactDir, "hover_health_summary.json")
+					output = artifactlayout.Audit(artifactDir, "hover_health_summary.json")
 				}
 			} else {
 				cohort, err := hoveraudit.BuildHoverHealthCohort(args)
@@ -318,7 +325,7 @@ func newAuditHoverHealthCommand() *cobra.Command {
 			return writeAuditJSON(output, payload)
 		},
 	}
-	cmd.Flags().StringVar(&output, "output", "", "output JSON path; defaults to <artifact-dir>/hover_health_summary.json for one run, stdout for cohorts")
+	cmd.Flags().StringVar(&output, "output", "", "output JSON path; defaults to <artifact-dir>/audits/hover_health_summary.json for one run, stdout for cohorts")
 	return cmd
 }
 
@@ -338,7 +345,7 @@ func newAuditHoverInitCommand() *cobra.Command {
 				audit["artifact_dir"] = artifactDir
 				audits = append(audits, audit)
 				if len(args) == 1 && output == "" {
-					output = filepath.Join(artifactDir, "initialization_audit.json")
+					output = artifactlayout.Audit(artifactDir, "initialization_audit.json")
 				}
 			}
 			var payload any
@@ -355,7 +362,7 @@ func newAuditHoverInitCommand() *cobra.Command {
 			return writeAuditJSON(output, payload)
 		},
 	}
-	cmd.Flags().StringVar(&output, "output", "", "output JSON path; defaults to <artifact-dir>/initialization_audit.json for one run, stdout for multiple")
+	cmd.Flags().StringVar(&output, "output", "", "output JSON path; defaults to <artifact-dir>/audits/initialization_audit.json for one run, stdout for multiple")
 	return cmd
 }
 
@@ -366,14 +373,18 @@ func newAuditHoverGateReplayCommand(ctx *appContext) *cobra.Command {
 		Short: "Replay hover result-gate evaluation from saved artifacts",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			payload, err := buildHoverGateReplay(ctx.loader(), args[0])
+			artifactDir := args[0]
+			payload, err := buildHoverGateReplay(ctx.loader(), artifactDir)
 			if err != nil {
 				return err
+			}
+			if output == "" {
+				output = artifactlayout.Audit(artifactDir, "gate_replay.json")
 			}
 			return writeAuditJSON(output, payload)
 		},
 	}
-	cmd.Flags().StringVar(&output, "output", "", "write replay JSON to this path instead of stdout")
+	cmd.Flags().StringVar(&output, "output", "", "output JSON path; defaults to <artifact-dir>/audits/gate_replay.json")
 	return cmd
 }
 
@@ -513,6 +524,9 @@ func writeAuditJSON(outputPath string, payload any) error {
 	data = append(data, '\n')
 	if outputPath == "" {
 		_, err = os.Stdout.Write(data)
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return err
 	}
 	if err := os.WriteFile(outputPath, data, 0o644); err != nil {
@@ -891,7 +905,15 @@ func runTask(
 	fmt.Println(ui.KeyValue("id", prepared.Plan.TaskID))
 	fmt.Println(ui.KeyValue("description", prepared.Plan.Description))
 	fmt.Println(ui.KeyValue("duration_sec", fmt.Sprintf("%.3f", prepared.Plan.DurationSec)))
+	fmt.Println(ui.KeyValue("task_deadline_sec", fmt.Sprintf("%.3f", prepared.Plan.DurationSec)))
+	fmt.Println(ui.KeyValue("rosbag_post_task_grace_sec", fmt.Sprintf("%.3f", tasks.DefaultRosbagPostTaskGraceSec)))
 	fmt.Println(ui.KeyValue("simulation_profile", prepared.Plan.SimulationProfile))
+	if isHoverTaskID(prepared.Plan.TaskID) {
+		fmt.Println(ui.KeyValue("hover_span_target_m", fmt.Sprintf("%.3f", prepared.TaskRuntimeConfig.SlamHover.HoverSpanTargetM)))
+		fmt.Println(ui.KeyValue("hover_span_hard_cap_m", fmt.Sprintf("%.3f", prepared.TaskRuntimeConfig.SlamHover.HoverSpanHardCapM)))
+		policy := prepared.TaskRuntimeConfig.SlamHover.StartupReadinessPolicy
+		fmt.Println(ui.KeyValue("startup_readiness_policy", fmt.Sprintf("timeout=%.1fs grace=%.1fs progress_window=%.1fs restart_limit=%d", policy.TimeoutSec, policy.GraceSec, policy.ProgressWindowSec, policy.RestartLimit)))
+	}
 	fmt.Println(ui.KeyValue("capabilities", prepared.Plan.Capabilities))
 	fmt.Println(ui.KeyValue("artifact_dir", prepared.Result.ArtifactDir))
 	fmt.Println(ui.KeyValue("task_plan", prepared.Result.PlanPath))
@@ -913,6 +935,10 @@ func runTask(
 		fmt.Printf("%s %s\n", ui.StepNumber(index+1), step)
 	}
 	return nil
+}
+
+func isHoverTaskID(taskID string) bool {
+	return taskID == "hover" || taskID == "hover-slam-only"
 }
 
 func doctorTask(
@@ -983,6 +1009,10 @@ func prepareTaskRun(
 	if err != nil {
 		return preparedTaskRun{}, fmt.Errorf("failed to apply simulation profile for %q: %w", taskID, err)
 	}
+	taskRuntimeConfig, err = tasks.ApplyHoverSLOPolicy(taskRuntimeConfig, plan)
+	if err != nil {
+		return preparedTaskRun{}, fmt.Errorf("failed to apply hover SLO policy for %q: %w", taskID, err)
+	}
 	plan.Execution.TaskParameters["runtime_config"] = taskRuntimeConfig
 	artifactRootPath := project.Paths.ArtifactRoot
 	if artifactRootOverride != "" {
@@ -1044,7 +1074,16 @@ func runLiveTask(
 	execution, executionErr := tasks.ExecuteRuntimeSpecs(
 		simruntime.NewDockerBackend(nil),
 		runtimeSpecs,
-		tasks.RuntimeExecutionOptions{WaitForRosbags: true, TaskID: plan.TaskID, RunID: result.RunID, EventSink: eventSink},
+		tasks.RuntimeExecutionOptions{
+			WaitForRosbags:         true,
+			RosbagPostTaskGraceSec: tasks.DefaultRosbagPostTaskGraceSec,
+			TaskDeadlineSec:        plan.DurationSec,
+			TaskID:                 plan.TaskID,
+			RunID:                  result.RunID,
+			ArtifactDir:            result.ArtifactDir,
+			StartupReadinessPolicy: taskRuntimeConfig.SlamHover.StartupReadinessPolicy,
+			EventSink:              eventSink,
+		},
 	)
 	summary := tasks.BuildLiveRunSummary(project, taskRuntimeConfig, plan, result.RunID, result.ArtifactDir, generatedArtifacts, runtimeSpecs, execution, executionErr)
 	tasks.AttachRuntimeHoverHealthFromMissionSummary(&summary)

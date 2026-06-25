@@ -174,6 +174,9 @@ func Upload(ctx context.Context, options Options) (Result, error) {
 	taskID := resolveTaskID(runDir, options.Task)
 	runID := filepath.Base(runDir)
 	options.Lite = true
+	if err := ensureLiteReplay(runDir, taskID, options); err != nil {
+		return Result{}, err
+	}
 	targets, err := BuildTargets(runDir, taskID, options.Lite, options.KeyPrefix)
 	if err != nil {
 		return Result{}, err
@@ -239,6 +242,23 @@ func Upload(ctx context.Context, options Options) (Result, error) {
 		return Result{}, fmt.Errorf("write upload summary: %w", err)
 	}
 	return result, nil
+}
+
+func ensureLiteReplay(runDir string, taskID string, options Options) error {
+	if fileExists(filepath.Join(runDir, defaultReplaySummary)) && fileExists(filepath.Join(runDir, defaultLiteRelativePath)) {
+		return nil
+	}
+	_, err := BuildReplay(ReplayOptions{
+		RepoRoot:     options.RepoRoot,
+		ArtifactRoot: options.ArtifactRoot,
+		Run:          runDir,
+		Task:         taskID,
+		Stdout:       options.Stdout,
+	})
+	if err != nil {
+		return fmt.Errorf("auto-build lite replay: %w", err)
+	}
+	return nil
 }
 
 func writeUploadSummary(runDir string, stdout io.Writer, result Result) error {

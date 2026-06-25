@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/config"
 
 	hoveraudit "navlab/orchestration-sim/internal/audits/hover"
@@ -35,6 +36,10 @@ type LiveRunSummary struct {
 	FinishedAt                string                          `json:"finishedAt"`
 	DurationSec               float64                         `json:"duration_sec"`
 	SimulationProfile         string                          `json:"simulation_profile"`
+	HoverSpanTargetM          float64                         `json:"hover_span_target_m,omitempty"`
+	HoverSpanHardCapM         float64                         `json:"hover_span_hard_cap_m,omitempty"`
+	HoverSLOPolicySource      string                          `json:"hover_slo_policy_source,omitempty"`
+	StartupReadinessPolicy    map[string]any                  `json:"startup_readiness_policy,omitempty"`
 	Stage1ProfileResult       Stage1ProfileResult             `json:"stage1_profile_result"`
 	RuntimeMode               string                          `json:"runtime_mode"`
 	Backend                   string                          `json:"backend"`
@@ -170,6 +175,12 @@ func BuildLiveRunSummary(
 		GateEvaluation:   gateEvaluation,
 		CreatedAt:        now,
 	}
+	if isHoverSLAMProfileTask(plan.TaskID) {
+		summary.HoverSpanTargetM = runtimeConfig.SlamHover.HoverSpanTargetM
+		summary.HoverSpanHardCapM = runtimeConfig.SlamHover.HoverSpanHardCapM
+		summary.HoverSLOPolicySource = "go_runtime_config"
+		summary.StartupReadinessPolicy = startupReadinessPolicySummary(runtimeConfig.SlamHover.StartupReadinessPolicy)
+	}
 	summary.Stage1ProfileResult = Stage1ProfileResultFromSummary(summary)
 	return summary
 }
@@ -284,12 +295,15 @@ func BuildAndWriteHoverHealthSummaryArtifact(artifactDir string) (*hoveraudit.Ho
 	if err != nil {
 		return nil, "", err
 	}
-	path := filepath.Join(artifactDir, "hover_health_summary.json")
+	path := artifactlayout.Audit(artifactDir, "hover_health_summary.json")
 	data, err := json.MarshalIndent(health, "", "  ")
 	if err != nil {
 		return nil, "", err
 	}
 	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, "", err
+	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return nil, "", err
 	}
@@ -308,7 +322,7 @@ func AttachHoverHealthToLiveRunSummary(summary *LiveRunSummary, health *hoveraud
 	summary.HoverHealthProceed = &proceed
 	summary.PostrunHoverHealthAudit = &PostrunHoverHealthAudit{
 		Schema:                   health.Schema,
-		Artifact:                 filepath.Join(summary.ArtifactDir, "hover_health_summary.json"),
+		Artifact:                 artifactlayout.Audit(summary.ArtifactDir, "hover_health_summary.json"),
 		HealthBand:               health.HealthBand,
 		Proceed:                  proceed,
 		HardBlockers:             append([]hoveraudit.HoverHealthFinding{}, health.HardBlockers...),
@@ -343,7 +357,7 @@ func AttachHoverHealthToLiveRunSummary(summary *LiveRunSummary, health *hoveraud
 	}
 	summary.Evidence["hoverHealth"] = map[string]any{
 		"schema":         health.Schema,
-		"artifact":       filepath.Join(summary.ArtifactDir, "hover_health_summary.json"),
+		"artifact":       artifactlayout.Audit(summary.ArtifactDir, "hover_health_summary.json"),
 		"diagnosticOnly": health.DiagnosticOnly,
 	}
 }

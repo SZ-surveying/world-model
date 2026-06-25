@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/config"
 	"navlab/orchestration-sim/internal/tasks/helpers"
 )
@@ -33,12 +34,15 @@ func GenerateRuntimeArtifacts(
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
 		return nil, err
 	}
+	if err := artifactlayout.Ensure(artifactDir); err != nil {
+		return nil, err
+	}
 	if publishesOfficialMazeOverlayTask(plan.TaskID) {
 		mazeSource, err := officialMazeSource(project)
 		if err != nil {
 			return nil, err
 		}
-		path := filepath.Join(artifactDir, "official_maze_overlay_runtime.py")
+		path := artifactlayout.RuntimeScript(artifactDir, "official_maze_overlay_runtime.py")
 		mazeOverlaySpec := helpers.DefaultOfficialMazeOverlaySpec()
 		if err := helpers.WriteOfficialMazeOverlayRuntimeScript(path, mazeSource, mazeOverlaySpec); err != nil {
 			return nil, err
@@ -46,12 +50,12 @@ func GenerateRuntimeArtifacts(
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "official_maze_overlay_script", Path: path})
 	}
 	if hasHelper(plan, "navlab-models") {
-		bridge := filepath.Join(artifactDir, "bridge_override.yaml")
+		bridge := artifactlayout.RuntimeConfig(artifactDir, "bridge_override.yaml")
 		if err := helpers.WriteBridgeOverride(bridge); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "bridge_override", Path: bridge})
-		vendor := filepath.Join(artifactDir, "vendor_profile.yaml")
+		vendor := artifactlayout.RuntimeConfig(artifactDir, "vendor_profile.yaml")
 		if err := helpers.WriteVendorProfile(vendor, runtimeConfig.RangefinderIMU.X2VirtualSerialLink); err != nil {
 			return nil, err
 		}
@@ -63,7 +67,7 @@ func GenerateRuntimeArtifacts(
 		if err != nil {
 			return nil, err
 		}
-		modelOverlay := filepath.Join(artifactDir, "model_overlay.sdf")
+		modelOverlay := artifactlayout.RuntimeConfig(artifactDir, "model_overlay.sdf")
 		if err := helpers.WriteModelOverlayFromSource(modelOverlay, modelSource, spec); err != nil {
 			return nil, err
 		}
@@ -77,13 +81,13 @@ func GenerateRuntimeArtifacts(
 			return nil, err
 		}
 		paramSource = mergeExternalNavParamProfile(paramSource, externalNavParamSource)
-		paramOverlay := filepath.Join(artifactDir, "gazebo-iris-rangefinder.parm")
+		paramOverlay := artifactlayout.RuntimeConfig(artifactDir, "gazebo-iris-rangefinder.parm")
 		if err := helpers.WriteParamOverlayFromSource(paramOverlay, paramSource, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "param_overlay", Path: paramOverlay})
-		sensorConfig := filepath.Join(artifactDir, "gazebo_sensor_runtime.toml")
-		vendorProfile, err := runtimeContainerPath(project, filepath.Join(artifactDir, "vendor_profile.yaml"))
+		sensorConfig := artifactlayout.RuntimeConfig(artifactDir, "gazebo_sensor_runtime.toml")
+		vendorProfile, err := runtimeContainerPath(project, artifactlayout.RuntimeConfig(artifactDir, "vendor_profile.yaml"))
 		if err != nil {
 			return nil, err
 		}
@@ -91,18 +95,18 @@ func GenerateRuntimeArtifacts(
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "sensor_runtime_config", Path: sensorConfig})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "rangefinder_probe.py"), func() (string, error) {
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "rangefinder_probe.py"), func() (string, error) {
 			return helpers.RangefinderProbeScript(sensorSpec(runtimeConfig))
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "rangefinder_probe_script", Path: filepath.Join(artifactDir, "rangefinder_probe.py")})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "imu_probe.py"), func() (string, error) {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "rangefinder_probe_script", Path: artifactlayout.Probe(artifactDir, "rangefinder_probe.py")})
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "imu_probe.py"), func() (string, error) {
 			return helpers.IMUProbeScript(sensorSpec(runtimeConfig))
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "imu_probe_script", Path: filepath.Join(artifactDir, "imu_probe.py")})
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "imu_probe_script", Path: artifactlayout.Probe(artifactDir, "imu_probe.py")})
 	}
 	if hasHelper(plan, "slam") {
 		spec := slamSpec(runtimeConfig)
@@ -129,18 +133,18 @@ func GenerateRuntimeArtifacts(
 			if err != nil {
 				return nil, err
 			}
-			hoverConfigPath := filepath.Join(artifactDir, spec.CartographerConfigurationBasename)
+			hoverConfigPath := artifactlayout.RuntimeConfig(artifactDir, spec.CartographerConfigurationBasename)
 			if err := os.WriteFile(hoverConfigPath, content, 0o644); err != nil {
 				return nil, err
 			}
 			generated = append(generated, GeneratedRuntimeArtifact{Type: "hover_cartographer_config", Path: hoverConfigPath})
 		}
-		path := filepath.Join(artifactDir, "slam_runtime.toml")
+		path := artifactlayout.RuntimeConfig(artifactDir, "slam_runtime.toml")
 		if err := helpers.WriteSlamRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_runtime_config", Path: path})
-		externalNavBridgeParamsPath := filepath.Join(artifactDir, "external_nav_bridge_params.yaml")
+		externalNavBridgeParamsPath := artifactlayout.RuntimeConfig(artifactDir, "external_nav_bridge_params.yaml")
 		externalNavSpec := spec
 		if isHoverSlamRuntimeTask(plan.TaskID) {
 			externalNavSpec.ExternalNavInputOdomTopic = hoverExternalNavInputOdomTopic(runtimeConfig)
@@ -151,7 +155,7 @@ func GenerateRuntimeArtifacts(
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "external_nav_bridge_params_override", Path: externalNavBridgeParamsPath})
 	}
 	if hasHelper(plan, "fcu-controller") {
-		path := filepath.Join(artifactDir, "fcu_controller_runtime.toml")
+		path := artifactlayout.RuntimeConfig(artifactDir, "fcu_controller_runtime.toml")
 		spec := fcuSpec(runtimeConfig)
 		spec.LandingPolicy = landingPolicyForTask(runtimeConfig, plan.TaskID)
 		spec.CompletionGraceSec = runtimeConfig.Landing.CompletionGraceSec
@@ -188,184 +192,190 @@ func GenerateRuntimeArtifacts(
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "fcu_runtime_config", Path: path})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "fcu_controller_runtime.py"), func() (string, error) {
+		if err := writeGeneratedScript(artifactlayout.RuntimeScript(artifactDir, "fcu_controller_runtime.py"), func() (string, error) {
 			return helpers.FCUControllerRuntimeScript(spec, plan.DurationSec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "fcu_runtime_script", Path: filepath.Join(artifactDir, "fcu_controller_runtime.py")})
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "fcu_runtime_script", Path: artifactlayout.RuntimeScript(artifactDir, "fcu_controller_runtime.py")})
 	}
 	if hasHelper(plan, "frame-contract") {
-		path := filepath.Join(artifactDir, "frame_contract_runtime.toml")
+		path := artifactlayout.RuntimeConfig(artifactDir, "frame_contract_runtime.toml")
 		spec := frameSpec(runtimeConfig)
 		if err := helpers.WriteFrameContractRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "frame_contract_runtime_config", Path: path})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "frame_contract_probe.py"), func() (string, error) {
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "frame_contract_probe.py"), func() (string, error) {
 			return helpers.FrameContractProbeScript(spec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "frame_contract_probe_script", Path: filepath.Join(artifactDir, "frame_contract_probe.py")})
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "frame_contract_probe_script", Path: artifactlayout.Probe(artifactDir, "frame_contract_probe.py")})
 	}
 	if hasHelper(plan, "slam-hover") {
-		path := filepath.Join(artifactDir, "slam_hover_runtime.toml")
+		path := artifactlayout.RuntimeConfig(artifactDir, "slam_hover_runtime.toml")
 		spec := hoverSpec(runtimeConfig)
 		if err := helpers.WriteHoverRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_hover_runtime_config", Path: path})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "slam_hover_probe.py"), func() (string, error) {
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "slam_hover_probe.py"), func() (string, error) {
 			return helpers.HoverProbeScript(spec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_hover_probe_script", Path: filepath.Join(artifactDir, "slam_hover_probe.py")})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "scan_reference_drift_runtime.py"), func() (string, error) {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_hover_probe_script", Path: artifactlayout.Probe(artifactDir, "slam_hover_probe.py")})
+		if err := writeGeneratedScript(artifactlayout.RuntimeScript(artifactDir, "scan_reference_drift_runtime.py"), func() (string, error) {
 			return helpers.ScanReferenceDriftRuntimeScript(helpers.DefaultScanReferenceDriftSpec())
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_reference_drift_runtime_script", Path: filepath.Join(artifactDir, "scan_reference_drift_runtime.py")})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "scan_reference_cartographer_odom_runtime.py"), func() (string, error) {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_reference_drift_runtime_script", Path: artifactlayout.RuntimeScript(artifactDir, "scan_reference_drift_runtime.py")})
+		if err := writeGeneratedScript(artifactlayout.RuntimeScript(artifactDir, "scan_reference_cartographer_odom_runtime.py"), func() (string, error) {
 			return helpers.ScanReferenceDriftRuntimeScript(helpers.DefaultCartographerScanReferenceOdometrySpec())
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_reference_cartographer_odom_runtime_script", Path: filepath.Join(artifactDir, "scan_reference_cartographer_odom_runtime.py")})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "scan_reference_correction_runtime.py"), func() (string, error) {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_reference_cartographer_odom_runtime_script", Path: artifactlayout.RuntimeScript(artifactDir, "scan_reference_cartographer_odom_runtime.py")})
+		if err := writeGeneratedScript(artifactlayout.RuntimeScript(artifactDir, "scan_reference_correction_runtime.py"), func() (string, error) {
 			return helpers.ScanReferenceCorrectionRuntimeScript(helpers.DefaultScanReferenceCorrectionSpec())
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_reference_correction_runtime_script", Path: filepath.Join(artifactDir, "scan_reference_correction_runtime.py")})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "external_nav_source_selector_runtime.py"), func() (string, error) {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_reference_correction_runtime_script", Path: artifactlayout.RuntimeScript(artifactDir, "scan_reference_correction_runtime.py")})
+		if err := writeGeneratedScript(artifactlayout.RuntimeScript(artifactDir, "external_nav_source_selector_runtime.py"), func() (string, error) {
 			return helpers.ExternalNavSourceSelectorRuntimeScript(helpers.DefaultExternalNavSourceSelectorSpec())
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "external_nav_source_selector_runtime_script", Path: filepath.Join(artifactDir, "external_nav_source_selector_runtime.py")})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "hover_mission_runtime.py"), func() (string, error) {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "external_nav_source_selector_runtime_script", Path: artifactlayout.RuntimeScript(artifactDir, "external_nav_source_selector_runtime.py")})
+		if err := writeGeneratedScript(artifactlayout.RuntimeScript(artifactDir, "hover_mission_runtime.py"), func() (string, error) {
 			return helpers.HoverMissionRuntimeScript(hoverMissionSpec(runtimeConfig), plan.DurationSec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "hover_mission_runtime_script", Path: filepath.Join(artifactDir, "hover_mission_runtime.py")})
-		notesPath := filepath.Join(artifactDir, "motion_foxglove_notes.md")
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "hover_mission_runtime_script", Path: artifactlayout.RuntimeScript(artifactDir, "hover_mission_runtime.py")})
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "startup_readiness_probe.py"), func() (string, error) {
+			return helpers.StartupReadinessProbeScript(hoverSpec(runtimeConfig))
+		}); err != nil {
+			return nil, err
+		}
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "startup_readiness_probe_script", Path: artifactlayout.Probe(artifactDir, "startup_readiness_probe.py")})
+		notesPath := artifactlayout.Audit(artifactDir, "motion_foxglove_notes.md")
 		if err := os.WriteFile(notesPath, []byte(helpers.MotionFoxgloveNotes(helpers.DefaultMotionGateSpec())), 0o644); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "foxglove_notes", Path: notesPath})
 	}
 	if hasHelper(plan, "slam-only") {
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "slam_only_probe.py"), func() (string, error) {
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "slam_only_probe.py"), func() (string, error) {
 			return helpers.SlamOnlyProbeScript(helpers.DefaultSlamOnlySpec(), plan.DurationSec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_only_probe_script", Path: filepath.Join(artifactDir, "slam_only_probe.py")})
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "slam_only_probe_script", Path: artifactlayout.Probe(artifactDir, "slam_only_probe.py")})
 	}
 	if hasHelper(plan, "exploration-workflow") {
-		path := filepath.Join(artifactDir, "exploration_runtime.toml")
+		path := artifactlayout.RuntimeConfig(artifactDir, "exploration_runtime.toml")
 		spec := explorationSpec(runtimeConfig)
 		if err := helpers.WriteExplorationRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "exploration_runtime_config", Path: path})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "exploration_workflow_runtime.py"), func() (string, error) {
+		if err := writeGeneratedScript(artifactlayout.RuntimeScript(artifactDir, "exploration_workflow_runtime.py"), func() (string, error) {
 			return helpers.ExplorationWorkflowRuntimeScript(spec, plan.DurationSec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "exploration_runtime_script", Path: filepath.Join(artifactDir, "exploration_workflow_runtime.py")})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "exploration_probe.py"), func() (string, error) {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "exploration_runtime_script", Path: artifactlayout.RuntimeScript(artifactDir, "exploration_workflow_runtime.py")})
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "exploration_probe.py"), func() (string, error) {
 			return helpers.ExplorationProbeScript(spec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "exploration_probe_script", Path: filepath.Join(artifactDir, "exploration_probe.py")})
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "exploration_probe_script", Path: artifactlayout.Probe(artifactDir, "exploration_probe.py")})
 	}
 	if hasHelper(plan, "nav2-navigation-workflow") {
 		spec := nav2NavigationSpec(runtimeConfig)
-		paramsPath := filepath.Join(artifactDir, "nav2_params.yaml")
+		paramsPath := artifactlayout.RuntimeConfig(artifactDir, "nav2_params.yaml")
 		if err := helpers.WriteNav2ParamsYAML(paramsPath, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "nav2_params", Path: paramsPath})
-		adapterPath := filepath.Join(artifactDir, "navigation_adapter_runtime.toml")
+		adapterPath := artifactlayout.RuntimeConfig(artifactDir, "navigation_adapter_runtime.toml")
 		if err := helpers.WriteNavigationAdapterRuntimeConfig(adapterPath, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_adapter_runtime_config", Path: adapterPath})
-		foxglovePath := filepath.Join(artifactDir, "navigation_foxglove_lite_profile.json")
+		foxglovePath := artifactlayout.RuntimeConfig(artifactDir, "navigation_foxglove_lite_profile.json")
 		if err := helpers.WriteNavigationFoxgloveLiteProfile(foxglovePath, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_foxglove_lite_profile", Path: foxglovePath})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "navigation_adapter_runtime.py"), func() (string, error) {
+		if err := writeGeneratedScript(artifactlayout.RuntimeScript(artifactDir, "navigation_adapter_runtime.py"), func() (string, error) {
 			return helpers.NavigationAdapterRuntimeScript(spec, plan.DurationSec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_adapter_runtime_script", Path: filepath.Join(artifactDir, "navigation_adapter_runtime.py")})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "navigation_mission_runtime.py"), func() (string, error) {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_adapter_runtime_script", Path: artifactlayout.RuntimeScript(artifactDir, "navigation_adapter_runtime.py")})
+		if err := writeGeneratedScript(artifactlayout.RuntimeScript(artifactDir, "navigation_mission_runtime.py"), func() (string, error) {
 			return helpers.NavigationMissionRuntimeScript(spec, plan.DurationSec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_mission_runtime_script", Path: filepath.Join(artifactDir, "navigation_mission_runtime.py")})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "nav2_lifecycle_probe.py"), func() (string, error) {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_mission_runtime_script", Path: artifactlayout.RuntimeScript(artifactDir, "navigation_mission_runtime.py")})
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "nav2_lifecycle_probe.py"), func() (string, error) {
 			return helpers.Nav2LifecycleProbeScript(spec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "nav2_lifecycle_probe_script", Path: filepath.Join(artifactDir, "nav2_lifecycle_probe.py")})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "costmap_health_probe.py"), func() (string, error) {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "nav2_lifecycle_probe_script", Path: artifactlayout.Probe(artifactDir, "nav2_lifecycle_probe.py")})
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "costmap_health_probe.py"), func() (string, error) {
 			return helpers.CostmapHealthProbeScript(spec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "costmap_health_probe_script", Path: filepath.Join(artifactDir, "costmap_health_probe.py")})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "navigation_status_probe.py"), func() (string, error) {
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "costmap_health_probe_script", Path: artifactlayout.Probe(artifactDir, "costmap_health_probe.py")})
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "navigation_status_probe.py"), func() (string, error) {
 			return helpers.NavigationStatusProbeScript(spec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_status_probe_script", Path: filepath.Join(artifactDir, "navigation_status_probe.py")})
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "navigation_status_probe_script", Path: artifactlayout.Probe(artifactDir, "navigation_status_probe.py")})
 	}
 	if hasHelper(plan, "scan-stabilization") {
-		path := filepath.Join(artifactDir, "scan_stabilization_runtime.toml")
+		path := artifactlayout.RuntimeConfig(artifactDir, "scan_stabilization_runtime.toml")
 		spec := scanStabilizationSpec(runtimeConfig)
 		if err := helpers.WriteScanStabilizationRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_stabilization_runtime_config", Path: path})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "stabilization_status_probe.py"), func() (string, error) {
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "stabilization_status_probe.py"), func() (string, error) {
 			return helpers.StabilizationStatusProbeScript(spec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "stabilization_status_probe_script", Path: filepath.Join(artifactDir, "stabilization_status_probe.py")})
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "stabilization_status_probe_script", Path: artifactlayout.Probe(artifactDir, "stabilization_status_probe.py")})
 	}
 	if hasHelper(plan, "scan-robustness-workflow") {
-		path := filepath.Join(artifactDir, "scan_robustness_runtime.toml")
+		path := artifactlayout.RuntimeConfig(artifactDir, "scan_robustness_runtime.toml")
 		spec := scanRobustnessSpec(runtimeConfig)
 		if err := helpers.WriteScanRobustnessRuntimeConfig(path, spec); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_robustness_runtime_config", Path: path})
-		bridge := filepath.Join(artifactDir, "scan_robustness_bridge_override.yaml")
+		bridge := artifactlayout.RuntimeConfig(artifactDir, "scan_robustness_bridge_override.yaml")
 		if err := helpers.WriteScanRobustnessBridgeOverride(bridge, runtimeConfig.AirframeDisturbance.IMUInputTopic); err != nil {
 			return nil, err
 		}
 		generated = append(generated, GeneratedRuntimeArtifact{Type: "scan_robustness_bridge_override", Path: bridge})
-		if err := writeGeneratedScript(filepath.Join(artifactDir, "airframe_disturbance_probe.py"), func() (string, error) {
+		if err := writeGeneratedScript(artifactlayout.Probe(artifactDir, "airframe_disturbance_probe.py"), func() (string, error) {
 			return helpers.AirframeDisturbanceProbeScript(spec)
 		}); err != nil {
 			return nil, err
 		}
-		generated = append(generated, GeneratedRuntimeArtifact{Type: "airframe_disturbance_probe_script", Path: filepath.Join(artifactDir, "airframe_disturbance_probe.py")})
+		generated = append(generated, GeneratedRuntimeArtifact{Type: "airframe_disturbance_probe_script", Path: artifactlayout.Probe(artifactDir, "airframe_disturbance_probe.py")})
 	}
 	return generated, nil
 }
@@ -746,9 +756,15 @@ func hoverSpec(runtimeConfig config.TaskRuntimeConfig) helpers.SlamHoverSpec {
 	spec.HoverWindowSec = hover.HoverWindowSec
 	spec.FinalHoldWindowSec = hover.FinalHoldWindowSec
 	spec.MaxHoverHorizontalDrift = hover.MaxHoverHorizontalDriftM
+	spec.HoverSpanTargetM = hover.HoverSpanTargetM
+	spec.HoverSpanHardCapM = hover.HoverSpanHardCapM
 	spec.MaxHoverAltitudeError = hover.MaxHoverAltitudeErrorM
 	spec.MaxHoverYawDriftRad = hover.MaxHoverYawDriftRad
 	spec.MaxStopDriftM = hover.MaxStopDriftM
+	spec.StartupReadinessTimeoutSec = hover.StartupReadinessPolicy.TimeoutSec
+	spec.StartupReadinessGraceSec = hover.StartupReadinessPolicy.GraceSec
+	spec.StartupReadinessProgressWindowSec = hover.StartupReadinessPolicy.ProgressWindowSec
+	spec.StartupReadinessRestartLimit = hover.StartupReadinessPolicy.RestartLimit
 	return spec
 }
 
@@ -770,10 +786,19 @@ func hoverMissionSpec(runtimeConfig config.TaskRuntimeConfig) helpers.HoverMissi
 	spec.HoverHealthMinObservationSec = hover.HoverHealthMinObservationSec
 	spec.HoverHealthStableRequiredSec = hover.HoverHealthStableRequiredSec
 	spec.HoverHealthMaxWaitSec = hover.HoverHealthMaxWaitSec
+	spec.StartupReadinessTimeoutSec = hover.StartupReadinessPolicy.TimeoutSec
+	spec.StartupReadinessGraceSec = hover.StartupReadinessPolicy.GraceSec
+	spec.StartupReadinessProgressWindowSec = hover.StartupReadinessPolicy.ProgressWindowSec
+	spec.StartupReadinessRestartLimit = hover.StartupReadinessPolicy.RestartLimit
 	spec.OperatorConfirmRequired = hover.OperatorConfirmRequired
 	spec.OperatorConfirmTimeoutSec = hover.OperatorConfirmTimeoutSec
 	spec.MaxHorizontalDriftM = hover.MaxHoverHorizontalDriftM
+	spec.HoverSpanTargetM = hover.HoverSpanTargetM
+	spec.HoverSpanHardCapM = hover.HoverSpanHardCapM
 	spec.MaxAltitudeDriftM = hover.MaxHoverAltitudeErrorM
+	if spec.StartupReadinessTimeoutSec > 0 {
+		spec.MaxWaitReadySec = spec.StartupReadinessTimeoutSec
+	}
 	spec.StatusTopic = hover.HoverStatusTopic
 	spec.LandingStatusTopic = landing.LandingStatusTopic
 	spec.LandingIntentTopic = landing.LandingIntentTopic

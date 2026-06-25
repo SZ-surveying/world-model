@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/config"
 )
 
@@ -129,7 +130,7 @@ func TestBuildExecutionPlanHoverKeepsMatureSLAMRosbagTopics(t *testing.T) {
 	assertHasService(t, plan, "scan_reference_cartographer_odom")
 	assertHasService(t, plan, "external_nav_source_selector")
 	assertServiceBefore(t, plan, "external_nav_source_selector", "slam_backend")
-	assertHasArtifact(t, plan, "external_nav_source_selector_runtime.py")
+	assertHasArtifact(t, plan, artifactlayout.RuntimeScriptRel("external_nav_source_selector_runtime.py"))
 	assertMissingService(t, plan, "fcu_controller")
 	assertServiceCommandContains(t, plan, "hover_mission", "hover_mission_runtime.py")
 	assertServiceCommandContains(t, plan, "scan_reference_cartographer_odom", "scan_reference_cartographer_odom_runtime.py")
@@ -293,6 +294,23 @@ func TestMatureReviewTopicsExcludeHeavyDiagnosticTopics(t *testing.T) {
 	} {
 		if contains(topics, DiagnosticTruthOdometryTopic) {
 			t.Fatalf("%s required topics include diagnostic truth odometry: %#v", name, topics)
+		}
+	}
+}
+
+func TestHoverFCUControlEvidenceTopicsAreReviewCapturedNotRequired(t *testing.T) {
+	reviewTopics := MatureWorldSLAMReviewTopics()
+	requiredTopics := HoverTaskRequiredTopics(DefaultSlamHoverSpec())
+	for _, topic := range []string{
+		"/navlab/fcu/controller/status",
+		"/navlab/fcu/setpoint/intent",
+		"/navlab/fcu/setpoint/output",
+	} {
+		if !contains(reviewTopics, topic) {
+			t.Fatalf("hover review topics should capture FCU evidence topic %q: %#v", topic, reviewTopics)
+		}
+		if contains(requiredTopics, topic) {
+			t.Fatalf("hover required topics should keep FCU evidence optional/review-only %q: %#v", topic, requiredTopics)
 		}
 	}
 }

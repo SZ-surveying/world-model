@@ -14,7 +14,8 @@ def add_arg(argv: list[str], name: str, value) -> None:
 def main() -> int:
     from navlab.sim.companion.nodes.hover_mission import run
 
-    artifact_dir = Path(__file__).resolve().parent
+    script_dir = Path(__file__).resolve().parent
+    artifact_dir = script_dir.parents[1] if script_dir.name == "scripts" and script_dir.parent.name == "runtime" else script_dir
     argv: list[str] = []
     for name in [
         "endpoint",
@@ -33,6 +34,8 @@ def main() -> int:
         "hover-health-max-wait-sec",
         "operator-confirm-timeout-sec",
         "max-horizontal-drift-m",
+        "hover-span-target-m",
+        "hover-span-hard-cap-m",
         "max-altitude-drift-m",
         "source-system",
         "source-component",
@@ -67,7 +70,9 @@ def main() -> int:
     ]:
         argv.append(bool_flag(name))
     rc = int(run(argv) or 0)
-    (artifact_dir / "hover_mission_rc.txt").write_text(str(rc) + "\n", encoding="utf-8")
+    runtime_logs = artifact_dir / "runtime" / "logs"
+    runtime_logs.mkdir(parents=True, exist_ok=True)
+    (runtime_logs / "hover_mission_rc.txt").write_text(str(rc) + "\n", encoding="utf-8")
     return rc
 
 if __name__ == "__main__":

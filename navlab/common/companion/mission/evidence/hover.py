@@ -48,6 +48,18 @@ def classify_hover_drift(
     return "unstable"
 
 
+def classify_hover_slo_tier(value_m: float, *, target_m: float, hard_cap_m: float) -> str:
+    """Classify one horizontal hover metric against target and hard cap."""
+
+    if target_m <= 0 or hard_cap_m <= 0 or target_m > hard_cap_m or not math.isfinite(value_m):
+        return "unusable"
+    if value_m <= target_m:
+        return "green"
+    if value_m <= hard_cap_m:
+        return "yellow"
+    return "red"
+
+
 def summarize_hover_altitude_crosscheck(
     samples: list[dict[str, float | None]],
     *,
@@ -327,6 +339,8 @@ class HoverEvidenceRecorder:
         max_altitude_drift_m: float,
         local_position_count: int,
         crash_detected: bool,
+        hover_span_target_m: float | None = None,
+        hover_span_hard_cap_m: float | None = None,
         slam_quality: str = "",
         slam_quality_reason: str = "",
         slam_quality_loss_duration_sec: float = 0.0,
@@ -345,8 +359,22 @@ class HoverEvidenceRecorder:
         sample_count_ok = drift.ok
         altitude_ok = altitude_crosscheck["ok"] is True
         duration_ok = drift.duration_sec >= hold_sec - duration_tolerance_sec
-        horizontal_drift_ok = drift.horizontal_drift_m <= max_horizontal_drift_m
-        horizontal_span_ok = drift.horizontal_span_m <= max_horizontal_drift_m
+        target_m = hover_span_target_m if hover_span_target_m and hover_span_target_m > 0 else max_horizontal_drift_m
+        hard_cap_m = (
+            hover_span_hard_cap_m if hover_span_hard_cap_m and hover_span_hard_cap_m > 0 else max_horizontal_drift_m
+        )
+        horizontal_drift_tier = classify_hover_slo_tier(
+            drift.horizontal_drift_m,
+            target_m=target_m,
+            hard_cap_m=hard_cap_m,
+        )
+        horizontal_span_tier = classify_hover_slo_tier(
+            drift.horizontal_span_m,
+            target_m=target_m,
+            hard_cap_m=hard_cap_m,
+        )
+        horizontal_drift_ok = horizontal_drift_tier in ("green", "yellow")
+        horizontal_span_ok = horizontal_span_tier in ("green", "yellow")
         z_span_ok = drift.z_span_m <= max_altitude_drift_m
         local_position_ok = local_position_count > 0
         no_slam_quality_loss_after_airborne = slam_quality_loss_duration_sec <= 0.0
@@ -360,6 +388,14 @@ class HoverEvidenceRecorder:
             "duration_ok": duration_ok,
             "horizontal_drift_ok": horizontal_drift_ok,
             "horizontal_span_ok": horizontal_span_ok,
+            "horizontal_drift_target_ok": horizontal_drift_tier == "green",
+            "horizontal_span_target_ok": horizontal_span_tier == "green",
+            "horizontal_drift_hard_cap_ok": horizontal_drift_ok,
+            "horizontal_span_hard_cap_ok": horizontal_span_ok,
+            "horizontal_drift_tier": horizontal_drift_tier,
+            "horizontal_span_tier": horizontal_span_tier,
+            "hover_span_target_m": target_m,
+            "hover_span_hard_cap_m": hard_cap_m,
             "z_span_ok": z_span_ok,
             "local_position_ok": local_position_ok,
             "crash_free": not crash_detected,

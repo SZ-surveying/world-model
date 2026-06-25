@@ -30,6 +30,7 @@ from navlab.common.companion.mission.evidence.hover import (
     HoverEvidenceRecorder,
     HoverEvidenceWindow,
     classify_hover_drift,
+    classify_hover_slo_tier,
     json_safe_number,
     summarize_hover_altitude_crosscheck,
     summarize_hover_drift,

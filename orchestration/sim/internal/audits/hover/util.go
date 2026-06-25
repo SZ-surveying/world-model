@@ -43,6 +43,21 @@ func mapFromAny(value any) map[string]any {
 	return nil
 }
 
+func sliceFromAny(value any) []any {
+	switch typed := value.(type) {
+	case []any:
+		return typed
+	case []map[string]any:
+		out := make([]any, 0, len(typed))
+		for _, row := range typed {
+			out = append(out, row)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 func subsetMap(source map[string]any, keys ...string) map[string]any {
 	out := map[string]any{}
 	for _, key := range keys {

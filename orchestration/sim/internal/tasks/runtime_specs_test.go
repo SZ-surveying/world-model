@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/config"
 	simruntime "navlab/orchestration-sim/internal/runtime"
 	"navlab/orchestration-sim/internal/tasks/helpers"
@@ -51,8 +52,8 @@ func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
 			{
 				HelperID:     "sensors",
 				Name:         "rangefinder_probe",
-				ScriptPath:   "rangefinder_probe.py",
-				OutputPath:   "rangefinder_probe.txt",
+				ScriptPath:   "probes/rangefinder_probe.py",
+				OutputPath:   "probes/rangefinder_probe.txt",
 				RuntimeImage: "images.runtime",
 				Topics:       []string{"/navlab/rangefinder/range"},
 			},
@@ -61,7 +62,7 @@ func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
 			{
 				HelperID:  "slam-hover",
 				Name:      "hover_rosbag",
-				OutputDir: "rosbag",
+				OutputDir: "rosbag/hover_rosbag",
 				Topics:    []string{"/tf", "/scan"},
 			},
 		},
@@ -91,6 +92,17 @@ func TestBuildRuntimeSpecsFromExecutionPlan(t *testing.T) {
 	}
 	if !strings.Contains(officialCommand, "serial7:=uart:/tmp/navlab_benewake_tfmini:115200") {
 		t.Fatalf("official baseline command missing Benewake serial rangefinder backend: %s", officialCommand)
+	}
+	if sensor := serviceByName(bundle.Services, "gazebo_sensor"); sensor == nil || !sensor.Restartable {
+		t.Fatalf("gazebo_sensor should be restartable startup leaf, got %#v", sensor)
+	}
+	if height := serviceByName(bundle.Services, "height_estimator"); height == nil || !height.Restartable {
+		t.Fatalf("height_estimator should be restartable startup leaf, got %#v", height)
+	}
+	if bundle.StartupReadinessProbe == nil ||
+		bundle.StartupReadinessProbe.Name != "startup_readiness_probe" ||
+		!strings.Contains(bundle.StartupReadinessProbe.OutputPath, "startup_readiness_probe.json") {
+		t.Fatalf("startup readiness probe = %#v", bundle.StartupReadinessProbe)
 	}
 	sensor := serviceByName(bundle.Services, "gazebo_sensor")
 	if sensor == nil || sensor.Image != "navlab/gazebo-sensor:humble-latest" {
@@ -274,10 +286,13 @@ func TestBuildRuntimeSpecsMountsOfficialModelAndParamOverlays(t *testing.T) {
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(artifactDir, "model_overlay.sdf"), []byte("<sdf/>"), 0o644); err != nil {
+	if err := artifactlayout.Ensure(artifactDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(artifactDir, "gazebo-iris-rangefinder.parm"), []byte("RNGFND1_TYPE 10\n"), 0o644); err != nil {
+	if err := os.WriteFile(artifactlayout.RuntimeConfig(artifactDir, "model_overlay.sdf"), []byte("<sdf/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactlayout.RuntimeConfig(artifactDir, "gazebo-iris-rangefinder.parm"), []byte("RNGFND1_TYPE 10\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	project := config.ProjectConfig{
@@ -309,9 +324,9 @@ func TestBuildRuntimeSpecsMountsOfficialModelAndParamOverlays(t *testing.T) {
 	assertVolumeTarget(t, official.Volumes, helpers.OfficialGazeboIrisParams)
 	command := strings.Join(official.Command, " ")
 	for _, expected := range []string{
-		"sitl_work/scripts",
+		"sitl/scripts",
 		"docker/profiles/ahrs-set-origin.lua",
-		"sitl_work/scripts/ahrs-set-origin.lua",
+		"sitl/scripts/ahrs-set-origin.lua",
 	} {
 		if !strings.Contains(command, expected) {
 			t.Fatalf("official command = %q, want %q", command, expected)
@@ -328,7 +343,10 @@ func TestBuildRuntimeSpecsMountsHoverCartographerConfigIntoSlamBackend(t *testin
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(artifactDir, helpers.HoverCartographerConfigBasename), []byte("return options\n"), 0o644); err != nil {
+	if err := artifactlayout.Ensure(artifactDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactlayout.RuntimeConfig(artifactDir, helpers.HoverCartographerConfigBasename), []byte("return options\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	project := config.ProjectConfig{
@@ -379,7 +397,10 @@ func TestBuildRuntimeSpecsHoverSlamOnlyDoesNotStartExternalNavInjection(t *testi
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(artifactDir, helpers.HoverCartographerConfigBasename), []byte("return options\n"), 0o644); err != nil {
+	if err := artifactlayout.Ensure(artifactDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactlayout.RuntimeConfig(artifactDir, helpers.HoverCartographerConfigBasename), []byte("return options\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	project := config.ProjectConfig{
@@ -433,7 +454,10 @@ func TestBuildRuntimeSpecsStartsOfficialMazeOverlayPublisherWhenGenerated(t *tes
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(artifactDir, "official_maze_overlay_runtime.py"), []byte("#!/usr/bin/env python3\n"), 0o755); err != nil {
+	if err := artifactlayout.Ensure(artifactDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactlayout.RuntimeScript(artifactDir, "official_maze_overlay_runtime.py"), []byte("#!/usr/bin/env python3\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	project := config.ProjectConfig{
@@ -557,22 +581,22 @@ func TestBuildRuntimeSpecsMapsWorkspaceArtifactsToContainerWorkspace(t *testing.
 				ServiceName:   "gazebo_sensor",
 				ContainerName: "sensor",
 				ImageRef:      "images.official_baseline",
-				Command:       []string{"bash", "-lc", "python3 artifacts/fcu_controller_runtime.py --log artifacts/gazebo_sensor.log"},
-				Env:           map[string]string{"NAVLAB_CONFIG": "artifacts/gazebo_sensor_runtime.toml"},
+				Command:       []string{"bash", "-lc", "python3 artifacts/runtime/scripts/fcu_controller_runtime.py --log artifacts/runtime/logs/gazebo_sensor.runtime.log"},
+				Env:           map[string]string{"NAVLAB_CONFIG": "artifacts/runtime/config/gazebo_sensor_runtime.toml"},
 			},
 		},
 		ROSProbes: []helpers.ROSProbePlan{
 			{
 				HelperID:     "sensors",
 				Name:         "rangefinder_probe",
-				ScriptPath:   "rangefinder_probe.py",
-				OutputPath:   "rangefinder_probe.txt",
+				ScriptPath:   "probes/rangefinder_probe.py",
+				OutputPath:   "probes/rangefinder_probe.txt",
 				RuntimeImage: "images.runtime",
 				Topics:       []string{"/navlab/rangefinder/range"},
 			},
 		},
 		RosbagRecords: []helpers.RosbagRecordPlan{
-			{Name: "hover_rosbag", OutputDir: "rosbag", Topics: []string{"/tf"}},
+			{Name: "hover_rosbag", OutputDir: "rosbag/hover_rosbag", Topics: []string{"/tf"}},
 		},
 	}
 
@@ -586,17 +610,17 @@ func TestBuildRuntimeSpecsMapsWorkspaceArtifactsToContainerWorkspace(t *testing.
 		return
 	}
 	serviceCommand := strings.Join(sensor.Command, " ")
-	if !strings.Contains(serviceCommand, "/workspace/artifacts/sim/hover/run-1/fcu_controller_runtime.py") {
+	if !strings.Contains(serviceCommand, "/workspace/artifacts/sim/hover/run-1/runtime/scripts/fcu_controller_runtime.py") {
 		t.Fatalf("service command = %q", serviceCommand)
 	}
-	if sensor.Env["NAVLAB_CONFIG"] != "/workspace/artifacts/sim/hover/run-1/gazebo_sensor_runtime.toml" {
+	if sensor.Env["NAVLAB_CONFIG"] != "/workspace/artifacts/sim/hover/run-1/runtime/config/gazebo_sensor_runtime.toml" {
 		t.Fatalf("service env = %#v", sensor.Env)
 	}
 	probeCommand := strings.Join(bundle.Probes[0].Command, " ")
-	if !strings.Contains(probeCommand, "/workspace/artifacts/sim/hover/run-1/rangefinder_probe.py") {
+	if !strings.Contains(probeCommand, "/workspace/artifacts/sim/hover/run-1/probes/rangefinder_probe.py") {
 		t.Fatalf("probe command = %q", probeCommand)
 	}
-	if bundle.Rosbags[0].OutputPath != "/workspace/artifacts/sim/hover/run-1/rosbag" {
+	if bundle.Rosbags[0].OutputPath != "/workspace/artifacts/sim/hover/run-1/rosbag/hover_rosbag" {
 		t.Fatalf("rosbag output = %q", bundle.Rosbags[0].OutputPath)
 	}
 	if bundle.Probes[0].Volumes[0].Source != workspace {
@@ -612,7 +636,7 @@ func TestBuildRuntimePlanContract(t *testing.T) {
 	}
 
 	contract, err := BuildRuntimePlanContract(
-		Plan{TaskID: "hover"},
+		Plan{TaskID: "hover", SimulationProfile: ProfileSlamDirectNoOdomPrior},
 		"20260613T010203Z",
 		RuntimeSpecBundle{
 			Services: []simruntime.ServiceSpec{
@@ -662,6 +686,10 @@ func TestBuildRuntimePlanContract(t *testing.T) {
 	}
 	if contract["schemaVersion"] != "navlab.runtime.runtime_plan.v1" {
 		t.Fatalf("schemaVersion = %#v", contract["schemaVersion"])
+	}
+	profile := contract["simulationProfile"].(map[string]any)
+	if profile["name"] != ProfileSlamDirectNoOdomPrior || profile["purpose"] != ProfilePurposeMainline || profile["mainline"] != true {
+		t.Fatalf("simulation profile contract = %#v", profile)
 	}
 	services := contract["services"].([]map[string]any)
 	if services[0]["backend"] != "RUNTIME_BACKEND_DOCKER" || services[0]["role"] != "sensors" {

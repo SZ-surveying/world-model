@@ -9,7 +9,7 @@ capabilities:
   - writes_task_result
 task:
   duration_sec: 90.0
-  simulation_profile: ideal
+  simulation_profile: slam-direct-no-odom-prior
 fcu_controller:
   takeoff_alt_m: 0.5
   takeoff_min_height_m: 0.15

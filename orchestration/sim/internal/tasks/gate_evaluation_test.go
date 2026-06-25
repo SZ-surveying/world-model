@@ -12,6 +12,7 @@ import (
 
 	"github.com/foxglove/mcap/go/mcap"
 
+	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/config"
 	simruntime "navlab/orchestration-sim/internal/runtime"
 	"navlab/orchestration-sim/internal/tasks/helpers"
@@ -311,6 +312,33 @@ func TestHoverMissionBlockersRequirePythonMissionSummary(t *testing.T) {
 	if !stringSliceContains(blockers, "hover_mission_drift_not_ok") ||
 		!stringSliceContains(blockers, "hover_mission_horizontal_span_not_ok") {
 		t.Fatalf("blockers = %#v, want generic and span-specific drift blockers", blockers)
+	}
+	spanYellow := copyAnyMap(valid)
+	spanYellow["hover_drift"] = map[string]any{
+		"sample_count":                 float64(20),
+		"duration_sec":                 float64(17.9),
+		"duration_tolerance_sec":       float64(0.25),
+		"horizontal_drift_m":           float64(0.02),
+		"horizontal_span_m":            float64(0.118),
+		"max_horizontal_drift_m":       float64(0.10),
+		"hover_span_target_m":          float64(0.10),
+		"hover_span_hard_cap_m":        float64(0.15),
+		"max_altitude_drift_m":         float64(0.30),
+		"quality":                      "tight",
+		"horizontal_drift_ok":          true,
+		"horizontal_span_ok":           true,
+		"horizontal_span_target_ok":    false,
+		"horizontal_span_hard_cap_ok":  true,
+		"horizontal_span_tier":         "yellow",
+		"horizontal_drift_target_ok":   true,
+		"horizontal_drift_hard_cap_ok": true,
+		"horizontal_drift_tier":        "green",
+		"z_span_ok":                    true,
+		"duration_ok":                  true,
+		"ok":                           true,
+	}
+	if blockers := hoverMissionBlockers(spanYellow); len(blockers) != 0 {
+		t.Fatalf("blockers = %#v, want none for target exceed below hard cap", blockers)
 	}
 	jumpFailed := copyAnyMap(valid)
 	jumpFailed["ok"] = false
@@ -758,15 +786,15 @@ func TestSummarizeGazeboModelOdomUsesHoverHoldWindow(t *testing.T) {
 	}
 }
 
-func TestGazeboModelHoverDriftUsesTenCentimeterFinalGate(t *testing.T) {
+func TestGazeboModelHoverDriftIsReviewOnlyAndDoesNotHardBlock(t *testing.T) {
 	blockers := gazeboModelHoverDriftMetricBlockers(map[string]any{
 		"sample_count":            float64(636),
 		"max_horizontal_drift_m":  float64(0.33955787847100694),
 		"source_topic":            helpers.DiagnosticGazeboModelOdometryTopic,
 		"uses_gazebo_truth_input": false,
 	}, 0.10)
-	if !stringSliceContains(blockers, "hover_gazebo_model_horizontal_drift") {
-		t.Fatalf("blockers = %#v, want hover_gazebo_model_horizontal_drift for 0.339m drift", blockers)
+	if len(blockers) != 0 {
+		t.Fatalf("blockers = %#v, want none because Gazebo drift is review-only", blockers)
 	}
 
 	blockers = gazeboModelHoverDriftMetricBlockers(map[string]any{
@@ -1783,7 +1811,10 @@ func TestMetricSummaryIncludesSLAMStabilityMetrics(t *testing.T) {
 		"W0615 rejected odom TF stamp=1.000000000 x=99.000 y=0.000 z=0.000 rejected=1",
 		"terminate called after throwing an instance of 'std::length_error'",
 	}, "\n")
-	if err := os.WriteFile(filepath.Join(artifactDir, "slam_backend.runtime.log"), []byte(log), 0o644); err != nil {
+	if err := artifactlayout.Ensure(artifactDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactlayout.RuntimeLog(artifactDir, "slam_backend.runtime.log"), []byte(log), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	metrics := metricSummaryFromEvidence([]ProbeOutputSummary{
@@ -1810,8 +1841,155 @@ func TestMetricSummaryIncludesSLAMStabilityMetrics(t *testing.T) {
 		metrics.SLAMRuntimeLog["ok"] != false {
 		t.Fatalf("slam runtime log metrics = %#v", metrics.SLAMRuntimeLog)
 	}
-	if metrics.MetricEvidenceSources["slam_runtime_log"] != "slam_backend.runtime.log" {
+	if metrics.MetricEvidenceSources["slam_runtime_log"] != artifactlayout.RuntimeLogRel("slam_backend.runtime.log") {
 		t.Fatalf("metric evidence sources = %#v", metrics.MetricEvidenceSources)
+	}
+}
+
+func TestMetricSummaryClassifiesPreflightReadinessAndRangefinderEvidence(t *testing.T) {
+	artifactDir := t.TempDir()
+	missionSummary := map[string]any{
+		"ok":                  false,
+		"reason":              "preflight_timeout",
+		"mission_fsm_state":   "S1 wait_nav_ready",
+		"mission_fsm_blocker": "waiting_for_external_nav_and_imu",
+		"phases_seen":         []any{"wait_nav_ready"},
+		"airborne_seen":       false,
+	}
+	data, err := json.Marshal(missionSummary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, "mission_summary.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := artifactlayout.Ensure(artifactDir); err != nil {
+		t.Fatal(err)
+	}
+	serialLog := `2026-06-25 INFO benewake_tfmini_serial: Benewake TFmini status {"byte_count":0,"frame_count":0,"latest_distance_m":null,"latest_input_age_sec":null,"state":"open","virtual_serial_link":"/tmp/navlab_benewake_tfmini"}`
+	if err := os.WriteFile(artifactlayout.RuntimeLog(artifactDir, "benewake_tfmini_serial.runtime.log"), []byte(serialLog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probes := []ProbeOutputSummary{
+		{
+			Name:   "rangefinder_probe",
+			Exists: true,
+			OK:     false,
+			Payload: map[string]any{"samples": map[string]any{
+				"/rangefinder/down/range": map[string]any{
+					"ok":            false,
+					"return_code":   float64(124),
+					"sample_method": "rclpy_subscription",
+					"failure_kind":  "topic_sample_missing",
+				},
+				"/rangefinder/down/status": map[string]any{
+					"ok": true,
+					"parsed": map[string]any{
+						"ready":                false,
+						"state":                "waiting",
+						"input_count":          float64(0),
+						"latest_distance_m":    nil,
+						"latest_input_age_sec": nil,
+						"virtual_serial_link":  "/tmp/navlab_benewake_tfmini",
+						"range_topic":          "/rangefinder/down/range",
+						"scan_ideal_topic":     "/rangefinder/down/scan_ideal",
+					},
+				},
+			}},
+		},
+		{
+			Name:   "slam_hover_probe",
+			Exists: true,
+			OK:     true,
+			Payload: map[string]any{"samples": map[string]any{
+				"/external_nav/status": map[string]any{
+					"ok": true,
+					"parsed": map[string]any{
+						"state": "waiting_for_height",
+						"ready": false,
+						"height": map[string]any{
+							"ready": false,
+						},
+					},
+				},
+			}},
+		},
+	}
+	rosbags := []RosbagGateSummary{{
+		Name: "hover_rosbag",
+		MessageCounts: map[string]int{
+			"/rangefinder/down/range":         0,
+			"/rangefinder/down/status":        5,
+			"/height/estimate":                0,
+			"/height/status":                  5,
+			"/external_nav/odom":              0,
+			"/navlab/fcu/local_position_pose": 0,
+		},
+	}}
+
+	metrics := metricSummaryFromEvidence(probes, rosbags, artifactDir)
+	readiness := metrics.StartupReadiness
+	if readiness["classification"] != "startup_readiness_failure" ||
+		readiness["preflight_invalid"] != true ||
+		readiness["valid_hover_body_sample"] != false ||
+		readiness["not_hover_span_slo"] != true {
+		t.Fatalf("startup readiness classification = %#v", readiness)
+	}
+	for _, reason := range []string{
+		"wait_nav_ready",
+		"external_nav_waiting",
+		"airborne_not_seen",
+		"hover_hold_not_seen",
+		"rangefinder_not_ready",
+		"rangefinder_input_missing",
+		"rangefinder_range_sample_missing",
+		"external_nav_waiting_for_height",
+		"height_estimate_missing",
+	} {
+		if !stringSliceContains(stringsFromAny(readiness["reason_codes"]), reason) {
+			t.Fatalf("startup readiness missing reason %q: %#v", reason, readiness)
+		}
+	}
+	rangefinder := mapFromAny(readiness["rangefinder"])
+	if rangefinder["virtual_serial_link"] != "/tmp/navlab_benewake_tfmini" ||
+		metricInt(rangefinder, "input_count") != 0 ||
+		metricInt(rangefinder, "serial_byte_count") != 0 ||
+		metricInt(rangefinder, "serial_frame_count") != 0 ||
+		rangefinder["range_sample_failure_kind"] != "topic_sample_missing" {
+		t.Fatalf("rangefinder readiness evidence = %#v", rangefinder)
+	}
+	height := mapFromAny(readiness["height"])
+	if height["external_nav_height_ready"] != false || metricInt(height, "rosbag_height_estimate_count") != 0 {
+		t.Fatalf("height readiness evidence = %#v", height)
+	}
+}
+
+func TestStartupProbeSemanticsPreserveTFStaticStdoutTimeoutEvidence(t *testing.T) {
+	probe := ProbeOutputSummary{
+		Name:   "frame_contract_probe",
+		Exists: true,
+		OK:     true,
+		Payload: map[string]any{"samples": map[string]any{
+			"/tf_static": map[string]any{
+				"ok":            true,
+				"return_code":   float64(124),
+				"sample_method": "ros2_topic_echo",
+				"failure_kind":  "sample_stdout_present_timeout",
+				"stdout":        "transforms: []",
+			},
+		}},
+	}
+
+	if blockers := probeBlockers(probe); len(blockers) != 0 {
+		t.Fatalf("probe blockers = %#v, want none for stdout-backed tf_static evidence", blockers)
+	}
+	semantics := startupProbeSemantics([]ProbeOutputSummary{probe})
+	samples := mapFromAny(semantics["samples"])
+	tfStatic := mapFromAny(samples["frame_contract_probe:/tf_static"])
+	if tfStatic["ok"] != true ||
+		tfStatic["failure_kind"] != "sample_stdout_present_timeout" ||
+		tfStatic["has_stdout"] != true {
+		t.Fatalf("tf_static probe semantics = %#v", tfStatic)
 	}
 }
 
