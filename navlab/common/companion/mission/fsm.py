@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-HOVER_PHASE_TO_MISSION_FSM_STATE = {
+HOVER_PHASE_TO_MISSION_PHASE_STATE = {
     "wait_ready": "S1 wait_nav_ready",
     "guided": "S2 set_guided",
     "arm": "S3 arm",
@@ -15,7 +15,7 @@ HOVER_PHASE_TO_MISSION_FSM_STATE = {
     "abort": "S_abort",
 }
 
-LANDING_STATE_TO_MISSION_FSM_STATE = {
+LANDING_STATE_TO_MISSION_PHASE_STATE = {
     "not_started": "S7 pre_land_hold",
     "task_body_complete": "S7 pre_land_hold",
     "pre_land_hold": "S7 pre_land_hold",
@@ -28,20 +28,20 @@ LANDING_STATE_TO_MISSION_FSM_STATE = {
 }
 
 
-def mission_fsm_state_for_hover_phase(phase: str) -> str:
+def mission_phase_state_for_hover_phase(phase: str) -> str:
     """Map a hover phase name to the public mission FSM state name."""
 
-    return HOVER_PHASE_TO_MISSION_FSM_STATE.get(phase, "S_abort")
+    return HOVER_PHASE_TO_MISSION_PHASE_STATE.get(phase, "S_abort")
 
 
-def mission_fsm_state_for_landing_state(landing_state: str) -> str:
+def mission_phase_state_for_landing_state(landing_state: str) -> str:
     """Map a landing phase name to the public mission FSM state name."""
 
-    return LANDING_STATE_TO_MISSION_FSM_STATE.get(landing_state, "S_abort")
+    return LANDING_STATE_TO_MISSION_PHASE_STATE.get(landing_state, "S_abort")
 
 
 @dataclass(frozen=True, slots=True)
-class MissionFsmHistoryEntry:
+class MissionPhaseHistoryEntry:
     """One completed or current interval in the mission FSM timeline."""
 
     state: str
@@ -67,14 +67,14 @@ class MissionFsmHistoryEntry:
 
 
 @dataclass(frozen=True, slots=True)
-class MissionFsmSnapshot:
+class MissionPhaseSnapshot:
     """Point-in-time mission FSM state plus bounded transition history."""
 
     state: str
     state_entered_at_sec: float
     last_transition_reason: str
     blocker: str | None
-    history: tuple[MissionFsmHistoryEntry, ...]
+    history: tuple[MissionPhaseHistoryEntry, ...]
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable snapshot for status and summary output."""
@@ -88,7 +88,7 @@ class MissionFsmSnapshot:
         }
 
 
-class MissionFsmRecorder:
+class MissionPhaseRecorder:
     """Record mission FSM transitions against a monotonic start time."""
 
     def __init__(
@@ -106,7 +106,7 @@ class MissionFsmRecorder:
         self._reason = reason
         self._guard: str | None = None
         self._blocker: str | None = None
-        self._history: list[MissionFsmHistoryEntry] = []
+        self._history: list[MissionPhaseHistoryEntry] = []
 
     @property
     def state(self) -> str:
@@ -150,7 +150,7 @@ class MissionFsmRecorder:
             self._blocker = blocker
             return
         self._history.append(
-            MissionFsmHistoryEntry(
+            MissionPhaseHistoryEntry(
                 state=self._state,
                 entered_at_sec=self._entered_at_sec,
                 exited_at_sec=now_sec,
@@ -167,11 +167,11 @@ class MissionFsmRecorder:
         self._guard = guard
         self._blocker = blocker
 
-    def snapshot(self, *, now_monotonic: float) -> MissionFsmSnapshot:
+    def snapshot(self, *, now_monotonic: float) -> MissionPhaseSnapshot:
         """Build an immutable point-in-time FSM snapshot."""
 
         now_sec = max(0.0, now_monotonic - self._started_at_monotonic)
-        current = MissionFsmHistoryEntry(
+        current = MissionPhaseHistoryEntry(
             state=self._state,
             entered_at_sec=self._entered_at_sec,
             exited_at_sec=None,
@@ -180,7 +180,7 @@ class MissionFsmRecorder:
             guard=self._guard,
             blocker=self._blocker,
         )
-        return MissionFsmSnapshot(
+        return MissionPhaseSnapshot(
             state=self._state,
             state_entered_at_sec=self._entered_at_sec,
             last_transition_reason=self._reason,

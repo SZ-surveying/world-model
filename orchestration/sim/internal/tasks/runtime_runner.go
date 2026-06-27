@@ -552,8 +552,8 @@ func writeStartupReadinessMissionSummary(artifactDir string, decision StartupRea
 		"ok":                       false,
 		"reason":                   "startup_readiness_failed",
 		"mission_abort_reason":     decision.Reason,
-		"mission_fsm_state":        "S1 wait_nav_ready",
-		"mission_fsm_blocker":      decision.Reason,
+		"mission_phase_state":      "S1 wait_nav_ready",
+		"mission_phase_blocker":    decision.Reason,
 		"phases_seen":              []string{"wait_nav_ready"},
 		"airborne_seen":            false,
 		"hover_hold_seen":          false,
@@ -664,16 +664,16 @@ func writeTaskRuntimeTimeoutMissionSummary(artifactDir string, stage string, dea
 		return
 	}
 	payload := map[string]any{
-		"ok":                   false,
-		"reason":               "task_runtime_timeout",
-		"mission_abort_reason": "task_runtime_timeout",
-		"mission_fsm_state":    "S_timeout",
-		"mission_fsm_blocker":  "task_runtime_timeout",
-		"phases_seen":          []string{},
-		"airborne_seen":        false,
-		"hover_hold_seen":      false,
-		"task_deadline_sec":    deadlineSec,
-		"timeout_stage":        stage,
+		"ok":                    false,
+		"reason":                "task_runtime_timeout",
+		"mission_abort_reason":  "task_runtime_timeout",
+		"mission_phase_state":   "S_timeout",
+		"mission_phase_blocker": "task_runtime_timeout",
+		"phases_seen":           []string{},
+		"airborne_seen":         false,
+		"hover_hold_seen":       false,
+		"task_deadline_sec":     deadlineSec,
+		"timeout_stage":         stage,
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {

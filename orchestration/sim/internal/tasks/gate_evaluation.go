@@ -25,6 +25,7 @@ type GateEvaluation struct {
 	OK             bool                 `json:"ok"`
 	Blocked        bool                 `json:"blocked"`
 	Blockers       []string             `json:"blockers"`
+	FSMArtifacts   []FSMArtifactRef     `json:"fsm_artifacts,omitempty"`
 	ProbeOutputs   []ProbeOutputSummary `json:"probe_outputs"`
 	RosbagProfiles []RosbagGateSummary  `json:"rosbag_profiles"`
 	Landing        helpers.Acceptance   `json:"landing_acceptance"`
@@ -409,7 +410,7 @@ func startupReadinessSummary(probes []ProbeOutputSummary, rosbags []RosbagGateSu
 	airborneSeen, _ := mission["airborne_seen"].(bool)
 	missionOK := hoverMissionCompletedOK(mission)
 	abortReason, _ := mission["mission_abort_reason"].(string)
-	fsmState, _ := mission["mission_fsm_state"].(string)
+	fsmState, _ := mission["mission_phase_state"].(string)
 	classification := "unknown"
 	if missionOK || hoverHoldSeen {
 		classification = "hover_body_sample"
@@ -509,7 +510,7 @@ func startupMissionEvidence(mission map[string]any, hoverHoldSeen bool) map[stri
 		"exists":                  true,
 		"ok":                      mission["ok"],
 		"reason":                  mission["reason"],
-		"mission_fsm_state":       mission["mission_fsm_state"],
+		"mission_phase_state":     mission["mission_phase_state"],
 		"mission_abort_reason":    mission["mission_abort_reason"],
 		"airborne_seen":           mission["airborne_seen"],
 		"hover_hold_seen":         hoverHoldSeen,
@@ -695,9 +696,9 @@ func subsetHoverMissionSummary(payload map[string]any) map[string]any {
 		"exists",
 		"ok",
 		"reason",
-		"mission_fsm_state",
-		"mission_fsm_blocker",
-		"mission_fsm_last_transition_reason",
+		"mission_phase_state",
+		"mission_phase_blocker",
+		"mission_phase_last_transition_reason",
 		"mission_abort_reason",
 		"hover_body_ok",
 		"landing_ok",
@@ -804,7 +805,7 @@ func hoverMissionCompletedOK(mission map[string]any) bool {
 	if !ok {
 		return false
 	}
-	if state, _ := mission["mission_fsm_state"].(string); hoverMissionFSMCompleted(strings.TrimSpace(state)) {
+	if state, _ := mission["mission_phase_state"].(string); hoverMissionFSMCompleted(strings.TrimSpace(state)) {
 		return true
 	}
 	if reason, _ := mission["reason"].(string); strings.TrimSpace(reason) == "hover_complete" {
@@ -818,12 +819,12 @@ func hoverMissionFSMCompleted(state string) bool {
 }
 
 func missionAbortReason(mission map[string]any) string {
-	for _, key := range []string{"mission_fsm_blocker", "mission_abort_reason"} {
+	for _, key := range []string{"mission_phase_blocker", "mission_abort_reason"} {
 		if reason, _ := mission[key].(string); strings.TrimSpace(reason) != "" {
 			return strings.TrimSpace(reason)
 		}
 	}
-	history, ok := mission["mission_fsm_history"].([]any)
+	history, ok := mission["mission_phase_history"].([]any)
 	if !ok {
 		return ""
 	}

@@ -13,8 +13,8 @@ use crate::tasks::{
     MavlinkStatusText, evaluate_command_ack,
 };
 use crate::workflows::{
-    TASK_FSM_SCHEMA_VERSION, TaskFsmState, TaskFsmSummary, TaskFsmTransition,
-    TaskFsmTransitionInput, task_fsm_state, task_fsm_transition,
+    NavLabFsmState, NavLabFsmSummary, NavLabFsmTransition, NavLabFsmTransitionInput,
+    navlab_fsm_state, navlab_fsm_summary, navlab_fsm_transition,
 };
 
 const DEFAULT_TARGET_SYSTEM: u8 = 1;
@@ -79,7 +79,7 @@ pub struct RealHoverRuntimeReport {
     pub takeoff_ack: Option<CommandAckEvaluation>,
     pub land_ack: Option<CommandAckEvaluation>,
     pub disarm_ack: Option<CommandAckEvaluation>,
-    pub task_fsm: TaskFsmSummary,
+    pub fsm: NavLabFsmSummary,
     pub landing_claim: String,
     pub shutdown_claim: String,
 }
@@ -621,7 +621,7 @@ pub fn run_real_hover_runtime(
         takeoff_ack,
         land_ack,
         disarm_ack,
-        task_fsm: recorder.summary(ok, blockers),
+        fsm: recorder.summary(ok, blockers),
         landing_claim,
         shutdown_claim,
     })
@@ -672,8 +672,8 @@ impl RealHoverRuntimeRequest {
 
 struct RealHoverRuntimeFsm {
     task_id: String,
-    states: Vec<TaskFsmState>,
-    transitions: Vec<TaskFsmTransition>,
+    states: Vec<NavLabFsmState>,
+    transitions: Vec<NavLabFsmTransition>,
     current_state: String,
     failed_state: Option<String>,
 }
@@ -692,7 +692,7 @@ impl RealHoverRuntimeFsm {
     fn enter(&mut self, state: &str, reason: &str, evidence: serde_json::Value) {
         self.current_state = state.to_string();
         self.states
-            .push(task_fsm_state(state, utc_now(), reason, evidence));
+            .push(runtime_fsm_state(state, &utc_now(), reason, evidence));
     }
 
     fn transition(
@@ -704,9 +704,9 @@ impl RealHoverRuntimeFsm {
         evidence: serde_json::Value,
     ) {
         self.current_state = to_state.to_string();
-        self.states.push(task_fsm_state(
+        self.states.push(runtime_fsm_state(
             to_state,
-            utc_now(),
+            &utc_now(),
             reason_code,
             evidence.clone(),
         ));
@@ -751,36 +751,49 @@ impl RealHoverRuntimeFsm {
         ok: bool,
         blocker: Option<String>,
         evidence: serde_json::Value,
-    ) -> TaskFsmTransition {
-        task_fsm_transition(TaskFsmTransitionInput {
-            task_id: self.task_id.clone(),
-            fsm_name: "real-hover".to_string(),
+    ) -> NavLabFsmTransition {
+        let _ = blocker;
+        navlab_fsm_transition(NavLabFsmTransitionInput {
             from_state: from_state.to_string(),
             to_state: to_state.to_string(),
-            event: event.to_string(),
+            trigger: event.to_string(),
             reason_code: reason_code.to_string(),
             ok,
-            blocker,
             evidence,
             at: utc_now(),
         })
     }
 
-    fn summary(self, ok: bool, blockers: Vec<String>) -> TaskFsmSummary {
-        TaskFsmSummary {
-            schema_version: TASK_FSM_SCHEMA_VERSION.to_string(),
-            task_id: self.task_id,
-            fsm_name: "real-hover".to_string(),
-            mode: "actual".to_string(),
+    fn summary(self, ok: bool, blockers: Vec<String>) -> NavLabFsmSummary {
+        navlab_fsm_summary(
+            self.task_id,
+            "real-hover",
+            "",
+            self.current_state,
+            "actual",
             ok,
-            blocked: !ok,
-            current_state: self.current_state,
-            failed_state: self.failed_state,
+            !ok,
+            self.states,
+            self.transitions,
             blockers,
-            states: self.states,
-            transitions: self.transitions,
-        }
+            self.failed_state,
+        )
     }
+}
+
+fn runtime_fsm_state(
+    state: &str,
+    entered_at: &str,
+    reason: &str,
+    evidence: serde_json::Value,
+) -> NavLabFsmState {
+    let _ = evidence;
+    navlab_fsm_state(
+        state,
+        state == "completed",
+        reason == "blocked_before_entering",
+        Some(format!("{entered_at}:{reason}")),
+    )
 }
 
 fn set_guided_and_wait(
@@ -1154,11 +1167,11 @@ mod tests {
         assert_eq!(mavlink.sent_disarm, 1);
         assert_eq!(report.landing_claim, "land_accepted");
         assert_eq!(report.shutdown_claim, "disarm_accepted");
-        assert_eq!(report.task_fsm.current_state, "completed");
-        assert_eq!(report.task_fsm.failed_state, None);
+        assert_eq!(report.fsm.state, "completed");
+        assert_eq!(report.fsm.failed_state, None);
         assert_eq!(
             report
-                .task_fsm
+                .fsm
                 .states
                 .iter()
                 .map(|state| state.state.as_str())
@@ -1177,7 +1190,7 @@ mod tests {
         );
         assert_eq!(
             report
-                .task_fsm
+                .fsm
                 .transitions
                 .iter()
                 .map(|transition| (transition.from_state.as_str(), transition.to_state.as_str()))
@@ -1220,8 +1233,8 @@ mod tests {
         assert_eq!(mavlink.sent_takeoff, 1);
         assert_eq!(mavlink.sent_land, 0);
         assert_eq!(mavlink.sent_disarm, 0);
-        assert_eq!(report.task_fsm.current_state, "armed");
-        assert_eq!(report.task_fsm.failed_state.as_deref(), Some("takeoff"));
+        assert_eq!(report.fsm.state, "armed");
+        assert_eq!(report.fsm.failed_state.as_deref(), Some("takeoff"));
         assert_eq!(report.landing_claim, "not_requested");
         assert_eq!(report.shutdown_claim, "not_requested");
     }

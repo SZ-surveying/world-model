@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from navlab.common.companion.mission.command_adapter import request_mission_command
 from navlab.common.companion.mission.context import MissionContext
-from navlab.common.companion.mission.fsm import mission_fsm_state_for_hover_phase
+from navlab.common.companion.mission.fsm import mission_phase_state_for_hover_phase
 from navlab.common.companion.mission.pipeline import StageResult
 from navlab.common.companion.mission.stages.hover import (
     HoverDecision,
@@ -78,7 +78,7 @@ class RuntimeReadyStage:
         if decision.phase != "wait_ready":
             return StageResult.complete(
                 "runtime_ready",
-                fsm_state=mission_fsm_state_for_hover_phase("wait_ready"),
+                fsm_state=mission_phase_state_for_hover_phase("wait_ready"),
                 evidence={"ready_elapsed_sec": inputs.ready_elapsed_sec},
             )
         if should_fail_fast_wait_ready(
@@ -89,13 +89,13 @@ class RuntimeReadyStage:
         ):
             return StageResult.abort(
                 "preflight_timeout",
-                fsm_state=mission_fsm_state_for_hover_phase("wait_ready"),
+                fsm_state=mission_phase_state_for_hover_phase("wait_ready"),
                 blocker=decision.reason,
                 evidence={"ready_elapsed_sec": inputs.ready_elapsed_sec},
             )
         return StageResult.running(
             decision.reason,
-            fsm_state=mission_fsm_state_for_hover_phase("wait_ready"),
+            fsm_state=mission_phase_state_for_hover_phase("wait_ready"),
             evidence={"ready_elapsed_sec": inputs.ready_elapsed_sec},
         )
 
@@ -115,11 +115,14 @@ class GuidedModeStage:
                 blocker="guided_mode_lost_after_airborne",
             )
         if ctx.state.fcu.expected_mode_seen:
-            return StageResult.complete("guided_mode_confirmed", fsm_state=mission_fsm_state_for_hover_phase("guided"))
+            return StageResult.complete(
+                "guided_mode_confirmed",
+                fsm_state=mission_phase_state_for_hover_phase("guided"),
+            )
         command_sent = request_mission_command(ctx, "request_guided_mode")
         return StageResult.running(
             "setting_guided",
-            fsm_state=mission_fsm_state_for_hover_phase("guided"),
+            fsm_state=mission_phase_state_for_hover_phase("guided"),
             evidence={"should_set_guided": True, "command_sent": command_sent},
         )
 
@@ -133,11 +136,11 @@ class ArmStage:
         """Evaluate arming state and request arm when needed."""
 
         if ctx.state.fcu.armed:
-            return StageResult.complete("armed", fsm_state=mission_fsm_state_for_hover_phase("arm"))
+            return StageResult.complete("armed", fsm_state=mission_phase_state_for_hover_phase("arm"))
         command_sent = request_mission_command(ctx, "request_arm")
         return StageResult.running(
             "arming_vehicle",
-            fsm_state=mission_fsm_state_for_hover_phase("arm"),
+            fsm_state=mission_phase_state_for_hover_phase("arm"),
             evidence={"should_arm": True, "command_sent": command_sent},
         )
 
@@ -160,7 +163,7 @@ class TakeoffStage:
             command_sent = request_mission_command(ctx, "request_takeoff")
             return StageResult.running(
                 "taking_off",
-                fsm_state=mission_fsm_state_for_hover_phase("takeoff"),
+                fsm_state=mission_phase_state_for_hover_phase("takeoff"),
                 evidence={
                     "should_takeoff": True,
                     "takeoff_ack_ok": inputs.takeoff_ack_ok,
@@ -175,7 +178,7 @@ class TakeoffStage:
         if not independent_height_ok:
             return StageResult.running(
                 "waiting_for_independent_takeoff_height",
-                fsm_state=mission_fsm_state_for_hover_phase("takeoff"),
+                fsm_state=mission_phase_state_for_hover_phase("takeoff"),
                 evidence={
                     "takeoff_ack_ok": inputs.takeoff_ack_ok,
                     "external_nav_height_m": inputs.external_nav_height_m,
@@ -185,7 +188,7 @@ class TakeoffStage:
         reason = "takeoff_confirmed" if inputs.takeoff_ack_ok else "takeoff_height_confirmed_without_ack"
         return StageResult.complete(
             reason,
-            fsm_state=mission_fsm_state_for_hover_phase("takeoff"),
+            fsm_state=mission_phase_state_for_hover_phase("takeoff"),
             evidence={
                 "takeoff_ack_ok": inputs.takeoff_ack_ok,
                 "external_nav_height_m": inputs.external_nav_height_m,

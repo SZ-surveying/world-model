@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from navlab.common.companion.mission.command_adapter import request_mission_command
 from navlab.common.companion.mission.context import MissionContext
-from navlab.common.companion.mission.fsm import mission_fsm_state_for_hover_phase
+from navlab.common.companion.mission.fsm import mission_phase_state_for_hover_phase
 from navlab.common.companion.mission.pipeline import StageResult
 
 
@@ -513,7 +513,7 @@ class HoverHoldStage:
             "command_sent": command_sent,
             "hover_health": health_gate.payload,
         }
-        fsm_state = mission_fsm_state_for_hover_phase(decision.phase)
+        fsm_state = mission_phase_state_for_hover_phase(decision.phase)
         if decision.phase == "abort":
             return StageResult.abort(decision.reason, fsm_state=fsm_state, blocker=decision.reason, evidence=evidence)
         if decision.terminal:

@@ -17,7 +17,7 @@ Decision：WF0 先做文档级 schema，不直接新增 generated proto。
 
 Basis：当前 `contracts/` 已经有 `doctor_result.json`、`runtime_plan` 和
 task result 相关 contract，但还没有稳定的 `WorkflowNode`、`NodeResult`、
-`TaskFsmTransition` proto。
+`NavLabFsmTransition` proto。
 
 Reason：Go sim 和 Rust real 需要先在阶段名和 artifact 语义上收敛。等 WF1-WF3
 证明字段稳定后，再把 schema 上升到 `contracts/proto`，否则会过早维护跨语言
@@ -38,7 +38,7 @@ load-config
   -> summary/cohort
 ```
 
-`task_fsm` 指任务运行期内部状态机。`preflight`、`prepare`、
+`fsm` 指任务运行期内部状态机。`preflight`、`prepare`、
 `common-doctor`、`task-doctor` 不能塞进 task FSM，它们是外层 workflow node。
 
 `motor-debug` 的 task FSM 示例：
@@ -143,7 +143,7 @@ side effect 规则：
 - optional node 失败只记录 warning evidence，不阻塞 required 主链。
 - 每个被执行的 node 都必须写 summary artifact 或 `doctor_result`。
 
-## TaskFsmTransition
+## NavLabFsmTransition
 
 最小字段：
 

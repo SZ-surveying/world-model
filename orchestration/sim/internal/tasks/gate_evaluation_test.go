@@ -345,7 +345,7 @@ func TestHoverMissionBlockersRequirePythonMissionSummary(t *testing.T) {
 	aborted := copyAnyMap(valid)
 	aborted["ok"] = false
 	aborted["hover_body_ok"] = false
-	aborted["mission_fsm_history"] = []any{
+	aborted["mission_phase_history"] = []any{
 		map[string]any{"state": "S6 hover_hold", "reason": "holding_position"},
 		map[string]any{"state": "S_abort", "guard": "abort", "reason": "slam_quality_lost_after_airborne", "blocker": "slam_quality_lost_after_airborne"},
 	}
@@ -533,7 +533,7 @@ func TestHoverMissionBlockersAllowPostLandingExternalNavReadyDropWhenMissionComp
 		mission := map[string]any{
 			"ok":                   true,
 			"reason":               "hover_complete",
-			"mission_fsm_state":    fsmState,
+			"mission_phase_state":  fsmState,
 			"require_external_nav": true,
 			"external_nav_ready":   false,
 			"phases_seen":          []any{"guided", "arm", "takeoff", "hover_hold", "complete"},
@@ -700,9 +700,9 @@ func TestExternalNavFeedbackBlockersAllowPostLandingFinalReadinessDropWhenMissio
 			"fcu_local_position_ready":  false,
 		},
 		map[string]any{
-			"ok":                true,
-			"reason":            "hover_complete",
-			"mission_fsm_state": "S12 landing_complete",
+			"ok":                  true,
+			"reason":              "hover_complete",
+			"mission_phase_state": "S12 landing_complete",
 		},
 	)
 	if len(blockers) != 0 {
@@ -1913,12 +1913,12 @@ func TestMetricSummaryIncludesSLAMStabilityMetrics(t *testing.T) {
 func TestMetricSummaryClassifiesPreflightReadinessAndRangefinderEvidence(t *testing.T) {
 	artifactDir := t.TempDir()
 	missionSummary := map[string]any{
-		"ok":                  false,
-		"reason":              "preflight_timeout",
-		"mission_fsm_state":   "S1 wait_nav_ready",
-		"mission_fsm_blocker": "waiting_for_external_nav_and_imu",
-		"phases_seen":         []any{"wait_nav_ready"},
-		"airborne_seen":       false,
+		"ok":                    false,
+		"reason":                "preflight_timeout",
+		"mission_phase_state":   "S1 wait_nav_ready",
+		"mission_phase_blocker": "waiting_for_external_nav_and_imu",
+		"phases_seen":           []any{"wait_nav_ready"},
+		"airborne_seen":         false,
 	}
 	data, err := json.Marshal(missionSummary)
 	if err != nil {

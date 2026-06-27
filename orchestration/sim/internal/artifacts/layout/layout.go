@@ -41,6 +41,9 @@ func Ensure(root string) error {
 func Audit(root, name string) string { return filepath.Join(root, AuditsDir, filepath.Base(name)) }
 func DAG(root, name string) string   { return filepath.Join(root, DAGDir, filepath.Base(name)) }
 func Probe(root, name string) string { return filepath.Join(root, ProbesDir, filepath.Base(name)) }
+func Runtime(root, name string) string {
+	return filepath.Join(root, RuntimeDir, filepath.Base(name))
+}
 func RuntimeScript(root, name string) string {
 	return filepath.Join(root, RuntimeScriptsDir, filepath.Base(name))
 }
@@ -67,6 +70,9 @@ func DAGRel(name string) string {
 }
 func ProbeRel(name string) string {
 	return filepath.ToSlash(filepath.Join(ProbesDir, filepath.Base(name)))
+}
+func RuntimeRel(name string) string {
+	return filepath.ToSlash(filepath.Join(RuntimeDir, filepath.Base(name)))
 }
 func RuntimeScriptRel(name string) string {
 	return filepath.ToSlash(filepath.Join(RuntimeScriptsDir, filepath.Base(name)))

@@ -11,6 +11,7 @@ require (
 	github.com/klauspost/compress v1.16.7
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/pelletier/go-toml/v2 v2.2.4
+	github.com/qmuntal/stateless v1.8.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	google.golang.org/protobuf v1.36.10

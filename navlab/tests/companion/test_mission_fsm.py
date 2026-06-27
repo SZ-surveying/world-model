@@ -1,23 +1,23 @@
 from __future__ import annotations
 
 from navlab.common.companion.mission.fsm import (
-    MissionFsmRecorder,
-    mission_fsm_state_for_hover_phase,
-    mission_fsm_state_for_landing_state,
+    MissionPhaseRecorder,
+    mission_phase_state_for_hover_phase,
+    mission_phase_state_for_landing_state,
 )
 
 
-def test_mission_fsm_maps_hover_and_landing_states() -> None:
-    assert mission_fsm_state_for_hover_phase("takeoff") == "S4 takeoff"
-    assert mission_fsm_state_for_hover_phase("hover_hold") == "S6 hover_hold"
-    assert mission_fsm_state_for_hover_phase("unknown") == "S_abort"
-    assert mission_fsm_state_for_landing_state("pre_land_hold") == "S7 pre_land_hold"
-    assert mission_fsm_state_for_landing_state("landing_complete") == "S12 landing_complete"
-    assert mission_fsm_state_for_landing_state("bad_state") == "S_abort"
+def test_mission_phase_maps_hover_and_landing_states() -> None:
+    assert mission_phase_state_for_hover_phase("takeoff") == "S4 takeoff"
+    assert mission_phase_state_for_hover_phase("hover_hold") == "S6 hover_hold"
+    assert mission_phase_state_for_hover_phase("unknown") == "S_abort"
+    assert mission_phase_state_for_landing_state("pre_land_hold") == "S7 pre_land_hold"
+    assert mission_phase_state_for_landing_state("landing_complete") == "S12 landing_complete"
+    assert mission_phase_state_for_landing_state("bad_state") == "S_abort"
 
 
-def test_mission_fsm_recorder_tracks_history_and_current_state() -> None:
-    recorder = MissionFsmRecorder(started_at_monotonic=100.0)
+def test_mission_phase_recorder_tracks_history_and_current_state() -> None:
+    recorder = MissionPhaseRecorder(started_at_monotonic=100.0)
 
     recorder.transition(now_monotonic=101.0, state="S1 wait_nav_ready", reason="waiting_for_slam")
     recorder.transition(now_monotonic=104.0, state="S4 takeoff", reason="taking_off", guard="takeoff")

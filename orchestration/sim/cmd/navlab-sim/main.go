@@ -1063,6 +1063,16 @@ func prepareTaskRun(
 	}); err != nil {
 		return preparedTaskRun{}, fmt.Errorf("failed to update runtime plan manifest for %q: %w", taskID, err)
 	}
+	_, plannedTaskFSMArtifact, err := tasks.WritePlannedTaskFSMArtifact(result.ArtifactDir, plan.TaskID, result.RunID)
+	if err != nil {
+		return preparedTaskRun{}, fmt.Errorf("failed to write planned task FSM artifact for %q: %w", taskID, err)
+	}
+	generatedArtifacts = append(generatedArtifacts, plannedTaskFSMArtifact)
+	if err := artifacts.AppendManifestArtifacts(result.ManifestPath, result.ArtifactDir, []artifacts.GeneratedArtifact{
+		{Type: plannedTaskFSMArtifact.Type, Path: plannedTaskFSMArtifact.Path},
+	}); err != nil {
+		return preparedTaskRun{}, fmt.Errorf("failed to update planned task FSM manifest for %q: %w", taskID, err)
+	}
 	workflowBundle := tasks.BuildSimWorkflowBundleWithOptions(
 		project,
 		taskConfig,
@@ -1151,6 +1161,16 @@ func runLiveTask(
 		},
 	)
 	summary := tasks.BuildLiveRunSummary(project, taskRuntimeConfig, plan, result.RunID, result.ArtifactDir, generatedArtifacts, runtimeSpecs, execution, executionErr)
+	runtimeFSMRefs, runtimeFSMArtifacts, err := tasks.WriteRosbagRecorderFSMArtifacts(result.ArtifactDir, plan.TaskID, result.RunID, execution, summary.GateEvaluation)
+	if err != nil {
+		return fmt.Errorf("failed to write runtime FSM artifacts for %q: %w", plan.TaskID, err)
+	}
+	taskFSMRef, taskFSMArtifact, err := tasks.WriteTaskFSMArtifact(result.ArtifactDir, plan.TaskID, result.RunID, summary.GateEvaluation, executionErr, runtimeFSMRefs)
+	if err != nil {
+		return fmt.Errorf("failed to write task FSM artifact for %q: %w", plan.TaskID, err)
+	}
+	summary.FSMArtifacts = append([]tasks.FSMArtifactRef{taskFSMRef}, runtimeFSMRefs...)
+	summary.GateEvaluation.FSMArtifacts = append([]tasks.FSMArtifactRef(nil), summary.FSMArtifacts...)
 	tasks.AttachRuntimeHoverHealthFromMissionSummary(&summary)
 	summaryPath := filepath.Join(result.ArtifactDir, "summary.json")
 	summary.SummaryPath = summaryPath
@@ -1161,7 +1181,11 @@ func runLiveTask(
 	manifestEntries := []artifacts.GeneratedArtifact{
 		{Type: "summary", Path: summaryPath},
 	}
-	liveCommonDoctor := tasks.BuildSimLiveCommonDoctorSummary(project, plan, result.RunID, runtimeSpecs, execution, executionErr)
+	for _, artifact := range runtimeFSMArtifacts {
+		manifestEntries = append(manifestEntries, artifacts.GeneratedArtifact{Type: artifact.Type, Path: artifact.Path})
+	}
+	manifestEntries = append(manifestEntries, artifacts.GeneratedArtifact{Type: taskFSMArtifact.Type, Path: taskFSMArtifact.Path})
+	liveCommonDoctor := tasks.BuildSimLiveCommonDoctorSummary(project, plan, result.RunID, runtimeSpecs, execution, executionErr, runtimeFSMRefs...)
 	liveCommonDoctorPath := artifactlayout.DAG(result.ArtifactDir, "common_doctor_live_summary.json")
 	if err := artifacts.WriteJSONArtifact(liveCommonDoctorPath, liveCommonDoctor); err != nil {
 		return fmt.Errorf("failed to write live common doctor summary for %q: %w", plan.TaskID, err)

@@ -35,7 +35,7 @@ from navlab.common.companion.mission.evidence.landing import (
 from navlab.common.companion.mission.evidence.summary import (
     build_hover_status_payload,
     build_landing_summary,
-    mission_fsm_summary_fields,
+    mission_phase_summary_fields,
 )
 
 __all__ = [
@@ -64,7 +64,7 @@ __all__ = [
     "landing_descent_target_z_ned",
     "landing_effective_descent_rate_mps",
     "landing_touchdown_candidate",
-    "mission_fsm_summary_fields",
+    "mission_phase_summary_fields",
     "summarize_hover_altitude_crosscheck",
     "summarize_hover_drift",
     "summarize_landing_descent_profile",

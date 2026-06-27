@@ -253,6 +253,7 @@ type SimLiveCommonDoctorSummary struct {
 	DoctorStage          string                 `json:"doctor_stage"`
 	Checks               map[string]CheckResult `json:"checks"`
 	TopicFreshness       map[string]CheckResult `json:"topic_freshness"`
+	FSMArtifacts         []FSMArtifactRef       `json:"fsm_artifacts,omitempty"`
 	RuntimeError         string                 `json:"runtime_error,omitempty"`
 	LiveObservationClaim string                 `json:"live_observation_claim"`
 }
@@ -513,6 +514,7 @@ func BuildSimLiveCommonDoctorSummary(
 	runtimeSpecs RuntimeSpecBundle,
 	execution RuntimeExecutionResult,
 	executionErr error,
+	fsmArtifacts ...FSMArtifactRef,
 ) SimLiveCommonDoctorSummary {
 	runtimeError := ""
 	if executionErr != nil {
@@ -553,6 +555,7 @@ func BuildSimLiveCommonDoctorSummary(
 		DoctorStage:          "sim_common_doctor_live_runtime_evidence",
 		Checks:               checks,
 		TopicFreshness:       topicFreshness,
+		FSMArtifacts:         append([]FSMArtifactRef(nil), fsmArtifacts...),
 		RuntimeError:         runtimeError,
 		LiveObservationClaim: "derived_from_runtime_execute_probe_results_service_handles_rosbag_finalize_evidence",
 	}

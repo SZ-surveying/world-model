@@ -265,13 +265,13 @@ Reason: 该 run 同时暴露两类问题：
 
 - [x] gate 对负 return code 的 probe 增加 `probe_killed:<name>`。
 - [x] gate 对空 probe output 增加 `probe_output_empty:<name>`，避免只看到泛化 `probe_output_not_ok`。
-- [x] 从 `mission_fsm_history` 提取 `mission_abort_reason`。
+- [x] 从 `mission_phase_history` 提取 `mission_abort_reason`。
 - [x] mission abort 进入 blocker，例如 `hover_mission_abort:slam_quality_lost_after_airborne`。
 
 验收：
 
 - [x] killed probe + 0 字节 output 能在 blockers 中明确分类。
-- [x] mission 因 airborne 后定位质量丢失 abort 时，summary/gate 不需要手工翻 `mission_fsm_history` 也能看到原因。
+- [x] mission 因 airborne 后定位质量丢失 abort 时，summary/gate 不需要手工翻 `mission_phase_history` 也能看到原因。
 
 ## Phase 7 [real-flight-safety]: airborne 后不重复 preflight stable wait
 
@@ -1701,7 +1701,7 @@ Acceptance:
 - [x] `summary.json` now exposes `hover_health_band`, `hover_health_hard_blockers`, `hover_health_statistical_warnings`, `hover_health_review_only_findings`, and `hover_health_proceed` for hover tasks.
 - [x] Gate metrics include `gate.metrics.hover_health` and top-level `metrics.hover_health`.
 - [x] Existing artifact usage pass: `20260624T034856Z` still classifies as `yellow`, with no hard blockers and Gazebo findings review-only.
-- [x] Fresh hover run usage pass: `20260624T124117Z` with `just navlab-run hover --simulation-profile slam-direct-no-odom-prior` reached `TASK_STATUS_OK`, `gate_evaluation.ok=true`, `mission_summary.ok=true`, `mission_fsm_state=S13 task_success`, landing blockers empty, and `hover_health_summary.health_band=yellow` only because Gazebo review-only findings remain.
+- [x] Fresh hover run usage pass: `20260624T124117Z` with `just navlab-run hover --simulation-profile slam-direct-no-odom-prior` reached `TASK_STATUS_OK`, `gate_evaluation.ok=true`, `mission_summary.ok=true`, `mission_phase_state=S13 task_success`, landing blockers empty, and `hover_health_summary.health_band=yellow` only because Gazebo review-only findings remain.
 
 Non-goals:
 
@@ -1803,14 +1803,14 @@ Non-goals:
 
 Decision:
 
-- [x] 当前 hover task FSM 基本可用：Phase 41/42 profile `20260624T124117Z` 已跑到 `TASK_STATUS_OK`、`mission_summary.ok=true`、`mission_fsm_state=S13 task_success`。
+- [x] 当前 hover task FSM 基本可用：Phase 41/42 profile `20260624T124117Z` 已跑到 `TASK_STATUS_OK`、`mission_summary.ok=true`、`mission_phase_state=S13 task_success`。
 - [x] 当前剩余问题不是“安全主链没做”，而是 runtime health、post-run audit、real operator confirm、summary schema 的表达层还需要拆清楚。
 - [x] 继续保持 Go/Python 边界：跨语言交互只走 runtime spec / generated files / CLI args / env / ROS status / probe JSON / artifact JSON。
 - [x] 不把 `hover_hold` evidence 立即重命名为 `hover_health_hold`，避免破坏 rosbag/evidence downstream；先通过 health substate 和 summary 字段表达。
 
 Open gaps:
 
-- [x] Public FSM timeline still reports `S6 hover_hold`; `hover_health_hold`, `sim_auto_continue`, `operator_confirm`, `operator_confirmed` are nested health phases, not first-class visible FSM substates. Mitigation: expose `mission_fsm_substate` / `hover_health_phase`.
+- [x] Public FSM timeline still reports `S6 hover_hold`; `hover_health_hold`, `sim_auto_continue`, `operator_confirm`, `operator_confirmed` are nested health phases, not first-class visible FSM substates. Mitigation: expose `mission_phase_substate` / `hover_health_phase`.
 - [x] Runtime health and post-run health audit can look contradictory: runtime can proceed green/stable, while `hover_health_summary.health_band=yellow` because post-run Gazebo review-only findings remain. Mitigation: split runtime and post-run schemas in summaries.
 - [x] `mission_summary.json` records health parameters and status history, but does not freeze a clear top-level final runtime hover-health snapshot. Mitigation: add `runtime_hover_health_final`.
 - [ ] Real operator-confirm hook exists, but concrete real launcher/operator UI is not wired into a full task workflow.
@@ -1850,7 +1850,7 @@ S6 hover_hold
   S6x hover_health_blocked
 ```
 
-   - [x] Add `mission_fsm_substate` and `hover_health_phase` to status/summary payloads without changing existing `S6 hover_hold` evidence semantics.
+   - [x] Add `mission_phase_substate` and `hover_health_phase` to status/summary payloads without changing existing `S6 hover_hold` evidence semantics.
    - [x] Update docs so reviewers understand why `S6 hover_hold` can have reason `hover_health_waiting_hover_duration`.
 4. Real operator-confirm integration:
    - [ ] Set `operator_confirm_required=true` for concrete real flight tasks that enter motion after hover.
@@ -1868,7 +1868,7 @@ S6 hover_hold
 
 44 execution result:
 
-- [x] `/navlab/hover/status` now exposes `hover_health_phase` and `mission_fsm_substate` alongside the nested `hover_health` payload.
+- [x] `/navlab/hover/status` now exposes `hover_health_phase` and `mission_phase_substate` alongside the nested `hover_health` payload.
 - [x] `mission_summary.json` now freezes `runtime_hover_health_final` with schema `navlab.runtime_hover_health.v1`.
 - [x] Top-level `summary.json` now copies `runtime_hover_health_final` from `mission_summary.json` through the artifact-file boundary.
 - [x] Top-level `summary.json` now exposes `postrun_hover_health_audit` as a separate post-run artifact audit; it explicitly says it does not control runtime proceed.
@@ -2232,7 +2232,7 @@ Acceptance:
 Execution result:
 
 - [x] Dry-run `just navlab-run hover --simulation-profile slam-direct-no-odom-prior --hover-span-target-m 0.1 --hover-span-hard-cap-m 0.15 --dry-run` showed the resolved policy in CLI output, `task_plan.json`, and generated `hover_mission_runtime.py`.
-- [x] Fresh successful usage pass `20260625T023143Z`: `TASK_STATUS_OK`, `mission_summary.ok=true`, `mission_fsm_state=S13 task_success`, runtime health `green/sim_auto_continue`, `horizontal_span_m=0.025m`, `hover_span_target_m=0.1`, `hover_span_hard_cap_m=0.15`, and no top-level blockers.
+- [x] Fresh successful usage pass `20260625T023143Z`: `TASK_STATUS_OK`, `mission_summary.ok=true`, `mission_phase_state=S13 task_success`, runtime health `green/sim_auto_continue`, `horizontal_span_m=0.025m`, `hover_span_target_m=0.1`, `hover_span_hard_cap_m=0.15`, and no top-level blockers.
 - [x] Cohort command generated `navlab.hover_health_cohort.v1` and included `mission_hover_horizontal_span_m` with P50/P90/P95/P99, target exceed rate, hard-cap exceed rate, and `case_study_only` sample-size rule.
 - [x] Fixed a probe false-negative found during usage: generic ROS probe now treats non-empty `ros2 topic echo --once` stdout as evidence even if the `timeout` wrapper returns `124`; this prevented `/tf_static` evidence from being discarded after it had already been printed.
 - [x] Full repeatability proof moved to Phase 49: five valid hover-body samples completed; `20260625T022810Z` remains classified as preflight/readiness invalid, not a hover-span SLO sample.
@@ -2359,7 +2359,7 @@ Execution log (2026-06-25 Phase 49):
 - [x] Phase 49 closeout update: cohort run rows now include `summary_artifact`, `mission_summary_artifact`, `hover_health_artifact`, `contract_audit_artifact`, and `trajectory_audit_artifact`.
 - [x] Phase 49 closeout update: `TestBuildHoverHealthCohortKeepsTraceLinksAndExcludesPreflightFromSpan` covers valid hover samples plus preflight-invalid artifacts and asserts span percentile count only includes valid mission spans.
 - [x] Ran five fresh `slam-direct-no-odom-prior` hover samples with fixed Go-owned policy `target=0.1m`, `hard_cap=0.15m`: `20260625T030617Z`, `20260625T030852Z`, `20260625T031110Z`, `20260625T031325Z`, `20260625T031541Z`.
-- [x] All five runs reached `TASK_STATUS_OK`, `mission_summary.ok=true`, `mission_fsm_state=S13 task_success`, `runtime_hover_health_final.band=green`, and `phase=sim_auto_continue`.
+- [x] All five runs reached `TASK_STATUS_OK`, `mission_summary.ok=true`, `mission_phase_state=S13 task_success`, `runtime_hover_health_final.band=green`, and `phase=sim_auto_continue`.
 - [x] Primary cohort artifact: `artifacts/sim/hover/phase49_5run_hover_health_cohort.json`.
 - [x] Mission hover horizontal span results: P50 `0.057657m`, P90 `0.067167m`, P95 `0.067246m`, P99 `0.067308m`, max `0.067324m`; `target_exceed_count=0`, `hard_cap_exceed_count=0`, `sample_size_rule=case_study_only`.
 - [x] Post-run health band is still `yellow` for all five because Gazebo review-only contract findings remain; this is observation-surface debt, not a hover-body hard blocker.
@@ -2417,7 +2417,7 @@ Non-goals:
 Execution log (2026-06-25 Phase 50):
 
 - [x] Added central Go artifact layout helper `orchestration/sim/internal/artifactlayout` and moved generated runtime/probe/audit paths to the new layout.
-- [x] Fresh usage artifact `artifacts/sim/hover/20260625T035409Z` completed `TASK_STATUS_OK`, `gate_evaluation.ok=true`, `mission_summary.ok=true`, `mission_fsm_state=S13 task_success`, runtime health `green/sim_auto_continue`.
+- [x] Fresh usage artifact `artifacts/sim/hover/20260625T035409Z` completed `TASK_STATUS_OK`, `gate_evaluation.ok=true`, `mission_summary.ok=true`, `mission_phase_state=S13 task_success`, runtime health `green/sim_auto_continue`.
 - [x] Root now contains only entry files plus directories: `audits`, `manifest.json`, `mission_summary.json`, `probes`, `profiles`, `rosbag`, `run_config.toml`, `runtime`, `runtime_plan.json`, `sitl`, `summary.json`, `summary.md`, `task_plan.json`, `task_request.json`.
 - [x] Runtime internals moved: scripts under `runtime/scripts/`, configs under `runtime/config/`, logs under `runtime/logs/`, probe scripts/output/logs under `probes/`, audit outputs under `audits/`, SITL state under `sitl/`.
 - [x] `summary.json.postrun_hover_health_audit.artifact` points to `audits/hover_health_summary.json`; `manifest.json` records moved paths such as `runtime/scripts/hover_mission_runtime.py`, `runtime/config/slam_runtime.toml`, and `audits/hover_health_summary.json`.

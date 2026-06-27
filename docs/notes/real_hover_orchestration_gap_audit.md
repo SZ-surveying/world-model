@@ -600,7 +600,7 @@ sim/real 分别负责证据来源和副作用。
 任务：
 
 - [ ] 定义 `WorkflowNode` / `NodeResult` 最小字段。
-- [ ] 定义 `TaskFsmTransition` 最小字段。
+- [ ] 定义 `NavLabFsmTransition` 最小字段。
 - [ ] 定义 common blocker/reason code 命名规则。
 - [ ] 定义 `not_applicable` task-doctor summary 语义。
 - [ ] 文档明确：第一阶段不引入 DAG 第三方库。

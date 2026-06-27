@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from navlab.common.companion.mission.fsm import MissionFsmSnapshot
+from navlab.common.companion.mission.fsm import MissionPhaseSnapshot
 from navlab.common.companion.mission.stages.hover import HoverInputs
 from navlab.common.companion.mission.stages.landing import (
     fcu_land_params_report,
@@ -77,15 +77,15 @@ def summarize_post_airborne_nav_loss(status_history: Sequence[Mapping[str, objec
     return summaries
 
 
-def mission_fsm_summary_fields(snapshot: MissionFsmSnapshot) -> dict[str, object]:
+def mission_phase_summary_fields(snapshot: MissionPhaseSnapshot) -> dict[str, object]:
     """Return the legacy mission FSM summary field set."""
 
     return {
-        "mission_fsm_state": snapshot.state,
-        "mission_fsm_state_entered_at_sec": snapshot.state_entered_at_sec,
-        "mission_fsm_last_transition_reason": snapshot.last_transition_reason,
-        "mission_fsm_blocker": snapshot.blocker,
-        "mission_fsm_history": [entry.to_dict() for entry in snapshot.history],
+        "mission_phase_state": snapshot.state,
+        "mission_phase_state_entered_at_sec": snapshot.state_entered_at_sec,
+        "mission_phase_last_transition_reason": snapshot.last_transition_reason,
+        "mission_phase_blocker": snapshot.blocker,
+        "mission_phase_history": [entry.to_dict() for entry in snapshot.history],
     }
 
 
@@ -93,7 +93,7 @@ def build_hover_status_payload(
     *,
     phase: str,
     reason: str,
-    fsm_snapshot: MissionFsmSnapshot,
+    fsm_snapshot: MissionPhaseSnapshot,
     prefix_pipeline: Mapping[str, object],
     inputs: HoverInputs,
     slam_quality_reason: str,
@@ -111,7 +111,7 @@ def build_hover_status_payload(
     payload = {
         "phase": phase,
         "reason": reason,
-        **mission_fsm_summary_fields(fsm_snapshot),
+        **mission_phase_summary_fields(fsm_snapshot),
         "prefix_pipeline": dict(prefix_pipeline),
         "external_nav_ready": inputs.external_nav_ready,
         "slam_quality": inputs.slam_quality,
@@ -154,13 +154,13 @@ def build_hover_status_payload(
         hover_health_phase = hover_health_payload.get("phase")
         if hover_health_phase is not None:
             payload["hover_health_phase"] = hover_health_phase
-            payload["mission_fsm_substate"] = hover_health_phase
+            payload["mission_phase_substate"] = hover_health_phase
     return payload
 
 
 def build_landing_summary(
     *,
-    fsm_snapshot: MissionFsmSnapshot,
+    fsm_snapshot: MissionPhaseSnapshot,
     policy: str,
     state: str,
     started: bool,
@@ -244,7 +244,7 @@ def build_landing_summary(
         "official_land_mode_descent_control": landing_policy_uses_ap_land_mode(policy),
         "descent_profile_enforced": descent_profile_enforced,
         "frozen_hover_evidence": dict(frozen_hover_evidence),
-        **mission_fsm_summary_fields(fsm_snapshot),
+        **mission_phase_summary_fields(fsm_snapshot),
         "return_home": {
             "required": False,
             "ok": True,
@@ -296,7 +296,7 @@ class MissionSummaryBuilder:
         *,
         ok: bool,
         reason: str,
-        fsm_snapshot: MissionFsmSnapshot,
+        fsm_snapshot: MissionPhaseSnapshot,
         hover_body_ok: bool,
         landing_ok: bool,
         phases_seen: Sequence[str],
@@ -368,7 +368,7 @@ class MissionSummaryBuilder:
         return {
             "ok": ok,
             "reason": reason,
-            **mission_fsm_summary_fields(fsm_snapshot),
+            **mission_phase_summary_fields(fsm_snapshot),
             "hover_body_ok": hover_body_ok,
             "landing_ok": landing_ok,
             "phases_seen": sorted(phases_seen),

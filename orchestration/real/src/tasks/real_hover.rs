@@ -12,9 +12,10 @@ use crate::contracts;
 use crate::tasks::{RealTask, RunOptions};
 use crate::ui::{print_key_value, print_title};
 use crate::workflows::{
-    RealWorkflowSummary, TASK_FSM_SCHEMA_VERSION, TaskFsmSummary, TaskFsmTransition,
-    TaskFsmTransitionInput, dry_run_workflow_with_runtime_claim, runtime_workflow, task_fsm_state,
-    task_fsm_transition, workflow_from_doctor_chain_with_runtime,
+    NavLabFsmArtifactRef, NavLabFsmSummary, NavLabFsmTransition, NavLabFsmTransitionInput,
+    RealWorkflowSummary, dry_run_workflow_with_runtime_claim, navlab_fsm_state, navlab_fsm_summary,
+    navlab_fsm_transition, runtime_workflow, workflow_from_doctor_chain_with_runtime,
+    write_navlab_fsm_artifact,
 };
 
 pub const REAL_HOVER_SUMMARY_SCHEMA_VERSION: &str = "navlab.real.hover.summary.v1";
@@ -77,7 +78,7 @@ pub struct RealHoverSummary {
     pub live_flight_enabled: bool,
     pub source_boundary: Value,
     pub gate_plan: Value,
-    pub task_fsm: TaskFsmSummary,
+    pub fsm_artifacts: Vec<NavLabFsmArtifactRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operator_safety: Option<RealHoverOperatorSafetyEvaluation>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,6 +134,7 @@ impl RealTask for RealHoverTask {
             );
             summary.workflow = Some(workflow.clone());
             write_workflow_summary(&artifact_dir, &workflow)?;
+            attach_navlab_fsm_artifact(&artifact_dir, &run_id, &plan, &mut summary)?;
             write_summary(&summary_path, &summary)?;
             write_task_result(&summary_path, project, &plan, &summary)?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -161,6 +163,7 @@ impl RealTask for RealHoverTask {
             let mut summary = build_dry_run_summary(project, &plan);
             summary.workflow = Some(workflow.clone());
             write_workflow_summary(&artifact_dir, &workflow)?;
+            attach_navlab_fsm_artifact(&artifact_dir, &run_id, &plan, &mut summary)?;
             write_summary(&summary_path, &summary)?;
             write_task_result(&summary_path, project, &plan, &summary)?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -186,6 +189,7 @@ impl RealTask for RealHoverTask {
             summary.operator_safety = Some(safety);
             summary.workflow = Some(workflow.clone());
             write_workflow_summary(&artifact_dir, &workflow)?;
+            attach_navlab_fsm_artifact(&artifact_dir, &run_id, &plan, &mut summary)?;
             write_summary(&summary_path, &summary)?;
             write_task_result(&summary_path, project, &plan, &summary)?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -212,6 +216,7 @@ impl RealTask for RealHoverTask {
         summary.operator_safety = Some(safety);
         summary.workflow = Some(workflow.clone());
         write_workflow_summary(&artifact_dir, &workflow)?;
+        attach_navlab_fsm_artifact(&artifact_dir, &run_id, &plan, &mut summary)?;
         write_summary(&summary_path, &summary)?;
         write_task_result(&summary_path, project, &plan, &summary)?;
         println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -339,7 +344,7 @@ pub fn build_dry_run_summary(project: &ProjectConfig, plan: &RealHoverPlan) -> R
         live_flight_enabled: false,
         source_boundary: source_boundary(project),
         gate_plan: gate_plan(plan),
-        task_fsm: planned_hover_fsm(plan),
+        fsm_artifacts: Vec::new(),
         operator_safety: None,
         workflow: None,
     }
@@ -363,17 +368,17 @@ pub fn build_blocked_summary(
         live_flight_enabled: false,
         source_boundary: source_boundary(project),
         gate_plan: gate_plan(plan),
-        task_fsm: blocked_hover_fsm(plan, claim, blockers),
+        fsm_artifacts: Vec::new(),
         operator_safety: None,
         workflow: None,
     }
 }
 
-fn planned_hover_fsm(plan: &RealHoverPlan) -> TaskFsmSummary {
+fn planned_hover_fsm(plan: &RealHoverPlan) -> NavLabFsmSummary {
     let states = hover_states()
         .iter()
         .map(|state| {
-            task_fsm_state(
+            hover_state(
                 *state,
                 "planned",
                 "planned_dry_run_no_flight_side_effect",
@@ -385,152 +390,159 @@ fn planned_hover_fsm(plan: &RealHoverPlan) -> TaskFsmSummary {
             )
         })
         .collect();
-    TaskFsmSummary {
-        schema_version: TASK_FSM_SCHEMA_VERSION.to_string(),
-        task_id: plan.task_id.clone(),
-        fsm_name: "real-hover".to_string(),
-        mode: "planned".to_string(),
-        ok: true,
-        blocked: false,
-        current_state: "completed".to_string(),
-        failed_state: None,
-        blockers: Vec::new(),
-        states,
-        transitions: vec![
-            hover_transition(
-                plan,
-                "runtime_ready",
-                "guided",
-                "guided_confirmed",
-                "guided_ack_planned",
-                true,
-                None,
-                json!({"request": "set_guided"}),
-                "planned",
-            ),
-            hover_transition(
-                plan,
-                "guided",
-                "armed",
-                "arm_confirmed",
-                "arm_ack_accepted_planned",
-                true,
-                None,
-                json!({"request": "arm"}),
-                "planned",
-            ),
-            hover_transition(
-                plan,
-                "armed",
-                "takeoff",
-                "takeoff_confirmed",
-                "takeoff_ack_and_altitude_planned",
-                true,
-                None,
-                json!({"target_altitude_m": plan.target_altitude_m}),
-                "planned",
-            ),
-            hover_transition(
-                plan,
-                "takeoff",
-                "hover_health_hold",
-                "hover_health_stable",
-                "hover_health_stable_window_planned",
-                true,
-                None,
-                json!({"stable_sec": plan.hover_health_stable_sec, "max_wait_sec": plan.hover_health_max_wait_sec}),
-                "planned",
-            ),
-            hover_transition(
-                plan,
-                "hover_health_hold",
-                "hover_hold",
-                "hover_hold_started",
-                "hover_hold_window_planned",
-                true,
-                None,
-                json!({"hold_sec": plan.hover_hold_sec}),
-                "planned",
-            ),
-            hover_transition(
-                plan,
-                "hover_hold",
-                "landing",
-                "landing_started",
-                "landing_policy_planned",
-                true,
-                None,
-                json!({"landing_policy": "land_then_disarm"}),
-                "planned",
-            ),
-            hover_transition(
-                plan,
-                "landing",
-                "disarmed",
-                "disarm_confirmed",
-                "landing_and_disarm_planned",
-                true,
-                None,
-                json!({"require_disarm": true}),
-                "planned",
-            ),
-            hover_transition(
-                plan,
-                "disarmed",
-                "completed",
-                "task_completed",
-                "real_hover_completed_planned",
-                true,
-                None,
-                json!({"completion_definition": plan.completion_definition.gate_policy}),
-                "planned",
-            ),
-        ],
-    }
-}
-
-fn blocked_hover_fsm(plan: &RealHoverPlan, reason: &str, blockers: Vec<String>) -> TaskFsmSummary {
-    TaskFsmSummary {
-        schema_version: TASK_FSM_SCHEMA_VERSION.to_string(),
-        task_id: plan.task_id.clone(),
-        fsm_name: "real-hover".to_string(),
-        mode: "blocked_before_runtime".to_string(),
-        ok: false,
-        blocked: true,
-        current_state: "runtime_ready".to_string(),
-        failed_state: Some("runtime_ready".to_string()),
-        blockers: blockers.clone(),
-        states: hover_states()
-            .iter()
-            .map(|state| {
-                task_fsm_state(
-                    *state,
-                    if *state == "runtime_ready" {
-                        "blocked_before_entering"
-                    } else {
-                        "not_entered"
-                    },
-                    if *state == "runtime_ready" {
-                        reason
-                    } else {
-                        "not_reached_after_blocker"
-                    },
-                    json!({"blockers": blockers}),
-                )
-            })
-            .collect(),
-        transitions: vec![hover_transition(
+    let transitions = vec![
+        hover_transition(
             plan,
             "runtime_ready",
             "guided",
-            "runtime_ready",
-            reason,
-            false,
-            blockers.first().cloned(),
-            json!({"runtime_started": false, "blockers": blockers}),
-            "blocked_before_entering",
-        )],
-    }
+            "guided_confirmed",
+            "guided_ack_planned",
+            true,
+            None,
+            json!({"request": "set_guided"}),
+            "planned",
+        ),
+        hover_transition(
+            plan,
+            "guided",
+            "armed",
+            "arm_confirmed",
+            "arm_ack_accepted_planned",
+            true,
+            None,
+            json!({"request": "arm"}),
+            "planned",
+        ),
+        hover_transition(
+            plan,
+            "armed",
+            "takeoff",
+            "takeoff_confirmed",
+            "takeoff_ack_and_altitude_planned",
+            true,
+            None,
+            json!({"target_altitude_m": plan.target_altitude_m}),
+            "planned",
+        ),
+        hover_transition(
+            plan,
+            "takeoff",
+            "hover_health_hold",
+            "hover_health_stable",
+            "hover_health_stable_window_planned",
+            true,
+            None,
+            json!({"stable_sec": plan.hover_health_stable_sec, "max_wait_sec": plan.hover_health_max_wait_sec}),
+            "planned",
+        ),
+        hover_transition(
+            plan,
+            "hover_health_hold",
+            "hover_hold",
+            "hover_hold_started",
+            "hover_hold_window_planned",
+            true,
+            None,
+            json!({"hold_sec": plan.hover_hold_sec}),
+            "planned",
+        ),
+        hover_transition(
+            plan,
+            "hover_hold",
+            "landing",
+            "landing_started",
+            "landing_policy_planned",
+            true,
+            None,
+            json!({"landing_policy": "land_then_disarm"}),
+            "planned",
+        ),
+        hover_transition(
+            plan,
+            "landing",
+            "disarmed",
+            "disarm_confirmed",
+            "landing_and_disarm_planned",
+            true,
+            None,
+            json!({"require_disarm": true}),
+            "planned",
+        ),
+        hover_transition(
+            plan,
+            "disarmed",
+            "completed",
+            "task_completed",
+            "real_hover_completed_planned",
+            true,
+            None,
+            json!({"completion_definition": plan.completion_definition.gate_policy}),
+            "planned",
+        ),
+    ];
+    navlab_fsm_summary(
+        plan.task_id.clone(),
+        "real-hover",
+        "",
+        "completed",
+        "planned",
+        true,
+        false,
+        states,
+        transitions,
+        Vec::new(),
+        None,
+    )
+}
+
+fn blocked_hover_fsm(
+    plan: &RealHoverPlan,
+    reason: &str,
+    blockers: Vec<String>,
+) -> NavLabFsmSummary {
+    let states = hover_states()
+        .iter()
+        .map(|state| {
+            hover_state(
+                *state,
+                if *state == "runtime_ready" {
+                    "blocked_before_entering"
+                } else {
+                    "not_entered"
+                },
+                if *state == "runtime_ready" {
+                    reason
+                } else {
+                    "not_reached_after_blocker"
+                },
+                json!({"blockers": blockers}),
+            )
+        })
+        .collect();
+    let transitions = vec![hover_transition(
+        plan,
+        "runtime_ready",
+        "guided",
+        "runtime_ready",
+        reason,
+        false,
+        blockers.first().cloned(),
+        json!({"runtime_started": false, "blockers": blockers}),
+        "blocked_before_entering",
+    )];
+    navlab_fsm_summary(
+        plan.task_id.clone(),
+        "real-hover",
+        "",
+        "runtime_ready",
+        "blocked_before_runtime",
+        false,
+        true,
+        states,
+        transitions,
+        blockers,
+        Some("runtime_ready".to_string()),
+    )
 }
 
 fn hover_states() -> [&'static str; 9] {
@@ -558,19 +570,33 @@ fn hover_transition(
     blocker: Option<String>,
     evidence: Value,
     at: &str,
-) -> TaskFsmTransition {
-    task_fsm_transition(TaskFsmTransitionInput {
-        task_id: plan.task_id.clone(),
-        fsm_name: "real-hover".to_string(),
+) -> NavLabFsmTransition {
+    let _ = plan;
+    let _ = blocker;
+    navlab_fsm_transition(NavLabFsmTransitionInput {
         from_state: from_state.to_string(),
         to_state: to_state.to_string(),
-        event: event.to_string(),
+        trigger: event.to_string(),
         reason_code: reason_code.to_string(),
         ok,
-        blocker,
         evidence,
         at: at.to_string(),
     })
+}
+
+fn hover_state(
+    state: &str,
+    entered_at: &str,
+    reason: &str,
+    evidence: Value,
+) -> crate::workflows::NavLabFsmState {
+    let _ = evidence;
+    navlab_fsm_state(
+        state,
+        state == "completed",
+        reason == "blocked_before_entering",
+        Some(format!("{entered_at}:{reason}")),
+    )
 }
 
 fn source_boundary(project: &ProjectConfig) -> Value {
@@ -635,6 +661,22 @@ fn write_summary(path: &Path, summary: &RealHoverSummary) -> Result<()> {
     }
     fs::write(path, serde_json::to_string_pretty(summary)?)
         .with_context(|| format!("write real hover summary {}", path.display()))
+}
+
+fn attach_navlab_fsm_artifact(
+    artifact_dir: &Path,
+    run_id: &str,
+    plan: &RealHoverPlan,
+    summary: &mut RealHoverSummary,
+) -> Result<()> {
+    let fsm = if summary.ok && summary.claim == "dry_run_plan_only" {
+        planned_hover_fsm(plan)
+    } else {
+        blocked_hover_fsm(plan, &summary.claim, summary.blockers.clone())
+    };
+    let (_fsm_summary, reference) = write_navlab_fsm_artifact(artifact_dir, &fsm, run_id)?;
+    summary.fsm_artifacts = vec![reference];
+    Ok(())
 }
 
 fn write_task_request(
@@ -833,13 +875,11 @@ mod tests {
         assert!(summary.ok);
         assert!(summary.no_sim_dependency);
         assert!(!summary.live_flight_enabled);
-        assert_eq!(summary.task_fsm.mode, "planned");
-        assert_eq!(summary.task_fsm.current_state, "completed");
-        assert_eq!(summary.task_fsm.states.len(), 9);
-        assert_eq!(
-            summary.task_fsm.transitions[3].to_state,
-            "hover_health_hold"
-        );
+        let fsm = planned_hover_fsm(&plan);
+        assert_eq!(fsm.mode, "planned");
+        assert_eq!(fsm.state, "completed");
+        assert_eq!(fsm.states.len(), 9);
+        assert_eq!(fsm.transitions[3].to_state, "hover_health_hold");
         assert_eq!(
             summary.gate_plan["completion_definition"]["gate_policy"],
             "mavlink_external_nav_required_official_dds_crosscheck"
@@ -903,7 +943,13 @@ mod tests {
         )
         .expect("summary json");
         assert_eq!(summary["task"], "hover");
-        assert_eq!(summary["task_fsm"]["mode"], "planned");
+        let fsm: Value = serde_json::from_str(
+            &fs::read_to_string(temp.path().join("runtime").join("task_hover_fsm.json"))
+                .expect("fsm"),
+        )
+        .expect("fsm json");
+        assert_eq!(fsm["schema_version"], "navlab.fsm.v1");
+        assert_eq!(fsm["mode"], "planned");
         assert_eq!(
             summary["workflow"]["nodes"][4]["evidence"]["claim"],
             "dry_run_no_flight_side_effect"
@@ -939,7 +985,12 @@ mod tests {
             summary["blockers"][0],
             "operator_manual_takeover_not_confirmed"
         );
-        assert_eq!(summary["task_fsm"]["failed_state"], "runtime_ready");
+        let fsm: Value = serde_json::from_str(
+            &fs::read_to_string(temp.path().join("runtime").join("task_hover_fsm.json"))
+                .expect("fsm"),
+        )
+        .expect("fsm json");
+        assert_eq!(fsm["failed_state"], "runtime_ready");
     }
 
     #[tokio::test]

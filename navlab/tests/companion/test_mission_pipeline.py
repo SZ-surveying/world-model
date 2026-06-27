@@ -6,7 +6,7 @@ from navlab.common.companion.mission import (
     FlightPipeline,
     MissionClock,
     MissionContext,
-    MissionFsmRecorder,
+    MissionPhaseRecorder,
     StageResult,
 )
 from navlab.common.companion.mission.context import (
@@ -102,7 +102,7 @@ def test_pipeline_keeps_blocked_stage_active_and_records_blocker() -> None:
 def test_pipeline_records_fsm_transition_when_context_has_recorder() -> None:
     ctx = MissionContext(
         clock=MissionClock(started_at_monotonic=10.0, now_monotonic=12.5),
-        fsm=MissionFsmRecorder(started_at_monotonic=10.0),
+        fsm=MissionPhaseRecorder(started_at_monotonic=10.0),
     )
     stage = _ScriptedStage("takeoff", StageResult.running("taking_off", fsm_state="S4 takeoff"))
     pipeline = FlightPipeline([stage])

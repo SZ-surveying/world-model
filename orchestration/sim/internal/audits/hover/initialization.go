@@ -639,7 +639,7 @@ func initializationMissionSummary(summaryPath string) map[string]any {
 		"blocker_codes":                 summary["blockerCodes"],
 		"mission_ok":                    hoverMission["ok"],
 		"mission_reason":                hoverMission["reason"],
-		"mission_fsm_state":             hoverMission["mission_fsm_state"],
+		"mission_phase_state":           hoverMission["mission_phase_state"],
 		"hover_body_ok":                 hoverMission["hover_body_ok"],
 		"horizontal_drift_m":            hoverDrift["horizontal_drift_m"],
 		"horizontal_span_m":             hoverDrift["horizontal_span_m"],

@@ -79,8 +79,8 @@ official DDS pose evidence can be a secondary crosscheck, not the sole gate.
 
 Decision: WF4 shares task FSM and policy semantics through pure data shapes,
 not through cross-language runtime imports. Python common now exposes
-`navlab.common.companion.mission.task_fsm` and `policy` helpers. Rust real uses
-`workflows::task_fsm` with the same `navlab.task_fsm.v1` JSON shape, while
+`navlab.common.companion.mission.fsm` and `policy` helpers. Rust real uses
+`workflows::fsm` with the same `navlab.fsm.v1` JSON shape, while
 `motor-debug` keeps only task-specific evidence mapping.
 
 Basis: `navlab.common` is a Python package used by companion/sim runtime code,

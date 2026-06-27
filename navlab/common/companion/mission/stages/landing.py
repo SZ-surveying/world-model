@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from navlab.common.companion.mission.command_adapter import request_mission_command
 from navlab.common.companion.mission.context import MissionContext
-from navlab.common.companion.mission.fsm import mission_fsm_state_for_landing_state
+from navlab.common.companion.mission.fsm import mission_phase_state_for_landing_state
 from navlab.common.companion.mission.pipeline import StageResult
 
 LANDING_POLICY_AP_LAND_MODE_AFTER_HOVER = "ap_land_mode_after_hover"
@@ -199,7 +199,7 @@ class LandingStage:
             command_sent = request_mission_command(ctx, "send_hold_setpoint")
             return StageResult.running(
                 "pre_land_hold",
-                fsm_state=mission_fsm_state_for_landing_state(state.state),
+                fsm_state=mission_phase_state_for_landing_state(state.state),
                 evidence={"state": state.state, "command_sent": command_sent},
             )
         if should_use_guided_descent_before_land(
@@ -211,7 +211,7 @@ class LandingStage:
             command_sent = request_mission_command(ctx, "send_landing_descent_setpoint")
             return StageResult.running(
                 "guided_descent",
-                fsm_state=mission_fsm_state_for_landing_state(state.state),
+                fsm_state=mission_phase_state_for_landing_state(state.state),
                 evidence={"state": state.state, "command_sent": command_sent},
             )
         land_command_sent_this_tick = False
@@ -272,11 +272,11 @@ class LandingStage:
             evidence["state"] = state.state
             return StageResult.complete(
                 "landing_complete",
-                fsm_state=mission_fsm_state_for_landing_state(state.state),
+                fsm_state=mission_phase_state_for_landing_state(state.state),
                 evidence=evidence,
             )
         return StageResult.running(
             state.state,
-            fsm_state=mission_fsm_state_for_landing_state(state.state),
+            fsm_state=mission_phase_state_for_landing_state(state.state),
             evidence=evidence,
         )

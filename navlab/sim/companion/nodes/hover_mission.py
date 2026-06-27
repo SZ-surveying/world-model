@@ -30,9 +30,9 @@ from navlab.common.companion.mission.evidence.summary import (
     build_hover_status_payload,
 )
 from navlab.common.companion.mission.fsm import (
-    MissionFsmRecorder,
-    MissionFsmSnapshot,
-    mission_fsm_state_for_landing_state,
+    MissionPhaseRecorder,
+    MissionPhaseSnapshot,
+    mission_phase_state_for_landing_state,
 )
 from navlab.common.companion.mission.hover_landing import (
     HoverMissionPipelineRunner,
@@ -353,9 +353,9 @@ def run(argv: Sequence[str] | None = None) -> int:
             controller._command_runtime.next_land_command = now + 2.0
             ctx.state.landing.land_command_sent = True
             if first_land_command:
-                controller._record_mission_fsm(
+                controller._record_mission_phase(
                     now,
-                    mission_fsm_state_for_landing_state("land_command_sent"),
+                    mission_phase_state_for_landing_state("land_command_sent"),
                     "command_land",
                     guard="land_command_sent",
                 )
@@ -455,7 +455,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             self._next_request = 0.0
             self._next_heartbeat = 0.0
             self._next_origin_command = 0.0
-            self._mission_fsm = MissionFsmRecorder(started_at_monotonic=self._started)
+            self._mission_phase = MissionPhaseRecorder(started_at_monotonic=self._started)
             prefix_config = FlightPrefixConfig(
                 preflight_ready_sec=args.preflight_ready_sec,
                 max_wait_ready_sec=args.max_wait_ready_sec,
@@ -536,7 +536,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             self.create_timer(0.05, self._tick)
             self.get_logger().info(f"hover mission controller started endpoint={args.endpoint}")
 
-        def _record_mission_fsm(
+        def _record_mission_phase(
             self,
             now: float,
             state: str,
@@ -545,7 +545,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             guard: str | None = None,
             blocker: str | None = None,
         ) -> None:
-            self._mission_fsm.transition(
+            self._mission_phase.transition(
                 now_monotonic=now,
                 state=state,
                 reason=reason,
@@ -553,8 +553,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                 blocker=blocker,
             )
 
-        def _mission_fsm_snapshot(self) -> MissionFsmSnapshot:
-            return self._mission_fsm.snapshot(now_monotonic=time.monotonic())
+        def _mission_phase_snapshot(self) -> MissionPhaseSnapshot:
+            return self._mission_phase.snapshot(now_monotonic=time.monotonic())
 
         def _stop_vehicle(self) -> None:
             if self._runtime.target_system is None or self._runtime.target_component is None:
@@ -704,7 +704,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                     local_position_count=self._runtime.message_counts.get("LOCAL_POSITION_NED", 0),
                     crash_detected=self._runtime.crash_detected,
                 ),
-                record_fsm=self._record_mission_fsm,
+                record_fsm=self._record_mission_phase,
                 publish_status=self._publish_status,
                 begin_landing=lambda landing_now, completion: self._start_landing(
                     landing_now,
@@ -743,9 +743,9 @@ def run(argv: Sequence[str] | None = None) -> int:
                     crash_detected=self._runtime.crash_detected,
                 ),
             )
-            self._record_mission_fsm(
+            self._record_mission_phase(
                 now,
-                mission_fsm_state_for_landing_state(self._landing_evidence.state),
+                mission_phase_state_for_landing_state(self._landing_evidence.state),
                 self._mission_context.state.hover.body_reason or "task_body_complete",
                 guard=self._landing_evidence.state,
             )
@@ -768,14 +768,14 @@ def run(argv: Sequence[str] | None = None) -> int:
                 self._mission_context,
                 now_monotonic=now,
                 prepare_landing_tick=self._prepare_landing_tick,
-                record_fsm=self._record_mission_fsm,
+                record_fsm=self._record_mission_phase,
             )
             if outcome.stop_vehicle:
                 self._stop_vehicle()
             if outcome.publish_status:
                 self._publish_landing_status()
             if outcome.record_task_success:
-                self._record_mission_fsm(
+                self._record_mission_phase(
                     now,
                     "S13 task_success",
                     "task_success",
@@ -1040,7 +1040,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             status_payload = build_hover_status_payload(
                 phase=decision.phase,
                 reason=decision.reason,
-                fsm_snapshot=self._mission_fsm_snapshot(),
+                fsm_snapshot=self._mission_phase_snapshot(),
                 prefix_pipeline=self._prefix_pipeline_status(),
                 inputs=inputs,
                 slam_quality_reason=self._mission_runtime.external_nav_slam_quality_reason,
@@ -1106,7 +1106,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         def _landing_summary(self) -> dict[str, object]:
             return self._summary_runtime.landing_summary(
                 now_monotonic=time.monotonic(),
-                fsm_snapshot=self._mission_fsm_snapshot(),
+                fsm_snapshot=self._mission_phase_snapshot(),
                 runtime=self._runtime,
                 collections=self._mavlink_collections,
                 landing_evidence=self._landing_evidence,
@@ -1114,9 +1114,9 @@ def run(argv: Sequence[str] | None = None) -> int:
             )
 
         def _publish_landing_status(self) -> None:
-            self._record_mission_fsm(
+            self._record_mission_phase(
                 time.monotonic(),
-                mission_fsm_state_for_landing_state(self._landing_evidence.state),
+                mission_phase_state_for_landing_state(self._landing_evidence.state),
                 self._landing_evidence.state,
                 guard=self._landing_evidence.state,
             )
@@ -1141,7 +1141,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                 landing_ok=landing_ok,
                 now_monotonic=time.monotonic(),
                 started_at_monotonic=self._started,
-                fsm_snapshot=self._mission_fsm_snapshot(),
+                fsm_snapshot=self._mission_phase_snapshot(),
                 prefix_pipeline=self._prefix_pipeline_status(),
                 status_history=self._status_history,
                 ctx=self._mission_context,

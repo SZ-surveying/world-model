@@ -20,9 +20,9 @@ from navlab.common.companion.mission.evidence.landing import (
     summarize_landing_descent_profile,
 )
 from navlab.common.companion.mission.fsm import (
-    MissionFsmRecorder,
-    mission_fsm_state_for_hover_phase,
-    mission_fsm_state_for_landing_state,
+    MissionPhaseRecorder,
+    mission_phase_state_for_hover_phase,
+    mission_phase_state_for_landing_state,
 )
 from navlab.common.companion.mission.runtime_state import append_bounded_statustext, statustext_indicates_crash
 from navlab.common.companion.mission.stages.hover import (
@@ -416,28 +416,28 @@ def test_hover_health_gate_blocks_operator_confirm_when_red() -> None:
     assert blocked.evidence["hover_health"]["operator_confirm_allowed"] is False
 
 
-def test_hover_phases_map_to_mission_fsm_states() -> None:
-    assert mission_fsm_state_for_hover_phase("wait_ready") == "S1 wait_nav_ready"
-    assert mission_fsm_state_for_hover_phase("guided") == "S2 set_guided"
-    assert mission_fsm_state_for_hover_phase("arm") == "S3 arm"
-    assert mission_fsm_state_for_hover_phase("takeoff") == "S4 takeoff"
-    assert mission_fsm_state_for_hover_phase("hover_settle") == "S5 hover_settle"
-    assert mission_fsm_state_for_hover_phase("hover_hold") == "S6 hover_hold"
-    assert mission_fsm_state_for_hover_phase("complete") == "S7 pre_land_hold"
-    assert mission_fsm_state_for_hover_phase("abort") == "S_abort"
-    assert mission_fsm_state_for_hover_phase("unknown") == "S_abort"
+def test_hover_phases_map_to_mission_phase_states() -> None:
+    assert mission_phase_state_for_hover_phase("wait_ready") == "S1 wait_nav_ready"
+    assert mission_phase_state_for_hover_phase("guided") == "S2 set_guided"
+    assert mission_phase_state_for_hover_phase("arm") == "S3 arm"
+    assert mission_phase_state_for_hover_phase("takeoff") == "S4 takeoff"
+    assert mission_phase_state_for_hover_phase("hover_settle") == "S5 hover_settle"
+    assert mission_phase_state_for_hover_phase("hover_hold") == "S6 hover_hold"
+    assert mission_phase_state_for_hover_phase("complete") == "S7 pre_land_hold"
+    assert mission_phase_state_for_hover_phase("abort") == "S_abort"
+    assert mission_phase_state_for_hover_phase("unknown") == "S_abort"
 
 
-def test_landing_states_map_to_mission_fsm_states_without_promoting_guided_descent() -> None:
-    assert mission_fsm_state_for_landing_state("task_body_complete") == "S7 pre_land_hold"
-    assert mission_fsm_state_for_landing_state("pre_land_hold") == "S7 pre_land_hold"
-    assert mission_fsm_state_for_landing_state("guided_descent") == "legacy_guided_descent_diagnostic"
-    assert mission_fsm_state_for_landing_state("land_command_sent") == "S8 command_land"
-    assert mission_fsm_state_for_landing_state("descent_monitoring") == "S9 land_mode_monitor"
-    assert mission_fsm_state_for_landing_state("touchdown_candidate") == "S10 touchdown_monitor"
-    assert mission_fsm_state_for_landing_state("disarm_requested") == "S11 disarm_monitor"
-    assert mission_fsm_state_for_landing_state("landing_complete") == "S12 landing_complete"
-    assert mission_fsm_state_for_landing_state("bad_state") == "S_abort"
+def test_landing_states_map_to_mission_phase_states_without_promoting_guided_descent() -> None:
+    assert mission_phase_state_for_landing_state("task_body_complete") == "S7 pre_land_hold"
+    assert mission_phase_state_for_landing_state("pre_land_hold") == "S7 pre_land_hold"
+    assert mission_phase_state_for_landing_state("guided_descent") == "legacy_guided_descent_diagnostic"
+    assert mission_phase_state_for_landing_state("land_command_sent") == "S8 command_land"
+    assert mission_phase_state_for_landing_state("descent_monitoring") == "S9 land_mode_monitor"
+    assert mission_phase_state_for_landing_state("touchdown_candidate") == "S10 touchdown_monitor"
+    assert mission_phase_state_for_landing_state("disarm_requested") == "S11 disarm_monitor"
+    assert mission_phase_state_for_landing_state("landing_complete") == "S12 landing_complete"
+    assert mission_phase_state_for_landing_state("bad_state") == "S_abort"
     assert landing_controller_for_state("guided_descent") == "guided_descent"
     assert landing_controller_for_state("descent_monitoring") == "guided_descent"
     assert (
@@ -449,8 +449,8 @@ def test_landing_states_map_to_mission_fsm_states_without_promoting_guided_desce
     )
 
 
-def test_mission_fsm_recorder_tracks_entry_exit_reason_and_blocker() -> None:
-    recorder = MissionFsmRecorder(started_at_monotonic=10.0)
+def test_mission_phase_recorder_tracks_entry_exit_reason_and_blocker() -> None:
+    recorder = MissionPhaseRecorder(started_at_monotonic=10.0)
 
     recorder.transition(now_monotonic=11.0, state="S1 wait_nav_ready", reason="waiting_for_slam_quality")
     recorder.transition(now_monotonic=13.5, state="S2 set_guided", reason="setting_guided", guard="guided")

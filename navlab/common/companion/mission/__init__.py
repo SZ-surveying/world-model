@@ -60,16 +60,16 @@ from navlab.common.companion.mission.evidence.summary import (
     MissionSummaryWriter,
     build_hover_status_payload,
     build_landing_summary,
-    mission_fsm_summary_fields,
+    mission_phase_summary_fields,
 )
 from navlab.common.companion.mission.fsm import (
-    HOVER_PHASE_TO_MISSION_FSM_STATE,
-    LANDING_STATE_TO_MISSION_FSM_STATE,
-    MissionFsmHistoryEntry,
-    MissionFsmRecorder,
-    MissionFsmSnapshot,
-    mission_fsm_state_for_hover_phase,
-    mission_fsm_state_for_landing_state,
+    HOVER_PHASE_TO_MISSION_PHASE_STATE,
+    LANDING_STATE_TO_MISSION_PHASE_STATE,
+    MissionPhaseHistoryEntry,
+    MissionPhaseRecorder,
+    MissionPhaseSnapshot,
+    mission_phase_state_for_hover_phase,
+    mission_phase_state_for_landing_state,
 )
 from navlab.common.companion.mission.hover_landing import (
     HoverMissionPipelineRunner,
@@ -171,13 +171,6 @@ from navlab.common.companion.mission.stages.prefix import (
 from navlab.common.companion.mission.summary_runtime import (
     HoverMissionSummaryConfig,
     HoverMissionSummaryRuntime,
-)
-from navlab.common.companion.mission.task_fsm import (
-    TASK_FSM_SCHEMA_VERSION,
-    TaskFsmRecorder,
-    TaskFsmState,
-    TaskFsmSummary,
-    TaskFsmTransition,
 )
 
 __all__ = [name for name in globals() if not name.startswith("_") and name != "annotations"]

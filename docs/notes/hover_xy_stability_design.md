@@ -8,12 +8,12 @@ Date: 2026-06-23
 
 - `artifacts/sim/hover/20260623T090519Z/mission_summary.json`
   - `ok=true`
-  - `mission_fsm_state=S13 task_success`
+  - `mission_phase_state=S13 task_success`
   - `landing.ok=true`
   - `landing.blockers=[]`
 - `artifacts/sim/hover/20260623T090829Z/mission_summary.json`
   - `ok=true`
-  - `mission_fsm_state=S13 task_success`
+  - `mission_phase_state=S13 task_success`
   - `landing.ok=true`
   - `landing.blockers=[]`
 
@@ -243,7 +243,7 @@ Date: 2026-06-23
 - 所有复查 run 仍使用 hover + Cartographer + ExternalNav 链路。
 - `hover_mission.runtime.log` 没有 import / traceback 类错误。
 - P7.9 后的 `20260623T123111Z` 还能达到 `mission_summary.ok=true`、
-  `mission_fsm_state=S13 task_success`、`landing.ok=true`。
+  `mission_phase_state=S13 task_success`、`landing.ok=true`。
 - 失败集中在 live XY evidence：Gazebo / FCU local / SLAM corrected /
   ExternalNav drift 或方向不一致。
 

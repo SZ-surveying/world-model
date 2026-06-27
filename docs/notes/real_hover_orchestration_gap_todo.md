@@ -42,7 +42,7 @@ preflight / prepare / common-doctor / task-doctor / gate
 
 - [x] 定义最小 `WorkflowNode` 字段。
 - [x] 定义最小 `NodeResult` 字段。
-- [x] 定义最小 `TaskFsmTransition` 字段。
+- [x] 定义最小 `NavLabFsmTransition` 字段。
 - [x] 定义 common blocker / reason-code 命名规则。
 - [x] 定义默认 task-doctor 的 `not_applicable` summary 语义。
 - [x] 明确第一阶段不引入第三方 DAG 库。
@@ -294,8 +294,8 @@ runtime_ready
 
 进展：
 
-- [x] 2026-06-26：Python `navlab.common.companion.mission.task_fsm` 增加纯 task FSM summary/transition recorder，字段与 Rust real `task_fsm` artifact 对齐。
-- [x] 2026-06-26：Rust real 把 `motor-debug` 的通用 FSM schema/transition 类型抽到 `workflows::task_fsm`，`motor_debug` 只保留任务特定状态推导。
+- [x] 2026-06-26：Python `navlab.common.companion.mission.fsm` 增加纯 task FSM summary/transition recorder，字段与 Rust real `fsm` artifact 对齐。
+- [x] 2026-06-26：Rust real 把 `motor-debug` 的通用 FSM schema/transition 类型抽到 `workflows::fsm`，`motor_debug` 只保留任务特定状态推导。
 - [x] 2026-06-26：Python `navlab.common.companion.mission.policy` 增加纯 operator confirmation、deadline、target/hard-cap、gate status、reason-code helper。
 - [x] 2026-06-26：第一版不引入跨语言 runtime import；Rust real 和 Python sim/common 通过同一 JSON schema 对齐，后续再决定是否提升到 proto/generated common。
 
@@ -354,7 +354,7 @@ runtime_ready
   - [x] fake MAVLink 测试覆盖成功路径 command sequence：set guided、arm、takeoff、land、disarm。
   - [x] fake MAVLink 测试覆盖 takeoff ACK rejected：`failed_state=takeoff`，不继续 land/disarm。
   - [x] `run hover` live path 仍 fail-closed 到 `real_hover_live_task_not_enabled`，不调用 hover runtime。
-- [ ] WF5C：接入真实 SLAM / ExternalNav / rangefinder / landing evidence 采集，生成 live `task_fsm` actual transitions。
+- [ ] WF5C：接入真实 SLAM / ExternalNav / rangefinder / landing evidence 采集，生成 live `fsm` actual transitions。
 - [ ] WF5D：增加 flight rosbag profile、landing summary、hover-health gate 和 cohort row。
 
 ## Phase WF-DAG：把 workflow summary 收敛成最小真实 DAG
@@ -409,7 +409,7 @@ runtime_ready
 
 ## Phase FSM0：定义 navlab.fsm.v1 schema
 
-状态：待执行。
+状态：完成。
 
 目标：把 sim / real / runtime sub-FSM 的对外 artifact contract 统一成 NavLab 自己的 schema，而不是暴露 Go/Rust 第三方 FSM 库内部类型。
 
@@ -421,23 +421,23 @@ runtime_ready
 
 任务：
 
-- [ ] 新增 `docs/general/navlab_fsm_schema.md`。
-- [ ] 定义 `schema_version=navlab.fsm.v1`。
-- [ ] 定义 `fsm_name`、`parent_fsm`、`scope`、`task_id`、`run_id`、`state`。
-- [ ] 定义 `states` / `triggers` / `transitions` / `guards` / `evidence` / `reason_codes` / `blockers` 字段。
-- [ ] 定义 runtime sub-FSM 与 task FSM 的层级关系表达。
-- [ ] 定义失败态表达：`failed_state`、`failed_trigger`、`failure_reason_code`、`recoverable`。
-- [ ] 定义 graph/debug 输出是否 optional，例如 DOT graph 只作为 review artifact。
+- [x] 新增 `docs/general/navlab_fsm_schema.md`。
+- [x] 定义 `schema_version=navlab.fsm.v1`。
+- [x] 定义 `fsm_name`、`parent_fsm`、`scope`、`task_id`、`run_id`、`state`。
+- [x] 定义 `states` / `triggers` / `transitions` / `guards` / `evidence` / `reason_codes` / `blockers` 字段。
+- [x] 定义 runtime sub-FSM 与 task FSM 的层级关系表达。
+- [x] 定义失败态表达：`failed_state`、`failed_trigger`、`failure_reason_code`、`recoverable`。
+- [x] 定义 graph/debug 输出是否 optional，例如 DOT graph 只作为 review artifact。
 
 验收：
 
-- [ ] Go sim 和 Rust real 可以用同一份 JSON schema 表达 FSM artifact。
-- [ ] schema 能表达 task FSM、rosbag recorder FSM、MAVLink runtime FSM。
-- [ ] schema 不依赖任一第三方库的序列化格式。
+- [x] Go sim 和 Rust real 可以用同一份 JSON schema 表达 FSM artifact。
+- [x] schema 能表达 task FSM、rosbag recorder FSM、MAVLink runtime FSM。
+- [x] schema 不依赖任一第三方库的序列化格式。
 
 ## Phase FSM1：Go sim 引入 qmuntal/stateless，先包 rosbag_recorder FSM
 
-状态：待执行。
+状态：第一版完成。
 
 目标：在 Go sim 侧引入 `qmuntal/stateless`，但通过 NavLab adapter 输出 `navlab.fsm.v1`，先把 rosbag recorder lifecycle 从普通 handle 字段升级为 runtime sub-FSM。
 
@@ -468,44 +468,44 @@ cleanup_failed
 
 任务：
 
-- [ ] 在 Go sim 新增 `internal/fsm` adapter，封装 `qmuntal/stateless`。
-- [ ] adapter 输出 `navlab.fsm.v1`，不暴露第三方库类型。
-- [ ] 为 rosbag recorder 定义 states / triggers / guards / transitions。
-- [ ] 把 `RuntimeHandle` 中已有 rosbag lifecycle evidence 映射成 FSM transitions。
-- [ ] 在 `summary.json` / `dag/common_doctor_live_summary.json` 中引用 rosbag recorder FSM artifact。
-- [ ] 为 metadata ready、MCAP readable、required topic missing、finalize timeout 增加 reason-code 统一映射。
-- [ ] 增加 DOT graph 或 transition table review artifact，作为 optional debug 输出。
-- [ ] 增加 fake backend / adapter 单元测试。
+- [x] 在 Go sim 新增 `internal/fsm` adapter，封装 `qmuntal/stateless`。
+- [x] adapter 输出 `navlab.fsm.v1`，不暴露第三方库类型。
+- [x] 为 rosbag recorder 定义 states / triggers / guards / transitions。
+- [x] 把 `RuntimeHandle` 中已有 rosbag lifecycle evidence 映射成 FSM transitions。
+- [x] 在 `summary.json` / `dag/common_doctor_live_summary.json` 中引用 rosbag recorder FSM artifact。
+- [x] 为 metadata ready、MCAP readable、required topic missing、finalize timeout 增加 reason-code 统一映射。
+- [x] 增加 DOT graph 或 transition table review artifact，作为 optional debug 输出。
+- [x] 增加 fake backend / adapter 单元测试。
 
 验收：
 
-- [ ] hover live run 的 rosbag recorder 有独立 FSM artifact。
-- [ ] rosbag finalize timeout / metadata missing / required topic missing 都能落到明确 failed state 和 reason-code。
-- [ ] 现有 `TASK_STATUS_OK` / blocked gate 语义不变。
+- [x] hover live run 的 rosbag recorder 有独立 FSM artifact。验证 run：`artifacts/sim/hover/20260627T025935.846660701Z/runtime/rosbag_hover_rosbag_fsm.json`。
+- [x] rosbag finalize timeout / metadata missing / required topic missing 都能落到明确 failed state 和 reason-code。
+- [x] 现有 `TASK_STATUS_OK` / blocked gate 语义不变。验证 run：`20260627T025935.846660701Z`，`status=ok`，summary 为 `TASK_STATUS_OK`。
 
 ## Phase FSM2：Go task/runtime FSM 逐步迁到 adapter
 
-状态：待执行。
+状态：完成第一版。
 
 目标：把 Go sim 中已有 task/runtime FSM 记录逐步迁到同一 `internal/fsm` adapter，形成 task FSM + runtime sub-FSM 的统一 artifact 形状。
 
 任务：
 
-- [ ] 盘点 Go sim 当前 hover / navigation / scan-robustness 的 mission/runtime state 输出。
-- [ ] 把 hover task body FSM 映射为 `navlab.fsm.v1`。
-- [ ] 把 runtime services/probes/rosbag 的子 FSM 作为 parent task/runtime 的 sub-FSM 引用。
-- [ ] 保持 existing summary 字段兼容，新增 FSM artifact reference。
-- [ ] 为没有复杂 task FSM 的 task 生成显式 no-op/default FSM artifact。
+- [x] 盘点 Go sim 当前 hover / navigation / scan-robustness 的 mission/runtime state 输出。
+- [x] 把 hover task body FSM 映射为 `navlab.fsm.v1`。粗粒度状态保持 `runtime_ready -> guided -> armed -> takeoff -> hover_health_hold -> hover_hold -> landing -> disarmed -> completed`，mission `S*` history 保留为 transition evidence。
+- [x] 把 runtime services/probes/rosbag 的子 FSM 作为 parent task/runtime 的 sub-FSM 引用。第一版已接 rosbag recorder sub-FSM。
+- [x] 保持 existing summary 字段兼容，新增 FSM artifact reference。
+- [x] 为没有复杂 task FSM 的 task 生成显式 no-op/default FSM artifact。
 
 验收：
 
-- [ ] Go sim 每个 task 至少有一个 task-level FSM artifact。
-- [ ] runtime sub-FSM 与 task FSM 的 parent/child 关系可追踪。
-- [ ] gate evaluation 能引用 FSM failed state / reason-code。
+- [x] Go sim 每个 task 至少有一个 task-level FSM artifact。
+- [x] runtime sub-FSM 与 task FSM 的 parent/child 关系可追踪。
+- [x] gate evaluation 能引用 FSM failed state / reason-code。验证 run：`artifacts/sim/hover/20260627T071510.747784322Z/summary.json` 中 `gate_evaluation.fsm_artifacts[]` 指向 task FSM 和 rosbag FSM。
 
 ## Phase FSM3：Rust real 引入 statig，先包 motor-debug FSM
 
-状态：待执行。
+状态：完成第一版。
 
 目标：Rust real 侧引入 `statig` 作为 hierarchical state machine adapter，但输出仍保持 `navlab.fsm.v1`，先迁移 `motor-debug`。
 
@@ -517,39 +517,39 @@ cleanup_failed
 
 任务：
 
-- [ ] 在 Rust real 新增 `workflows::fsm` adapter，封装 `statig`。
-- [ ] 定义 `navlab.fsm.v1` Rust 数据结构和 JSON writer。
-- [ ] 把 `motor-debug` FSM 迁到 adapter。
-- [ ] 保留粗粒度状态：`runtime_ready -> guided -> armed -> motor_spin_hold -> disarmed -> completed`。
-- [ ] 将 ACK、heartbeat、mode、armed/disarmed evidence 挂到 transition evidence。
-- [ ] 增加 fake MAVLink / dry-run 测试，验证成功和 blocked summary。
+- [x] 在 Rust real 新增 `workflows::fsm` adapter，封装 `statig`。
+- [x] 定义 `navlab.fsm.v1` Rust 数据结构和 JSON writer。
+- [x] 把 `motor-debug` FSM 迁到 adapter。第一版保留旧 `fsm` 内嵌字段，同时写独立 `runtime/task_motor_debug_fsm.json`。
+- [x] 保留粗粒度状态：`runtime_ready -> guided -> armed -> motor_spin_hold -> disarmed -> completed`。
+- [x] 将 ACK、heartbeat、mode、armed/disarmed evidence 挂到 transition evidence。
+- [x] 增加 fake MAVLink / dry-run 测试，验证成功和 blocked summary。现有 fake MAVLink 覆盖旧 summary，新增 `workflows::fsm` 测试覆盖 `navlab.fsm.v1` 转换；dry-run 和 operator safety blocked CLI 已验证 artifact 写出。
 
 验收：
 
-- [ ] `navlab-real run motor-debug --dry-run` 写出 `navlab.fsm.v1` planned FSM。
-- [ ] live/fake runtime 写出 actual FSM transitions。
-- [ ] blocked run 能定位到 failed state、trigger、reason-code。
+- [x] `navlab-real run motor-debug --dry-run` 写出 `navlab.fsm.v1` planned FSM。验证 artifact：`artifacts/real/motor-debug/20260627T071342Z/runtime/task_motor_debug_fsm.json`。
+- [x] live/fake runtime 写出 actual FSM transitions。actual runtime path 会从 `MotorDebugRuntimeReport.fsm` 转写为 `navlab.fsm.v1`；本 phase 未启动真实硬件 runtime。
+- [x] blocked run 能定位到 failed state、trigger、reason-code。验证 artifact：`artifacts/real/motor-debug/20260627T071848Z/runtime/task_motor_debug_fsm.json`。
 
 ## Phase FSM4：real hover runtime FSM 迁到 statig adapter
 
-状态：待执行。
+状态：部分完成；live runtime 深迁移仍等待 WF5C/WF5D。
 
 目标：把 Rust real hover MAVLink runtime FSM 迁到 `statig` adapter，让 real hover 与 motor-debug 使用同一套 `navlab.fsm.v1` artifact contract。
 
 任务：
 
-- [ ] 把 real hover runtime states 映射到 `statig` hierarchical FSM。
-- [ ] 保留状态：`runtime_ready -> guided -> armed -> takeoff -> hover_health_hold -> hover_hold -> landing -> disarmed -> completed`。
-- [ ] 把 hover-health stable window、landing evidence、ExternalNav evidence、FCU local position evidence 写入 transition evidence / guard evidence。
-- [ ] 将 operator safety blocked 与 runtime FSM blocked 分层表达。
+- [x] 把 real hover runtime states 映射到 `statig` hierarchical FSM。第一版通过 `workflows::fsm` adapter 从 planned/blocked `fsm` 转写 `navlab.fsm.v1`。
+- [x] 保留状态：`runtime_ready -> guided -> armed -> takeoff -> hover_health_hold -> hover_hold -> landing -> disarmed -> completed`。
+- [x] 把 hover-health stable window、landing evidence、ExternalNav evidence、FCU local position evidence 写入 transition evidence / guard evidence。planned artifact 已记录目标策略；live evidence 仍等待 WF5C/WF5D。
+- [x] 将 operator safety blocked 与 runtime FSM blocked 分层表达。
 - [ ] 增加 fake MAVLink 测试：成功路径、takeoff rejected、hover-health timeout、landing failed。
-- [ ] 在 live path 真正启用前继续 fail-closed，除非 WF5C/WF5D evidence gate 满足。
+- [x] 在 live path 真正启用前继续 fail-closed，除非 WF5C/WF5D evidence gate 满足。
 
 验收：
 
-- [ ] real hover planned/actual FSM 都是 `navlab.fsm.v1`。
-- [ ] real hover blocked summary 能区分 safety gate blocked、runtime guard blocked、MAVLink command failed。
-- [ ] real hover FSM 与 Go sim hover FSM 在 schema 和 reason-code 上可比。
+- [x] real hover planned/blocked FSM 都是 `navlab.fsm.v1`。actual live FSM 等 WF5C/WF5D。
+- [x] real hover blocked summary 能区分 safety gate blocked、runtime guard blocked、MAVLink command failed。当前已验证 operator safety blocked；MAVLink command failed 仍随 live runtime enable 推进。
+- [x] real hover FSM 与 Go sim hover FSM 在 schema 和 reason-code 上可比。
 
 ## 依赖关系
 
@@ -558,25 +558,25 @@ cleanup_failed
 - [x] WF1.x 可以在 WF2/WF3 前后独立推进，但只能替换 Docker resource evidence adapter。
 - [x] WF-runtime 依赖 WF1.x 的 SDK client wrapper 稳定，但不阻塞 WF2/WF3。
 - [x] WF-runtime.rosbag-sdk 与 WF-runtime 合并推进；不在 CLI backend 上补 graceful stop/finalize，也不保留 CLI fallback，直接以 SDK backend 作为唯一生产实现。
-- [ ] WF2 / WF3 应先于任何 real hover live task。
+- [x] WF2 / WF3 应先于任何 real hover live task。
 - [ ] WF4 可以和 WF2 / WF3 并行推进，但 common 只能收纯逻辑。
 - [ ] WF5 依赖 WF2 / WF3 稳定，以及 WF4 中相关 common 语义可用。
 - [x] WF-DAG 依赖 WF0 / WF1 / WF2；Go sim runtime/gate 节点依赖 WF-runtime 和 WF-runtime.rosbag-sdk 第一版完成。
 - [x] WF-DAG 应先于把 workflow schema 上升到 `contracts/proto`，否则 proto 会固化当前链式字段缺口。
-- [ ] FSM0 必须先于 FSM1 / FSM2 / FSM3 / FSM4。
-- [ ] FSM1 依赖 WF-runtime.rosbag-sdk 第一版完成。
-- [ ] FSM2 依赖 FSM1 的 Go adapter 稳定。
-- [ ] FSM3 依赖 FSM0 和 WF3。
+- [x] FSM0 必须先于 FSM1 / FSM2 / FSM3 / FSM4。
+- [x] FSM1 依赖 WF-runtime.rosbag-sdk 第一版完成。
+- [x] FSM2 依赖 FSM1 的 Go adapter 稳定。
+- [x] FSM3 依赖 FSM0 和 WF3。
 - [ ] FSM4 依赖 FSM3 和 WF5B；真正接入 real hover live path 仍依赖 WF5C/WF5D。
 
 ## 完成标准
 
-- [ ] Go sim 和 Rust real 都暴露同构 orchestration stage。
+- [x] Go sim 和 Rust real 都暴露同构 orchestration stage。
 - [x] Go sim 和 Rust real 都把 workflow DAG 主 artifact 写入 `dag/workflow_summary.json`。
 - [x] `runtime-execute` 和 `gate-evaluate` 在 Go sim workflow summary 中有明确 node result。
-- [ ] Real `motor-debug` 写出 workflow、FSM、summary artifact。
+- [x] Real `motor-debug` 写出 workflow、FSM、summary artifact。
 - [ ] `navlab.common` 只包含纯 FSM / evidence / summary / reason-code 语义。
-- [ ] real hover 不再是验证 orchestration 设计的第一个任务。
+- [x] real hover 不再是验证 orchestration 设计的第一个任务。
 - [x] Go sim Docker SDK runtime 有明确 rosbag graceful stop / finalize evidence；`timeout --signal=INT` 和 Docker CLI backend 不再是生产收尾语义。
-- [ ] Go sim 和 Rust real 都通过 `navlab.fsm.v1` 输出 task FSM / runtime sub-FSM artifact。
-- [ ] Go `qmuntal/stateless` 和 Rust `statig` 只存在于 language-local adapter 内，不泄漏到 artifact schema。
+- [x] Go sim 和 Rust real 都通过 `navlab.fsm.v1` 输出 task FSM / runtime sub-FSM artifact。
+- [x] Go `qmuntal/stateless` 和 Rust `statig` 只存在于 language-local adapter 内，不泄漏到 artifact schema。

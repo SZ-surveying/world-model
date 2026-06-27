@@ -5,10 +5,10 @@ from math import isclose
 from navlab.common.companion.mission.evidence.summary import (
     build_hover_status_payload,
     build_landing_summary,
-    mission_fsm_summary_fields,
+    mission_phase_summary_fields,
     summarize_post_airborne_nav_loss,
 )
-from navlab.common.companion.mission.fsm import MissionFsmRecorder
+from navlab.common.companion.mission.fsm import MissionPhaseRecorder
 from navlab.common.companion.mission.stages.hover import HoverInputs
 from navlab.common.companion.mission.stages.landing import (
     LANDING_POLICY_AP_LAND_MODE_AFTER_HOVER,
@@ -17,19 +17,19 @@ from navlab.common.companion.mission.stages.landing import (
 
 
 def _snapshot():
-    recorder = MissionFsmRecorder(started_at_monotonic=10.0)
+    recorder = MissionPhaseRecorder(started_at_monotonic=10.0)
     recorder.transition(now_monotonic=12.0, state="S6 hover_hold", reason="holding", guard="hover_hold")
     return recorder.snapshot(now_monotonic=13.5)
 
 
-def test_mission_fsm_summary_fields_keep_legacy_public_names() -> None:
-    fields = mission_fsm_summary_fields(_snapshot())
+def test_mission_phase_summary_fields_keep_legacy_public_names() -> None:
+    fields = mission_phase_summary_fields(_snapshot())
 
-    assert fields["mission_fsm_state"] == "S6 hover_hold"
-    assert fields["mission_fsm_state_entered_at_sec"] == 2.0
-    assert fields["mission_fsm_last_transition_reason"] == "holding"
-    assert fields["mission_fsm_blocker"] is None
-    assert fields["mission_fsm_history"][-1]["guard"] == "hover_hold"
+    assert fields["mission_phase_state"] == "S6 hover_hold"
+    assert fields["mission_phase_state_entered_at_sec"] == 2.0
+    assert fields["mission_phase_last_transition_reason"] == "holding"
+    assert fields["mission_phase_blocker"] is None
+    assert fields["mission_phase_history"][-1]["guard"] == "hover_hold"
 
 
 def test_hover_status_payload_preserves_position_and_prefix_evidence() -> None:
@@ -82,11 +82,11 @@ def test_hover_status_payload_preserves_position_and_prefix_evidence() -> None:
     assert payload["prefix_pipeline"]["active_stage"] == "takeoff"
     assert payload["position"]["x"] == 1.25
     assert payload["position"]["hold_yaw_rad"] == 0.1
-    assert payload["mission_fsm_state"] == "S6 hover_hold"
+    assert payload["mission_phase_state"] == "S6 hover_hold"
     assert payload["hover_health"]["phase"] == "hover_health_hold"
     assert payload["hover_health"]["band"] == "green"
     assert payload["hover_health_phase"] == "hover_health_hold"
-    assert payload["mission_fsm_substate"] == "hover_health_hold"
+    assert payload["mission_phase_substate"] == "hover_health_hold"
 
 
 def test_summarize_post_airborne_nav_loss_reports_window_evidence() -> None:

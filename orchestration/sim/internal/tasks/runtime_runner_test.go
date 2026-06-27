@@ -184,8 +184,9 @@ func TestExecuteRuntimeSpecsBlocksOnRosbagFinalizeFailure(t *testing.T) {
 		fakeRuntimeBackend: newFakeRuntimeBackend(),
 		finalizeErr:        errors.New("rosbag finalize timeout"),
 	}
+	logPath := filepath.Join(t.TempDir(), "hover_rosbag.log")
 	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
-		Rosbags: []simruntime.RosbagSpec{{Name: "hover_rosbag", LogPath: "hover_rosbag.log"}},
+		Rosbags: []simruntime.RosbagSpec{{Name: "hover_rosbag", LogPath: logPath}},
 		Probes:  []simruntime.ProbeSpec{{Name: "slam_hover_probe", Required: true}},
 	}, RuntimeExecutionOptions{
 		WaitForRosbags:         true,
@@ -206,10 +207,11 @@ func TestExecuteRuntimeSpecsBlocksOnRosbagFinalizeFailure(t *testing.T) {
 func TestExecuteRuntimeSpecsEmitsRuntimeEvents(t *testing.T) {
 	backend := newFakeRuntimeBackend()
 	sink := &captureEventSink{}
+	logDir := t.TempDir()
 	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
-		Services: []simruntime.ServiceSpec{{Name: "gazebo", LogPath: "gazebo.log"}},
-		Rosbags:  []simruntime.RosbagSpec{{Name: "hover_rosbag", LogPath: "rosbag.log", OutputPath: "hover.mcap"}},
-		Probes:   []simruntime.ProbeSpec{{Name: "frame_probe", Required: true, LogPath: "probe.log"}},
+		Services: []simruntime.ServiceSpec{{Name: "gazebo", LogPath: filepath.Join(logDir, "gazebo.log")}},
+		Rosbags:  []simruntime.RosbagSpec{{Name: "hover_rosbag", LogPath: filepath.Join(logDir, "rosbag.log"), OutputPath: "hover.mcap"}},
+		Probes:   []simruntime.ProbeSpec{{Name: "frame_probe", Required: true, LogPath: filepath.Join(logDir, "probe.log")}},
 	}, RuntimeExecutionOptions{WaitForRosbags: true, TaskID: "hover", RunID: "run", EventSink: sink})
 	if err != nil {
 		t.Fatalf("ExecuteRuntimeSpecs() error = %v", err)

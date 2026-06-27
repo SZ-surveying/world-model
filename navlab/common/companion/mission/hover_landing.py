@@ -13,7 +13,10 @@ from navlab.common.companion.mission.context import (
 )
 from navlab.common.companion.mission.evidence.hover import HoverCompletionEvaluation, HoverEvidenceRecorder
 from navlab.common.companion.mission.evidence.landing import LandingEvidenceRecorder
-from navlab.common.companion.mission.fsm import mission_fsm_state_for_hover_phase, mission_fsm_state_for_landing_state
+from navlab.common.companion.mission.fsm import (
+    mission_phase_state_for_hover_phase,
+    mission_phase_state_for_landing_state,
+)
 from navlab.common.companion.mission.pipeline import FlightPipeline, Stage, StageResult
 from navlab.common.companion.mission.stages.hover import (
     HoverDecision,
@@ -26,7 +29,7 @@ HoverTickStatus = Literal["running", "preflight_timeout", "landing_started"]
 LandingTickStatus = Literal["running", "abort", "complete"]
 
 
-class MissionFsmRecorderCallback(Protocol):
+class MissionPhaseRecorderCallback(Protocol):
     """Callback used by the runner to record mission FSM transitions."""
 
     def __call__(
@@ -157,7 +160,7 @@ class HoverMissionPipelineRunner:
         ctx: MissionContext,
         runtime: HoverTickRuntime,
         *,
-        record_fsm: MissionFsmRecorderCallback,
+        record_fsm: MissionPhaseRecorderCallback,
         publish_status: Callable[[HoverDecision, HoverInputs], None],
         begin_landing: Callable[[float, HoverCompletionEvaluation], None],
     ) -> HoverTickOutcome:
@@ -170,7 +173,7 @@ class HoverMissionPipelineRunner:
         phase_counts[decision.phase] = phase_counts.get(decision.phase, 0) + 1
         record_fsm(
             runtime.now_monotonic,
-            mission_fsm_state_for_hover_phase(decision.phase),
+            mission_phase_state_for_hover_phase(decision.phase),
             decision.reason,
             guard=decision.phase,
             blocker=decision.reason if decision.phase == "abort" else None,
@@ -183,7 +186,7 @@ class HoverMissionPipelineRunner:
         ):
             record_fsm(
                 runtime.now_monotonic,
-                mission_fsm_state_for_hover_phase(decision.phase),
+                mission_phase_state_for_hover_phase(decision.phase),
                 "preflight_timeout",
                 guard=decision.phase,
                 blocker=decision.reason,
@@ -243,7 +246,7 @@ class HoverMissionPipelineRunner:
         *,
         now_monotonic: float,
         prepare_landing_tick: Callable[[float], LandingTickPreparation],
-        record_fsm: MissionFsmRecorderCallback,
+        record_fsm: MissionPhaseRecorderCallback,
     ) -> LandingTickOutcome:
         """Tick the landing suffix and interpret its terminal result."""
 
@@ -292,7 +295,7 @@ class HoverMissionPipelineRunner:
         if landing_result.status == "complete":
             record_fsm(
                 now_monotonic,
-                mission_fsm_state_for_landing_state(self._landing_evidence.state),
+                mission_phase_state_for_landing_state(self._landing_evidence.state),
                 landing_result.reason,
                 guard=self._landing_evidence.state,
             )

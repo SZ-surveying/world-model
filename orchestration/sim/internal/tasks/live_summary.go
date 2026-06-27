@@ -46,6 +46,7 @@ type LiveRunSummary struct {
 	GeneratedRuntimeArtifacts []GeneratedRuntimeArtifact      `json:"generated_runtime_artifacts"`
 	RuntimeSpecCounts         RuntimeSpecCounts               `json:"runtime_spec_counts"`
 	RuntimeExecution          RuntimeExecutionResult          `json:"runtime_execution"`
+	FSMArtifacts              []FSMArtifactRef                `json:"fsm_artifacts,omitempty"`
 	RuntimeError              string                          `json:"runtime_error,omitempty"`
 	ResultGates               []ResultGateSummary             `json:"result_gates"`
 	GateParity                GateParitySummary               `json:"gate_parity"`

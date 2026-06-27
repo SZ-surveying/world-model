@@ -137,7 +137,7 @@ def test_mission_summary_writer_atomically_writes_json(tmp_path) -> None:
 
 
 def test_hover_mission_summary_runtime_builds_final_summary(tmp_path) -> None:
-    from navlab.common.companion.mission import MissionClock, MissionContext, MissionFsmRecorder
+    from navlab.common.companion.mission import MissionClock, MissionContext, MissionPhaseRecorder
     from navlab.common.companion.mission.command_adapter import MissionCommandRuntime
     from navlab.common.companion.mission.evidence.hover import HoverEvidenceRecorder
     from navlab.common.companion.mission.mavlink_protocol import mavlink
@@ -241,7 +241,7 @@ def test_hover_mission_summary_runtime_builds_final_summary(tmp_path) -> None:
     adapter_config = MissionRuntimeAdapterConfig(1.0, True, True, False, 0.45)
     runtime_adapter = MissionRuntimeStateAdapter(started_at_monotonic=10.0)
     runtime_adapter.apply_external_nav_status('{"ready":true,"state":"healthy"}', now_monotonic=16.0)
-    fsm = MissionFsmRecorder(started_at_monotonic=10.0)
+    fsm = MissionPhaseRecorder(started_at_monotonic=10.0)
     fsm.transition(now_monotonic=16.0, state="S12 landing_complete", reason="landing_complete")
 
     summary = summary_runtime.build_final_summary(
@@ -284,7 +284,7 @@ def test_hover_mission_summary_runtime_builds_final_summary(tmp_path) -> None:
     assert summary["runtime_hover_health_final"]["phase"] == "sim_auto_continue"
     assert summary["runtime_hover_health_final"]["band"] == "green"
     assert summary["runtime_hover_health_final"]["sim_auto_continue_allowed"] is True
-    assert summary["runtime_hover_health_final"]["mission_fsm_substate"] == "sim_auto_continue"
+    assert summary["runtime_hover_health_final"]["mission_phase_substate"] == "sim_auto_continue"
     assert json.loads((tmp_path / "mission_summary.json").read_text())["landing"]["state"] == "landing_complete"
 
 

@@ -14,10 +14,11 @@ use crate::runtime::{MotorDebugRuntimeReport, MotorDebugRuntimeRequest, real_mot
 use crate::tasks::{RealTask, RunOptions};
 use crate::ui::{print_key_value, print_title};
 use crate::workflows::{
-    RealWorkflowSummary, TASK_FSM_SCHEMA_VERSION, TaskFsmState as MotorDebugTaskFsmState,
-    TaskFsmSummary as MotorDebugTaskFsmSummary, TaskFsmTransition as MotorDebugTaskFsmTransition,
-    TaskFsmTransitionInput, dry_run_workflow, runtime_workflow, task_fsm_state,
-    task_fsm_transition, workflow_from_doctor_chain_with_runtime,
+    NavLabFsmArtifactRef, NavLabFsmState as MotorDebugFsmState,
+    NavLabFsmSummary as MotorDebugFsmSummary, NavLabFsmTransition as MotorDebugFsmTransition,
+    NavLabFsmTransitionInput, RealWorkflowSummary, dry_run_workflow, navlab_fsm_state,
+    navlab_fsm_summary, navlab_fsm_transition, runtime_workflow,
+    workflow_from_doctor_chain_with_runtime, write_navlab_fsm_artifact,
 };
 
 pub const TASK_RESULT_SCHEMA_VERSION: &str = "navlab.runtime.task_result.v1";
@@ -94,7 +95,7 @@ pub struct MotorDebugRuntimeSummary {
     pub guided_mode: Value,
     pub command_plan: MotorDebugCommandPlan,
     pub acks: Vec<Value>,
-    pub task_fsm: MotorDebugTaskFsmSummary,
+    pub fsm_artifacts: Vec<NavLabFsmArtifactRef>,
     pub runtime_report: Option<MotorDebugRuntimeReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operator_safety: Option<OperatorSafetyEvaluation>,
@@ -215,6 +216,7 @@ impl RealTask for MotorDebugTask {
                 );
                 summary.workflow = Some(workflow.clone());
                 write_workflow_summary(&artifact_dir, &workflow)?;
+                attach_navlab_fsm_artifact(&artifact_dir, &run_id, &plan, &mut summary)?;
                 write_runtime_summary(&summary_path, &summary)?;
                 write_task_result(&summary_path, project, &plan, &summary)?;
                 println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -239,6 +241,7 @@ impl RealTask for MotorDebugTask {
             let mut summary = build_dry_run_summary(project, &plan);
             summary.workflow = Some(workflow.clone());
             write_workflow_summary(&artifact_dir, &workflow)?;
+            attach_navlab_fsm_artifact(&artifact_dir, &run_id, &plan, &mut summary)?;
             write_runtime_summary(&summary_path, &summary)?;
             write_task_result(&summary_path, project, &plan, &summary)?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -263,6 +266,7 @@ impl RealTask for MotorDebugTask {
             summary.operator_safety = Some(safety);
             summary.workflow = Some(workflow.clone());
             write_workflow_summary(&artifact_dir, &workflow)?;
+            attach_navlab_fsm_artifact(&artifact_dir, &run_id, &plan, &mut summary)?;
             write_runtime_summary(&summary_path, &summary)?;
             write_task_result(&summary_path, project, &plan, &summary)?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -301,6 +305,7 @@ impl RealTask for MotorDebugTask {
         };
         summary.workflow = Some(workflow.clone());
         write_workflow_summary(&artifact_dir, &workflow)?;
+        attach_navlab_fsm_artifact(&artifact_dir, &run_id, &plan, &mut summary)?;
         write_runtime_summary(&summary_path, &summary)?;
         write_task_result(&summary_path, project, &plan, &summary)?;
         println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -435,11 +440,7 @@ pub fn build_runtime_not_migrated_summary(
         guided_mode: json!({}),
         command_plan: motor_debug_command_plan(),
         acks: Vec::new(),
-        task_fsm: build_not_started_task_fsm(
-            plan,
-            "runtime_not_started",
-            &["motor_debug_rust_mavlink_runtime_not_migrated".to_string()],
-        ),
+        fsm_artifacts: Vec::new(),
         runtime_report: None,
         operator_safety: None,
         workflow: None,
@@ -457,7 +458,6 @@ pub fn build_dry_run_summary(
     summary.claim = "dry_run_plan_only".to_string();
     summary.shutdown_claim = "not_evaluated_dry_run".to_string();
     summary.guided_mode_claim = "not_evaluated_dry_run".to_string();
-    summary.task_fsm = build_planned_task_fsm(plan);
     summary
 }
 
@@ -470,7 +470,6 @@ pub fn build_blocked_summary(
     let mut summary = build_runtime_not_migrated_summary(project, plan);
     summary.blockers = blockers;
     summary.claim = claim.to_string();
-    summary.task_fsm = build_not_started_task_fsm(plan, claim, &summary.blockers);
     summary
 }
 
@@ -479,7 +478,6 @@ pub fn build_runtime_summary(
     plan: &MotorDebugPlan,
     report: MotorDebugRuntimeReport,
 ) -> MotorDebugRuntimeSummary {
-    let task_fsm = build_actual_task_fsm(plan, &report);
     MotorDebugRuntimeSummary {
         schema_version: TASK_RESULT_SCHEMA_VERSION.to_string(),
         ok: report.ok,
@@ -522,7 +520,7 @@ pub fn build_runtime_summary(
         guided_mode: serde_json::to_value(&report.guided_mode).unwrap_or_else(|_| json!({})),
         command_plan: motor_debug_command_plan(),
         acks: runtime_acks(&report),
-        task_fsm,
+        fsm_artifacts: Vec::new(),
         runtime_report: Some(report),
         operator_safety: None,
         workflow: None,
@@ -537,150 +535,153 @@ pub fn build_runtime_error_summary(
     let mut summary = build_runtime_not_migrated_summary(project, plan);
     summary.blockers = vec![format!("motor_debug_mavlink_runtime_error:{error}")];
     summary.claim = "runtime_error".to_string();
-    summary.task_fsm = build_not_started_task_fsm(plan, "runtime_error", &summary.blockers);
     summary
 }
 
-fn build_planned_task_fsm(plan: &MotorDebugPlan) -> MotorDebugTaskFsmSummary {
-    MotorDebugTaskFsmSummary {
-        schema_version: TASK_FSM_SCHEMA_VERSION.to_string(),
-        task_id: plan.task_id.clone(),
-        fsm_name: "motor-debug".to_string(),
-        mode: "planned".to_string(),
-        ok: true,
-        blocked: false,
-        current_state: "completed".to_string(),
-        failed_state: None,
-        blockers: Vec::new(),
-        states: motor_debug_fsm_states()
-            .iter()
-            .map(|state| {
-                fsm_state(
-                    state,
-                    "planned",
-                    "planned_dry_run_no_motor_side_effect",
-                    json!({
-                        "motor_percent": plan.motor_percent,
-                        "motor_sec": plan.motor_sec,
-                        "motor_count": plan.motor_count,
-                    }),
-                )
-            })
-            .collect(),
-        transitions: vec![
-            fsm_transition(
-                plan,
-                "runtime_ready",
-                "guided",
-                "guided_confirmed",
-                "guided_ack_and_heartbeat_planned",
-                true,
-                None,
-                json!({"request": "MAV_CMD_DO_SET_MODE", "mode": REQUIRED_GUIDED_MODE_NAME}),
+fn build_planned_fsm(plan: &MotorDebugPlan) -> MotorDebugFsmSummary {
+    let states = motor_debug_fsm_states()
+        .iter()
+        .map(|state| {
+            fsm_state(
+                state,
                 "planned",
-            ),
-            fsm_transition(
-                plan,
-                "guided",
-                "armed",
-                "arm_confirmed",
-                "arm_ack_accepted_planned",
-                true,
-                None,
-                json!({"request": "MAV_CMD_COMPONENT_ARM_DISARM", "param1": 1.0}),
-                "planned",
-            ),
-            fsm_transition(
-                plan,
-                "armed",
-                "motor_spin_hold",
-                "hold_started",
-                "armed_idle_hold_planned",
-                true,
-                None,
-                json!({"duration_sec": plan.motor_sec, "throttle_command_claim": "not_sent_armed_idle_only"}),
-                "planned",
-            ),
-            fsm_transition(
-                plan,
-                "motor_spin_hold",
-                "disarmed",
-                "disarm_confirmed",
-                "disarm_ack_accepted_planned",
-                true,
-                None,
-                json!({"request": "MAV_CMD_COMPONENT_ARM_DISARM", "param1": 0.0}),
-                "planned",
-            ),
-            fsm_transition(
-                plan,
-                "disarmed",
-                "completed",
-                "task_completed",
-                "motor_debug_completed_planned",
-                true,
-                None,
-                json!({"no_takeoff": true, "landing_claim": "not_evaluated_no_takeoff"}),
-                "planned",
-            ),
-        ],
-    }
-}
-
-fn build_not_started_task_fsm(
-    plan: &MotorDebugPlan,
-    reason: &str,
-    blockers: &[String],
-) -> MotorDebugTaskFsmSummary {
-    let blocker = blockers.first().cloned();
-    MotorDebugTaskFsmSummary {
-        schema_version: TASK_FSM_SCHEMA_VERSION.to_string(),
-        task_id: plan.task_id.clone(),
-        fsm_name: "motor-debug".to_string(),
-        mode: "blocked_before_runtime".to_string(),
-        ok: false,
-        blocked: true,
-        current_state: "runtime_ready".to_string(),
-        failed_state: Some("runtime_ready".to_string()),
-        blockers: blockers.to_vec(),
-        states: motor_debug_fsm_states()
-            .iter()
-            .map(|state| {
-                let state_reason = if *state == "runtime_ready" {
-                    reason
-                } else {
-                    "not_reached_after_blocker"
-                };
-                fsm_state(
-                    state,
-                    if *state == "runtime_ready" {
-                        "blocked_before_entering"
-                    } else {
-                        "not_entered"
-                    },
-                    state_reason,
-                    json!({"blockers": blockers}),
-                )
-            })
-            .collect(),
-        transitions: vec![fsm_transition(
+                "planned_dry_run_no_motor_side_effect",
+                json!({
+                    "motor_percent": plan.motor_percent,
+                    "motor_sec": plan.motor_sec,
+                    "motor_count": plan.motor_count,
+                }),
+            )
+        })
+        .collect();
+    let transitions = vec![
+        fsm_transition(
             plan,
             "runtime_ready",
             "guided",
-            "runtime_ready",
-            reason,
-            false,
-            blocker,
-            json!({"runtime_started": false, "blockers": blockers}),
-            "blocked_before_entering",
-        )],
-    }
+            "guided_confirmed",
+            "guided_ack_and_heartbeat_planned",
+            true,
+            None,
+            json!({"request": "MAV_CMD_DO_SET_MODE", "mode": REQUIRED_GUIDED_MODE_NAME}),
+            "planned",
+        ),
+        fsm_transition(
+            plan,
+            "guided",
+            "armed",
+            "arm_confirmed",
+            "arm_ack_accepted_planned",
+            true,
+            None,
+            json!({"request": "MAV_CMD_COMPONENT_ARM_DISARM", "param1": 1.0}),
+            "planned",
+        ),
+        fsm_transition(
+            plan,
+            "armed",
+            "motor_spin_hold",
+            "hold_started",
+            "armed_idle_hold_planned",
+            true,
+            None,
+            json!({"duration_sec": plan.motor_sec, "throttle_command_claim": "not_sent_armed_idle_only"}),
+            "planned",
+        ),
+        fsm_transition(
+            plan,
+            "motor_spin_hold",
+            "disarmed",
+            "disarm_confirmed",
+            "disarm_ack_accepted_planned",
+            true,
+            None,
+            json!({"request": "MAV_CMD_COMPONENT_ARM_DISARM", "param1": 0.0}),
+            "planned",
+        ),
+        fsm_transition(
+            plan,
+            "disarmed",
+            "completed",
+            "task_completed",
+            "motor_debug_completed_planned",
+            true,
+            None,
+            json!({"no_takeoff": true, "landing_claim": "not_evaluated_no_takeoff"}),
+            "planned",
+        ),
+    ];
+    navlab_fsm_summary(
+        plan.task_id.clone(),
+        "motor-debug",
+        "",
+        "completed",
+        "planned",
+        true,
+        false,
+        states,
+        transitions,
+        Vec::new(),
+        None,
+    )
 }
 
-fn build_actual_task_fsm(
+fn build_not_started_fsm(
+    plan: &MotorDebugPlan,
+    reason: &str,
+    blockers: &[String],
+) -> MotorDebugFsmSummary {
+    let blocker = blockers.first().cloned();
+    let states = motor_debug_fsm_states()
+        .iter()
+        .map(|state| {
+            let state_reason = if *state == "runtime_ready" {
+                reason
+            } else {
+                "not_reached_after_blocker"
+            };
+            fsm_state(
+                state,
+                if *state == "runtime_ready" {
+                    "blocked_before_entering"
+                } else {
+                    "not_entered"
+                },
+                state_reason,
+                json!({"blockers": blockers}),
+            )
+        })
+        .collect();
+    let transitions = vec![fsm_transition(
+        plan,
+        "runtime_ready",
+        "guided",
+        "runtime_ready",
+        reason,
+        false,
+        blocker,
+        json!({"runtime_started": false, "blockers": blockers}),
+        "blocked_before_entering",
+    )];
+    navlab_fsm_summary(
+        plan.task_id.clone(),
+        "motor-debug",
+        "",
+        "runtime_ready",
+        "blocked_before_runtime",
+        false,
+        true,
+        states,
+        transitions,
+        blockers.to_vec(),
+        Some("runtime_ready".to_string()),
+    )
+}
+
+fn build_actual_fsm(
     plan: &MotorDebugPlan,
     report: &MotorDebugRuntimeReport,
-) -> MotorDebugTaskFsmSummary {
+) -> MotorDebugFsmSummary {
     let at = fsm_now();
     let mut entered = std::collections::BTreeMap::new();
     let mut transitions = Vec::new();
@@ -895,19 +896,19 @@ fn build_actual_task_fsm(
         })
         .collect();
 
-    MotorDebugTaskFsmSummary {
-        schema_version: TASK_FSM_SCHEMA_VERSION.to_string(),
-        task_id: plan.task_id.clone(),
-        fsm_name: "motor-debug".to_string(),
-        mode: "actual".to_string(),
-        ok: report.ok,
-        blocked: report.blocked,
+    navlab_fsm_summary(
+        plan.task_id.clone(),
+        "motor-debug",
+        "",
         current_state,
-        failed_state,
-        blockers: report.blockers.clone(),
+        "actual",
+        report.ok,
+        report.blocked,
         states,
         transitions,
-    }
+        report.blockers.clone(),
+        failed_state,
+    )
 }
 
 fn motor_debug_fsm_states() -> [&'static str; 6] {
@@ -921,13 +922,14 @@ fn motor_debug_fsm_states() -> [&'static str; 6] {
     ]
 }
 
-fn fsm_state(
-    state: &str,
-    entered_at: &str,
-    reason: &str,
-    evidence: Value,
-) -> MotorDebugTaskFsmState {
-    task_fsm_state(state, entered_at, reason, evidence)
+fn fsm_state(state: &str, entered_at: &str, reason: &str, evidence: Value) -> MotorDebugFsmState {
+    let _ = evidence;
+    navlab_fsm_state(
+        state,
+        state == "completed",
+        reason == "blocked_before_entering",
+        Some(format!("{entered_at}:{reason}")),
+    )
 }
 
 fn fsm_transition(
@@ -940,16 +942,15 @@ fn fsm_transition(
     blocker: Option<String>,
     evidence: Value,
     at: &str,
-) -> MotorDebugTaskFsmTransition {
-    task_fsm_transition(TaskFsmTransitionInput {
-        task_id: plan.task_id.clone(),
-        fsm_name: "motor-debug".to_string(),
+) -> MotorDebugFsmTransition {
+    let _ = plan;
+    let _ = blocker;
+    navlab_fsm_transition(NavLabFsmTransitionInput {
         from_state: from_state.to_string(),
         to_state: to_state.to_string(),
-        event: event.to_string(),
+        trigger: event.to_string(),
         reason_code: reason_code.to_string(),
         ok,
-        blocker,
         evidence,
         at: at.to_string(),
     })
@@ -1139,6 +1140,31 @@ fn write_runtime_summary(path: &Path, summary: &MotorDebugRuntimeSummary) -> Res
     }
     fs::write(path, serde_json::to_string_pretty(summary)?)
         .with_context(|| format!("write motor-debug runtime summary {}", path.display()))
+}
+
+fn attach_navlab_fsm_artifact(
+    artifact_dir: &Path,
+    run_id: &str,
+    plan: &MotorDebugPlan,
+    summary: &mut MotorDebugRuntimeSummary,
+) -> Result<()> {
+    let fsm = build_fsm_for_summary(plan, summary);
+    let (_fsm_summary, reference) = write_navlab_fsm_artifact(artifact_dir, &fsm, run_id)?;
+    summary.fsm_artifacts = vec![reference];
+    Ok(())
+}
+
+fn build_fsm_for_summary(
+    plan: &MotorDebugPlan,
+    summary: &MotorDebugRuntimeSummary,
+) -> MotorDebugFsmSummary {
+    if let Some(report) = summary.runtime_report.as_ref() {
+        return build_actual_fsm(plan, report);
+    }
+    if summary.ok && summary.claim == "dry_run_plan_only" {
+        return build_planned_fsm(plan);
+    }
+    build_not_started_fsm(plan, &summary.claim, &summary.blockers)
 }
 
 fn write_task_plan(
@@ -1477,12 +1503,10 @@ mod tests {
         )
         .expect("plan");
         let summary = build_runtime_not_migrated_summary(&project(), &plan);
-        assert_eq!(summary.task_fsm.mode, "blocked_before_runtime");
-        assert_eq!(
-            summary.task_fsm.failed_state.as_deref(),
-            Some("runtime_ready")
-        );
-        assert_eq!(summary.task_fsm.transitions[0].to_state, "guided");
+        let fsm = build_fsm_for_summary(&plan, &summary);
+        assert_eq!(fsm.mode, "blocked_before_runtime");
+        assert_eq!(fsm.failed_state.as_deref(), Some("runtime_ready"));
+        assert_eq!(fsm.transitions[0].to_state, "guided");
         assert_eq!(summary.schema_version, TASK_RESULT_SCHEMA_VERSION);
         assert!(!summary.ok);
         assert!(summary.blocked);
@@ -1549,32 +1573,35 @@ mod tests {
         assert_eq!(summary["claim"], "dry_run_plan_only");
         assert_eq!(summary["workflow"]["nodes"][0]["id"], "preflight");
         assert_eq!(summary["workflow"]["nodes"][4]["id"], "runtime-execute");
-        assert_eq!(summary["task_fsm"]["mode"], "planned");
-        assert_eq!(summary["task_fsm"]["states"][0]["state"], "runtime_ready");
-        assert_eq!(
-            summary["task_fsm"]["transitions"][0]["from_state"],
-            "runtime_ready"
-        );
-        assert_eq!(summary["task_fsm"]["transitions"][0]["to_state"], "guided");
-        assert_eq!(
-            summary["task_fsm"]["transitions"][2]["to_state"],
-            "motor_spin_hold"
-        );
+        let fsm: Value = serde_json::from_str(
+            &fs::read_to_string(
+                temp.path()
+                    .join("runtime")
+                    .join("task_motor_debug_fsm.json"),
+            )
+            .expect("fsm"),
+        )
+        .expect("fsm json");
+        assert_eq!(fsm["schema_version"], "navlab.fsm.v1");
+        assert_eq!(fsm["mode"], "planned");
+        assert_eq!(fsm["states"][0]["state"], "runtime_ready");
+        assert_eq!(fsm["transitions"][0]["from_state"], "runtime_ready");
+        assert_eq!(fsm["transitions"][0]["to_state"], "guided");
+        assert_eq!(fsm["transitions"][2]["to_state"], "motor_spin_hold");
     }
 
     #[test]
     fn motor_debug_runtime_summary_derives_actual_fsm() {
         let plan = build_plan(&task_config(), MotorDebugOverrides::default()).expect("plan");
         let summary = build_runtime_summary(&project(), &plan, successful_runtime_report());
+        let fsm = build_fsm_for_summary(&plan, &summary);
 
-        assert_eq!(summary.task_fsm.mode, "actual");
-        assert!(summary.task_fsm.ok);
-        assert_eq!(summary.task_fsm.current_state, "completed");
-        assert_eq!(summary.task_fsm.failed_state, None);
+        assert_eq!(fsm.mode, "actual");
+        assert!(fsm.ok);
+        assert_eq!(fsm.state, "completed");
+        assert_eq!(fsm.failed_state, None);
         assert_eq!(
-            summary
-                .task_fsm
-                .states
+            fsm.states
                 .iter()
                 .map(|state| state.state.as_str())
                 .collect::<Vec<_>>(),
@@ -1587,12 +1614,12 @@ mod tests {
                 "completed"
             ]
         );
-        assert_eq!(summary.task_fsm.transitions.len(), 5);
-        assert_eq!(summary.task_fsm.transitions[1].from_state, "guided");
-        assert_eq!(summary.task_fsm.transitions[1].to_state, "armed");
+        assert_eq!(fsm.transitions.len(), 5);
+        assert_eq!(fsm.transitions[1].from_state, "guided");
+        assert_eq!(fsm.transitions[1].to_state, "armed");
         assert_eq!(
-            summary.task_fsm.transitions[1].reason_code,
-            "arm_ack_accepted"
+            fsm.transitions[1].reason_code.as_deref(),
+            Some("arm_ack_accepted")
         );
     }
 
@@ -1614,21 +1641,17 @@ mod tests {
         report.throttle_command_claim = "not_sent".to_string();
 
         let summary = build_runtime_summary(&project(), &plan, report);
+        let fsm = build_fsm_for_summary(&plan, &summary);
 
-        assert!(!summary.task_fsm.ok);
-        assert_eq!(summary.task_fsm.current_state, "guided");
-        assert_eq!(summary.task_fsm.failed_state.as_deref(), Some("armed"));
-        let failed = summary
-            .task_fsm
-            .transitions
-            .last()
-            .expect("failed transition");
+        assert!(!fsm.ok);
+        assert_eq!(fsm.state, "guided");
+        assert_eq!(fsm.failed_state.as_deref(), Some("armed"));
+        let failed = fsm.transitions.last().expect("failed transition");
         assert_eq!(failed.from_state, "guided");
         assert_eq!(failed.to_state, "armed");
-        assert_eq!(failed.reason_code, "motor_debug_arm_rejected");
         assert_eq!(
-            failed.blocker.as_deref(),
-            Some("motor_debug_arm_rejected:MAV_RESULT_FAILED")
+            failed.reason_code.as_deref(),
+            Some("motor_debug_arm_rejected")
         );
     }
 
@@ -1673,7 +1696,16 @@ mod tests {
             summary["workflow"]["nodes"][5]["skip_reason"],
             "blocked_by_dependency:runtime-execute"
         );
-        assert_eq!(summary["task_fsm"]["failed_state"], "runtime_ready");
+        let fsm: Value = serde_json::from_str(
+            &fs::read_to_string(
+                temp.path()
+                    .join("runtime")
+                    .join("task_motor_debug_fsm.json"),
+            )
+            .expect("fsm"),
+        )
+        .expect("fsm json");
+        assert_eq!(fsm["failed_state"], "runtime_ready");
     }
 
     fn successful_runtime_report() -> MotorDebugRuntimeReport {

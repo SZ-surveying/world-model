@@ -232,10 +232,10 @@ func writeInitializationAuditSummary(t *testing.T, path string) {
 		"metrics": map[string]any{
 			"gate": map[string]any{
 				"hover_mission": map[string]any{
-					"ok":                false,
-					"reason":            "hover_span_unstable",
-					"mission_fsm_state": "S12 landing_complete",
-					"hover_body_ok":     false,
+					"ok":                  false,
+					"reason":              "hover_span_unstable",
+					"mission_phase_state": "S12 landing_complete",
+					"hover_body_ok":       false,
 					"hover_drift": map[string]any{
 						"horizontal_drift_m":                     0.07,
 						"horizontal_span_m":                      0.3,

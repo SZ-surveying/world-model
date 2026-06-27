@@ -21,7 +21,7 @@ from navlab.common.companion.mission.evidence.summary import (
     MissionSummaryWriter,
     build_landing_summary,
 )
-from navlab.common.companion.mission.fsm import MissionFsmSnapshot
+from navlab.common.companion.mission.fsm import MissionPhaseSnapshot
 from navlab.common.companion.mission.mavlink_protocol import command_ack_accepted, mavlink
 from navlab.common.companion.mission.runtime_state import (
     MavlinkRuntimeCollections,
@@ -82,7 +82,7 @@ class HoverMissionSummaryRuntime:
         self,
         *,
         now_monotonic: float,
-        fsm_snapshot: MissionFsmSnapshot,
+        fsm_snapshot: MissionPhaseSnapshot,
         runtime: MavlinkRuntimeState,
         collections: MavlinkRuntimeCollections,
         landing_evidence: LandingEvidenceRecorder,
@@ -151,7 +151,7 @@ class HoverMissionSummaryRuntime:
         landing_ok: bool,
         now_monotonic: float,
         started_at_monotonic: float,
-        fsm_snapshot: MissionFsmSnapshot,
+        fsm_snapshot: MissionPhaseSnapshot,
         prefix_pipeline: Mapping[str, object],
         status_history: Sequence[Mapping[str, object]],
         ctx: MissionContext,
@@ -316,8 +316,8 @@ class HoverMissionSummaryRuntime:
             "band": band,
             "reason": str(hover.health_reason or latest_health.get("reason") or ""),
             "blockers": list(latest_health.get("blockers") or []),
-            "mission_fsm_state": "S6 hover_hold" if phase != "not_started" else None,
-            "mission_fsm_substate": phase,
+            "mission_phase_state": "S6 hover_hold" if phase != "not_started" else None,
+            "mission_phase_substate": phase,
             "runtime_phase_alias": latest_health.get("runtime_phase_alias", "hover_hold"),
             "observed_sec": hover.health_observed_sec,
             "stable_sec": hover.health_stable_sec,
