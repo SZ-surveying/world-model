@@ -10,7 +10,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	"navlab/orchestration-sim/internal/config"
 	"navlab/orchestration-sim/internal/tasks/helpers"
 )
@@ -222,7 +222,7 @@ func TestGenerateRuntimeArtifactsKeepsHoverRootReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	allowedDirs := map[string]bool{
-		"audits": true, "probes": true, "runtime": true, "profiles": true, "rosbag": true, "sitl": true,
+		"audits": true, "dag": true, "probes": true, "runtime": true, "profiles": true, "rosbag": true, "sitl": true,
 	}
 	for _, entry := range entries {
 		name := entry.Name()

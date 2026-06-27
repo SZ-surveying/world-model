@@ -12,7 +12,7 @@ import (
 
 	"github.com/foxglove/mcap/go/mcap"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	"navlab/orchestration-sim/internal/config"
 	simruntime "navlab/orchestration-sim/internal/runtime"
 	"navlab/orchestration-sim/internal/tasks/helpers"
@@ -74,6 +74,39 @@ func TestEvaluateResultGatesReadsProbeAndRosbagArtifacts(t *testing.T) {
 	}
 	if !stringSliceContains(evaluation.Blockers, "hover_mission_summary_missing") {
 		t.Fatalf("blockers = %#v, want hover_mission_summary_missing", evaluation.Blockers)
+	}
+}
+
+func TestEvaluateRosbagProfilesReadsMCAPWhenMetadataIsMissing(t *testing.T) {
+	artifactDir := t.TempDir()
+	rosbagDir := filepath.Join(artifactDir, "rosbag", "hover_rosbag")
+	if err := os.MkdirAll(rosbagDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTopicCountMCAP(t, filepath.Join(rosbagDir, "hover_rosbag_0.mcap"), "/slam/odom", 3)
+
+	profiles := evaluateRosbagProfiles(Plan{
+		Execution: helpers.ExecutionPlan{
+			RosbagRecords: []helpers.RosbagRecordPlan{
+				{Name: "hover_rosbag", OutputDir: filepath.Join("rosbag", "hover_rosbag"), Topics: []string{"/slam/odom"}},
+			},
+		},
+	}, artifactDir)
+
+	if len(profiles) != 1 {
+		t.Fatalf("profiles = %#v", profiles)
+	}
+	if !profiles[0].OK || !profiles[0].Exists {
+		t.Fatalf("profile = %#v, want ok existing MCAP fallback", profiles[0])
+	}
+	if profiles[0].MessageCounts["/slam/odom"] != 3 {
+		t.Fatalf("message counts = %#v", profiles[0].MessageCounts)
+	}
+	if profiles[0].MessageCountsSource != "mcap_stream" {
+		t.Fatalf("message counts source = %q", profiles[0].MessageCountsSource)
+	}
+	if len(profiles[0].MCAPPaths) != 1 || !strings.HasSuffix(profiles[0].MCAPPaths[0], "hover_rosbag_0.mcap") {
+		t.Fatalf("mcap paths = %#v", profiles[0].MCAPPaths)
 	}
 }
 
@@ -212,6 +245,37 @@ func TestEvaluateResultGatesIgnoresDiagnosticSlamHoverProbeFailure(t *testing.T)
 	}
 	if len(evaluation.ProbeOutputs) != 1 || !evaluation.ProbeOutputs[0].Exists || !evaluation.ProbeOutputs[0].Empty {
 		t.Fatalf("probe outputs = %#v, want existing empty diagnostic output", evaluation.ProbeOutputs)
+	}
+}
+
+func writeTopicCountMCAP(t *testing.T, path string, topic string, count int) {
+	t.Helper()
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	writer, err := mcap.NewWriter(file, &mcap.WriterOptions{Chunked: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteHeader(&mcap.Header{Profile: "ros2", Library: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteSchema(&mcap.Schema{ID: 1, Name: "std_msgs/msg/String", Encoding: "ros2msg", Data: []byte("string data\n")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteChannel(&mcap.Channel{ID: 1, SchemaID: 1, Topic: topic, MessageEncoding: "cdr"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < count; i++ {
+		stamp := uint64(i+1) * 1_000_000
+		if err := writer.WriteMessage(&mcap.Message{ChannelID: 1, LogTime: stamp, PublishTime: stamp, Data: []byte{0}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

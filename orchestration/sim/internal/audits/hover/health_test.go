@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 )
 
 func TestHoverMetricSpecClassifyUsesTargetHardCapAndReviewOnly(t *testing.T) {

@@ -1,4 +1,4 @@
-package artifactlayout
+package layout
 
 import (
 	"os"
@@ -7,6 +7,7 @@ import (
 
 const (
 	AuditsDir         = "audits"
+	DAGDir            = "dag"
 	ProbesDir         = "probes"
 	RuntimeDir        = "runtime"
 	RuntimeScriptsDir = "runtime/scripts"
@@ -29,7 +30,7 @@ var RootEntries = map[string]bool{
 }
 
 func Ensure(root string) error {
-	for _, dir := range []string{AuditsDir, ProbesDir, RuntimeScriptsDir, RuntimeConfigDir, RuntimeLogsDir, ProfilesDir, RosbagDir, SITLDir} {
+	for _, dir := range []string{AuditsDir, DAGDir, ProbesDir, RuntimeScriptsDir, RuntimeConfigDir, RuntimeLogsDir, ProfilesDir, RosbagDir, SITLDir} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			return err
 		}
@@ -38,6 +39,7 @@ func Ensure(root string) error {
 }
 
 func Audit(root, name string) string { return filepath.Join(root, AuditsDir, filepath.Base(name)) }
+func DAG(root, name string) string   { return filepath.Join(root, DAGDir, filepath.Base(name)) }
 func Probe(root, name string) string { return filepath.Join(root, ProbesDir, filepath.Base(name)) }
 func RuntimeScript(root, name string) string {
 	return filepath.Join(root, RuntimeScriptsDir, filepath.Base(name))
@@ -59,6 +61,9 @@ func SITL(root string, elems ...string) string {
 
 func AuditRel(name string) string {
 	return filepath.ToSlash(filepath.Join(AuditsDir, filepath.Base(name)))
+}
+func DAGRel(name string) string {
+	return filepath.ToSlash(filepath.Join(DAGDir, filepath.Base(name)))
 }
 func ProbeRel(name string) string {
 	return filepath.ToSlash(filepath.Join(ProbesDir, filepath.Base(name)))

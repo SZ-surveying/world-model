@@ -621,7 +621,11 @@ mod tests {
         );
 
         let tasks = loader.load_tasks(&project).expect("task configs");
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].id, "motor-debug");
+        let task_ids = tasks
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>();
+        assert!(task_ids.contains(&"motor-debug"));
+        assert!(task_ids.contains(&"hover"));
     }
 }

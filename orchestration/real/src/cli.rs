@@ -159,6 +159,9 @@ pub struct RunCommand {
     pub confirm_no_props: bool,
 
     #[arg(long)]
+    pub confirm_props_installed: bool,
+
+    #[arg(long)]
     pub task_config: Option<PathBuf>,
 
     #[arg(long)]
@@ -416,6 +419,11 @@ async fn run_task(loader: &Loader, registry: &Registry, command: RunCommand) -> 
     let task = registry
         .create(&command.task_id)
         .ok_or_else(|| RealOrchestrationError::UnknownTask(command.task_id.clone()))?;
+    let mut run_artifact_dir = command.artifact_dir.clone();
+    if command.with_doctor_chain && run_artifact_dir.is_none() && command.summary_path.is_none() {
+        run_artifact_dir = Some(default_run_artifact_dir(&project, &command.task_id));
+    }
+    let mut doctor_chain_summary = None;
     if command.with_doctor_chain {
         let environment = HostEnvironmentProbe;
         let topic_probe = HostTopicProbe;
@@ -424,19 +432,14 @@ async fn run_task(loader: &Loader, registry: &Registry, command: RunCommand) -> 
             &task_config,
             &environment,
             &topic_probe,
-            doctor_chain_input_from_run_command(&command),
+            doctor_chain_input_from_run_command(&command, run_artifact_dir.clone()),
         )?;
         print_title("NavLab Real Run Doctor Chain");
         print_status("doctor_chain", summary.ok);
         print_key_value("artifact_dir", &summary.artifact_dir);
         print_key_value("prepare_stopped", &summary.prepare_stopped.to_string());
         print_key_value("blockers", &summary.blockers.len().to_string());
-        if !summary.ok {
-            bail!(
-                "real run blocked by doctor chain: {}",
-                summary.blockers.join(", ")
-            );
-        }
+        doctor_chain_summary = Some(summary);
     }
     task.run(
         &project,
@@ -449,21 +452,42 @@ async fn run_task(loader: &Loader, registry: &Registry, command: RunCommand) -> 
                 motor_count: command.motor_count,
             },
             operator_confirmations: operator_confirmations_from_run_command(&command),
-            artifact_dir: command.artifact_dir,
+            artifact_dir: run_artifact_dir,
             summary_path: command.summary_path,
+            doctor_chain: doctor_chain_summary,
         },
     )
     .await
 }
 
-fn doctor_chain_input_from_run_command(command: &RunCommand) -> DoctorChainInput {
+fn doctor_chain_input_from_run_command(
+    command: &RunCommand,
+    run_artifact_dir: Option<PathBuf>,
+) -> DoctorChainInput {
     DoctorChainInput {
         prepare_dry_run: !command.allow_live_prepare,
         allow_live_prepare: command.allow_live_prepare,
         upstream_json: command.upstream_json.clone(),
-        artifact_dir: command.doctor_artifact_dir.clone(),
+        artifact_dir: command.doctor_artifact_dir.clone().or(run_artifact_dir),
         summary_path: None,
     }
+}
+
+fn default_run_artifact_dir(project: &crate::config::ProjectConfig, task_id: &str) -> PathBuf {
+    project.paths.artifact_root.join(task_id).join(run_id())
+}
+
+fn run_id() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    )
 }
 
 fn operator_confirmations_from_run_command(command: &RunCommand) -> OperatorConfirmations {
@@ -475,6 +499,10 @@ fn operator_confirmations_from_run_command(command: &RunCommand) -> OperatorConf
         kill_switch: confirmation_value("NAVLAB_CONFIRM_KILL_SWITCH", command.confirm_kill_switch),
         safe_area: confirmation_value("NAVLAB_CONFIRM_SAFE_AREA", command.confirm_safe_area),
         no_props: confirmation_value("NAVLAB_CONFIRM_NO_PROPS", command.confirm_no_props),
+        props_installed: confirmation_value(
+            "NAVLAB_CONFIRM_PROPS_INSTALLED",
+            command.confirm_props_installed,
+        ),
     }
 }
 
@@ -512,13 +540,14 @@ mod tests {
             confirm_kill_switch: false,
             confirm_safe_area: false,
             confirm_no_props: false,
+            confirm_props_installed: false,
             task_config: None,
             motor_percent: None,
             motor_sec: None,
             motor_count: None,
         };
 
-        let input = doctor_chain_input_from_run_command(&command);
+        let input = doctor_chain_input_from_run_command(&command, None);
 
         assert!(input.prepare_dry_run);
         assert!(!input.allow_live_prepare);
@@ -529,6 +558,66 @@ mod tests {
         assert_eq!(
             input.artifact_dir.as_deref(),
             Some(std::path::Path::new("chain"))
+        );
+    }
+
+    #[test]
+    fn run_doctor_chain_input_uses_run_artifact_dir_when_no_doctor_dir() {
+        let command = RunCommand {
+            task_id: "motor-debug".to_string(),
+            dry_run: false,
+            with_doctor_chain: true,
+            allow_live_prepare: false,
+            upstream_json: None,
+            doctor_artifact_dir: None,
+            artifact_dir: None,
+            summary_path: None,
+            confirm_manual_takeover: false,
+            confirm_kill_switch: false,
+            confirm_safe_area: false,
+            confirm_no_props: false,
+            confirm_props_installed: false,
+            task_config: None,
+            motor_percent: None,
+            motor_sec: None,
+            motor_count: None,
+        };
+
+        let input = doctor_chain_input_from_run_command(&command, Some("run-artifacts".into()));
+
+        assert_eq!(
+            input.artifact_dir.as_deref(),
+            Some(std::path::Path::new("run-artifacts"))
+        );
+    }
+
+    #[test]
+    fn run_doctor_chain_input_prefers_explicit_doctor_artifact_dir() {
+        let command = RunCommand {
+            task_id: "motor-debug".to_string(),
+            dry_run: false,
+            with_doctor_chain: true,
+            allow_live_prepare: false,
+            upstream_json: None,
+            doctor_artifact_dir: Some("doctor-artifacts".into()),
+            artifact_dir: None,
+            summary_path: None,
+            confirm_manual_takeover: false,
+            confirm_kill_switch: false,
+            confirm_safe_area: false,
+            confirm_no_props: false,
+            confirm_props_installed: false,
+            task_config: None,
+            motor_percent: None,
+            motor_sec: None,
+            motor_count: None,
+        };
+
+        let input = doctor_chain_input_from_run_command(&command, Some("run-artifacts".into()));
+
+        assert_eq!(
+            input.artifact_dir.as_deref(),
+            Some(std::path::Path::new("doctor-artifacts"))
         );
     }
 
@@ -547,13 +636,14 @@ mod tests {
             confirm_kill_switch: false,
             confirm_safe_area: false,
             confirm_no_props: false,
+            confirm_props_installed: false,
             task_config: None,
             motor_percent: None,
             motor_sec: None,
             motor_count: None,
         };
 
-        let input = doctor_chain_input_from_run_command(&command);
+        let input = doctor_chain_input_from_run_command(&command, None);
 
         assert!(!input.prepare_dry_run);
         assert!(input.allow_live_prepare);
@@ -574,6 +664,7 @@ mod tests {
             confirm_kill_switch: true,
             confirm_safe_area: true,
             confirm_no_props: true,
+            confirm_props_installed: true,
             task_config: None,
             motor_percent: None,
             motor_sec: None,
@@ -586,6 +677,7 @@ mod tests {
         assert!(confirmations.kill_switch);
         assert!(confirmations.safe_area);
         assert!(confirmations.no_props);
+        assert!(confirmations.props_installed);
     }
 
     #[test]

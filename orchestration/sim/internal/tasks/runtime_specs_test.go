@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	"navlab/orchestration-sim/internal/config"
 	simruntime "navlab/orchestration-sim/internal/runtime"
 	"navlab/orchestration-sim/internal/tasks/helpers"

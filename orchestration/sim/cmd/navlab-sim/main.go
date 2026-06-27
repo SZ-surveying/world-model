@@ -12,8 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
 	"navlab/orchestration-sim/internal/artifacts"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	hoveraudit "navlab/orchestration-sim/internal/audits/hover"
 	"navlab/orchestration-sim/internal/config"
 	simfoxglove "navlab/orchestration-sim/internal/foxglove"
@@ -40,6 +40,7 @@ type preparedTaskRun struct {
 	Result             artifacts.DryRunResult
 	GeneratedArtifacts []tasks.GeneratedRuntimeArtifact
 	RuntimeSpecs       tasks.RuntimeSpecBundle
+	WorkflowBundle     tasks.SimWorkflowBundle
 }
 
 func main() {
@@ -153,6 +154,7 @@ func newShowTaskCommand(ctx *appContext) *cobra.Command {
 func newRunCommand(ctx *appContext) *cobra.Command {
 	var dryRun bool
 	var tuiMode bool
+	var livePreflight bool
 	var durationSec float64
 	var simulationProfile string
 	var hoverSpanTargetM float64
@@ -169,6 +171,7 @@ func newRunCommand(ctx *appContext) *cobra.Command {
 				args[0],
 				dryRun,
 				tuiMode,
+				livePreflight,
 				ctx.artifactRoot,
 				tasks.PlanOptions{
 					DurationSec:       durationSec,
@@ -181,6 +184,7 @@ func newRunCommand(ctx *appContext) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the task plan without starting runtime services")
 	cmd.Flags().BoolVar(&tuiMode, "tui", false, "open the replay TUI after dry-run artifact generation")
+	cmd.Flags().BoolVar(&livePreflight, "live-preflight", false, "probe Docker daemon, image availability, and networks without starting runtime services")
 	cmd.Flags().Float64Var(&durationSec, "duration-sec", 0, "override task duration in seconds")
 	cmd.Flags().StringVar(&simulationProfile, "simulation-profile", "", "override simulation profile")
 	cmd.Flags().Float64Var(&hoverSpanTargetM, "hover-span-target-m", 0, "override hover XY span SLO target in meters")
@@ -231,7 +235,7 @@ func newBuildCommand(ctx *appContext) *cobra.Command {
 	cmd.Flags().StringVar(&image, "image", "", "build one image inside the selected infra or runtime group")
 	cmd.Flags().StringVar(&tag, "tag", "", "override configured NavLab image tag")
 	cmd.Flags().StringVar(&distro, "distro", "", "override ROS distro; defaults to NAVLAB_SIM_DISTRO or humble")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print docker build commands without running them")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print Docker SDK image build plans without running them")
 	return cmd
 }
 
@@ -614,7 +618,7 @@ func buildImages(loader config.Loader, kind string, image string, tag string, di
 		fmt.Println(ui.KeyValue("dockerfile", spec.Dockerfile))
 		fmt.Println(ui.KeyValue("target", spec.Target))
 		fmt.Println(ui.KeyValue("image", spec.Image))
-		fmt.Println(ui.KeyValue("command", spec.Command))
+		fmt.Println(ui.KeyValue("sdk_plan", spec.Command))
 	}
 	if !dryRun {
 		fmt.Println(ui.StatusOK("NavLab image build completed"))
@@ -876,6 +880,7 @@ func runTask(
 	taskID string,
 	dryRun bool,
 	tuiMode bool,
+	livePreflight bool,
 	artifactRootOverride string,
 	options tasks.PlanOptions,
 ) error {
@@ -884,17 +889,20 @@ func runTask(
 			return err
 		}
 	}
-	prepared, err := prepareTaskRun(loader, registry, helperRegistry, taskID, dryRun, artifactRootOverride, options)
+	prepared, err := prepareTaskRun(loader, registry, helperRegistry, taskID, dryRun, artifactRootOverride, options, !dryRun || livePreflight)
 	if err != nil {
 		return err
+	}
+	if prepared.WorkflowBundle.DoctorResult.Blocked && !dryRun {
+		return fmt.Errorf("sim workflow blocked before runtime-execute: %s", strings.Join(prepared.WorkflowBundle.DoctorResult.Blockers, "; "))
 	}
 	if !dryRun {
 		if tuiMode {
 			return simtui.RunLive(prepared.Result.ArtifactDir, func(sink tasks.RuntimeEventSink) error {
-				return runLiveTask(prepared.Project, prepared.TaskRuntimeConfig, prepared.Plan, prepared.Result, prepared.GeneratedArtifacts, prepared.RuntimeSpecs, sink, false)
+				return runLiveTask(prepared.Project, prepared.TaskRuntimeConfig, prepared.Plan, prepared.Result, prepared.GeneratedArtifacts, prepared.RuntimeSpecs, prepared.WorkflowBundle, sink, false)
 			}, simtui.RunOptions{RequireTTY: false})
 		}
-		return runLiveTask(prepared.Project, prepared.TaskRuntimeConfig, prepared.Plan, prepared.Result, prepared.GeneratedArtifacts, prepared.RuntimeSpecs, nil, true)
+		return runLiveTask(prepared.Project, prepared.TaskRuntimeConfig, prepared.Plan, prepared.Result, prepared.GeneratedArtifacts, prepared.RuntimeSpecs, prepared.WorkflowBundle, nil, true)
 	}
 	if tuiMode {
 		return simtui.RunReplay(prepared.Result.ArtifactDir, simtui.RunOptions{RequireTTY: true})
@@ -922,6 +930,10 @@ func runTask(
 	fmt.Println(ui.KeyValue("runtime_services", len(prepared.RuntimeSpecs.Services)))
 	fmt.Println(ui.KeyValue("runtime_probes", len(prepared.RuntimeSpecs.Probes)))
 	fmt.Println(ui.KeyValue("runtime_rosbags", len(prepared.RuntimeSpecs.Rosbags)))
+	fmt.Println(ui.Subtitle("Workflow Nodes"))
+	for _, node := range prepared.WorkflowBundle.Workflow.Nodes {
+		fmt.Printf("%s %s\n", ui.TaskID(node.ID), node.Status)
+	}
 	fmt.Println(ui.Subtitle("Helpers"))
 	for _, helper := range prepared.Plan.Helpers {
 		status := helper.MigrationStatus
@@ -948,7 +960,7 @@ func doctorTask(
 	taskID string,
 	artifactRootOverride string,
 ) error {
-	prepared, err := prepareTaskRun(loader, registry, helperRegistry, taskID, true, artifactRootOverride, tasks.PlanOptions{})
+	prepared, err := prepareTaskRun(loader, registry, helperRegistry, taskID, true, artifactRootOverride, tasks.PlanOptions{}, false)
 	if err != nil {
 		return err
 	}
@@ -981,6 +993,7 @@ func prepareTaskRun(
 	dryRun bool,
 	artifactRootOverride string,
 	options tasks.PlanOptions,
+	liveResourceCheck bool,
 ) (preparedTaskRun, error) {
 	project, err := loader.LoadProject()
 	if err != nil {
@@ -1050,6 +1063,22 @@ func prepareTaskRun(
 	}); err != nil {
 		return preparedTaskRun{}, fmt.Errorf("failed to update runtime plan manifest for %q: %w", taskID, err)
 	}
+	workflowBundle := tasks.BuildSimWorkflowBundleWithOptions(
+		project,
+		taskConfig,
+		taskRuntimeConfig,
+		plan,
+		result.RunID,
+		artifactRoot,
+		result.ArtifactDir,
+		generatedArtifacts,
+		runtimeSpecs,
+		runtimePlanPath,
+		tasks.SimWorkflowOptions{LiveResourceCheck: liveResourceCheck},
+	)
+	if err := writeSimWorkflowArtifacts(result.ManifestPath, result.ArtifactDir, workflowBundle); err != nil {
+		return preparedTaskRun{}, fmt.Errorf("failed to write sim workflow artifacts for %q: %w", taskID, err)
+	}
 	return preparedTaskRun{
 		Project:            project,
 		TaskConfig:         taskConfig,
@@ -1058,7 +1087,42 @@ func prepareTaskRun(
 		Result:             result,
 		GeneratedArtifacts: generatedArtifacts,
 		RuntimeSpecs:       runtimeSpecs,
+		WorkflowBundle:     workflowBundle,
 	}, nil
+}
+
+func writeSimWorkflowArtifacts(manifestPath string, artifactDir string, bundle tasks.SimWorkflowBundle) error {
+	entries := []struct {
+		artifactType string
+		fileName     string
+		value        any
+	}{
+		{artifactType: "preflight_summary", fileName: "preflight_summary.json", value: bundle.Preflight},
+		{artifactType: "prepare_summary", fileName: "prepare_summary.json", value: bundle.Prepare},
+		{artifactType: "common_doctor_summary", fileName: "common_doctor_summary.json", value: bundle.CommonDoctor},
+		{artifactType: "task_doctor_summary", fileName: "task_doctor_summary.json", value: bundle.TaskDoctor},
+		{artifactType: "workflow_summary", fileName: "workflow_summary.json", value: bundle.Workflow},
+		{artifactType: "doctor_result", fileName: "doctor_result.json", value: bundle.DoctorResult},
+	}
+	generated := make([]artifacts.GeneratedArtifact, 0, len(entries))
+	for _, entry := range entries {
+		path := artifactlayout.DAG(artifactDir, entry.fileName)
+		if err := artifacts.WriteJSONArtifact(path, entry.value); err != nil {
+			return err
+		}
+		generated = append(generated, artifacts.GeneratedArtifact{Type: entry.artifactType, Path: path})
+	}
+	return artifacts.AppendManifestArtifacts(manifestPath, artifactDir, generated)
+}
+
+func writeSimWorkflowResultArtifacts(artifactDir string, workflow tasks.SimWorkflowSummary, doctorResult tasks.SimDoctorResult) error {
+	if err := artifacts.WriteJSONArtifact(artifactlayout.DAG(artifactDir, "workflow_summary.json"), workflow); err != nil {
+		return err
+	}
+	if err := artifacts.WriteJSONArtifact(artifactlayout.DAG(artifactDir, "doctor_result.json"), doctorResult); err != nil {
+		return err
+	}
+	return nil
 }
 
 func runLiveTask(
@@ -1068,6 +1132,7 @@ func runLiveTask(
 	result artifacts.DryRunResult,
 	generatedArtifacts []tasks.GeneratedRuntimeArtifact,
 	runtimeSpecs tasks.RuntimeSpecBundle,
+	workflowBundle tasks.SimWorkflowBundle,
 	eventSink tasks.RuntimeEventSink,
 	printSummary bool,
 ) error {
@@ -1096,6 +1161,12 @@ func runLiveTask(
 	manifestEntries := []artifacts.GeneratedArtifact{
 		{Type: "summary", Path: summaryPath},
 	}
+	liveCommonDoctor := tasks.BuildSimLiveCommonDoctorSummary(project, plan, result.RunID, runtimeSpecs, execution, executionErr)
+	liveCommonDoctorPath := artifactlayout.DAG(result.ArtifactDir, "common_doctor_live_summary.json")
+	if err := artifacts.WriteJSONArtifact(liveCommonDoctorPath, liveCommonDoctor); err != nil {
+		return fmt.Errorf("failed to write live common doctor summary for %q: %w", plan.TaskID, err)
+	}
+	manifestEntries = append(manifestEntries, artifacts.GeneratedArtifact{Type: "common_doctor_live_summary", Path: liveCommonDoctorPath})
 	if plan.TaskID == "hover" {
 		if health, healthPath, err := tasks.BuildAndWriteHoverHealthSummaryArtifact(result.ArtifactDir); err != nil {
 			summary.Warnings = append(summary.Warnings, "hover_health_audit_failed:"+err.Error())
@@ -1110,6 +1181,11 @@ func runLiveTask(
 			}
 			manifestEntries = append(manifestEntries, artifacts.GeneratedArtifact{Type: "hover_health_summary", Path: healthPath})
 		}
+	}
+	liveWorkflow := tasks.BuildSimLiveWorkflowSummary(workflowBundle.Workflow, summary)
+	liveDoctorResult := tasks.BuildSimDoctorResult(plan.TaskID, result.RunID, liveWorkflow.Nodes)
+	if err := writeSimWorkflowResultArtifacts(result.ArtifactDir, liveWorkflow, liveDoctorResult); err != nil {
+		return fmt.Errorf("failed to rewrite live workflow artifacts for %q: %w", plan.TaskID, err)
 	}
 	emitTaskEvent(eventSink, plan.TaskID, result.RunID, tasks.RuntimeEvent{
 		Phase:    "summary.written",

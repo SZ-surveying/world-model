@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 )
 
 type HoverHealthFinding struct {

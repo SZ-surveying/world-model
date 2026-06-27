@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	"navlab/orchestration-sim/internal/config"
 	"navlab/orchestration-sim/internal/tasks"
 	"navlab/orchestration-sim/internal/tasks/helpers"
@@ -22,6 +22,7 @@ func TestPrepareTaskRunEmitsGoldenCompatibleContractJSON(t *testing.T) {
 		true,
 		t.TempDir(),
 		tasks.PlanOptions{},
+		false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -57,6 +58,15 @@ func TestPrepareTaskRunEmitsGoldenCompatibleContractJSON(t *testing.T) {
 	if !artifactTypeExists(manifest, "runtime_plan") {
 		t.Fatalf("manifest missing runtime_plan artifact: %#v", manifest["artifacts"])
 	}
+	for _, artifactType := range []string{"preflight_summary", "prepare_summary", "common_doctor_summary", "task_doctor_summary", "workflow_summary", "doctor_result"} {
+		path := artifactTypePath(t, manifest, artifactType)
+		if !strings.HasPrefix(filepath.ToSlash(path), "dag/") {
+			t.Fatalf("%s path = %s, want dag directory", artifactType, path)
+		}
+		if _, err := os.Stat(filepath.Join(prepared.Result.ArtifactDir, path)); err != nil {
+			t.Fatalf("%s path %s stat error = %v", artifactType, path, err)
+		}
+	}
 }
 
 func TestRunTaskTUILiveRequiresTTYBeforePreparingArtifacts(t *testing.T) {
@@ -68,6 +78,7 @@ func TestRunTaskTUILiveRequiresTTYBeforePreparingArtifacts(t *testing.T) {
 		"hover",
 		false,
 		true,
+		false,
 		artifactRoot,
 		tasks.PlanOptions{},
 	)
@@ -153,4 +164,20 @@ func artifactTypeExists(manifest map[string]any, artifactType string) bool {
 		}
 	}
 	return false
+}
+
+func artifactTypePath(t *testing.T, manifest map[string]any, artifactType string) string {
+	t.Helper()
+	for _, raw := range manifest["artifacts"].([]any) {
+		item := raw.(map[string]any)
+		if item["type"] == artifactType {
+			path, ok := item["path"].(string)
+			if !ok || path == "" {
+				t.Fatalf("%s path = %#v", artifactType, item["path"])
+			}
+			return path
+		}
+	}
+	t.Fatalf("manifest missing %s artifact: %#v", artifactType, manifest["artifacts"])
+	return ""
 }

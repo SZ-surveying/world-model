@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	"navlab/orchestration-sim/internal/config"
 	simimages "navlab/orchestration-sim/internal/images"
 	simruntime "navlab/orchestration-sim/internal/runtime"

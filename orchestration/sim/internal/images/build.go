@@ -13,6 +13,10 @@ import (
 	"strings"
 	"time"
 
+	dockertypes "github.com/docker/docker/api/types"
+	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/archive"
+
 	"navlab/orchestration-sim/internal/config"
 )
 
@@ -49,7 +53,7 @@ type BuildOptions struct {
 	DryRun bool
 	Stdout io.Writer
 	Stderr io.Writer
-	Runner CommandRunner
+	Client DockerBuildClient
 }
 
 type BuildSpec struct {
@@ -70,17 +74,15 @@ type BuildResult struct {
 	Specs  []BuildSpec `json:"specs"`
 }
 
-type CommandRunner interface {
-	Run(ctx context.Context, name string, args []string, stdout io.Writer, stderr io.Writer) error
+type DockerBuildClient interface {
+	ImageBuild(ctx context.Context, buildContext io.Reader, options dockertypes.ImageBuildOptions) (dockertypes.ImageBuildResponse, error)
 }
 
-type ExecRunner struct{}
-
-func (ExecRunner) Run(ctx context.Context, name string, args []string, stdout io.Writer, stderr io.Writer) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	return cmd.Run()
+func NewSDKDockerBuildClient() (*dockerclient.Client, error) {
+	return dockerclient.NewClientWithOpts(
+		dockerclient.FromEnv,
+		dockerclient.WithAPIVersionNegotiation(),
+	)
 }
 
 func Build(ctx context.Context, project config.ProjectConfig, options BuildOptions) (BuildResult, error) {
@@ -92,9 +94,13 @@ func Build(ctx context.Context, project config.ProjectConfig, options BuildOptio
 	if options.DryRun {
 		return result, nil
 	}
-	runner := options.Runner
-	if runner == nil {
-		runner = ExecRunner{}
+	client := options.Client
+	if client == nil {
+		var err error
+		client, err = NewSDKDockerBuildClient()
+		if err != nil {
+			return result, err
+		}
 	}
 	stdout := options.Stdout
 	if stdout == nil {
@@ -108,11 +114,33 @@ func Build(ctx context.Context, project config.ProjectConfig, options BuildOptio
 		if _, err := fmt.Fprintf(stdout, "Building NavLab %s image %s\n", spec.Kind, spec.Image); err != nil {
 			return result, err
 		}
-		if err := runner.Run(ctx, spec.Command[0], spec.Command[1:], stdout, stderr); err != nil {
+		if err := buildWithSDK(ctx, client, spec, stdout, stderr); err != nil {
 			return result, fmt.Errorf("build %s image %s: %w", spec.Kind, spec.Image, err)
 		}
 	}
 	return result, nil
+}
+
+func buildWithSDK(ctx context.Context, client DockerBuildClient, spec BuildSpec, stdout io.Writer, stderr io.Writer) error {
+	contextTar, err := archive.TarWithOptions(spec.Context, &archive.TarOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = contextTar.Close() }()
+	options, err := dockerImageBuildOptions(spec)
+	if err != nil {
+		return err
+	}
+	response, err := client.ImageBuild(ctx, contextTar, options)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if _, err := io.Copy(stdout, response.Body); err != nil {
+		_, _ = fmt.Fprintf(stderr, "failed to copy Docker SDK build output: %v\n", err)
+		return err
+	}
+	return nil
 }
 
 func ResolveBuildSpecsWithOptions(project config.ProjectConfig, options BuildOptions) ([]BuildSpec, error) {
@@ -205,9 +233,9 @@ func buildSpec(project config.ProjectConfig, kind string, configKey string, imag
 	}
 	fullImage := image.Repository + ":" + tag
 	command := []string{
-		"docker",
+		"docker-sdk",
 		"build",
-		"-f", dockerfilePath,
+		"-f", dockerfilePathForDisplay(contextPath, dockerfilePath),
 	}
 	if target := strings.TrimSpace(image.Target); target != "" {
 		command = append(command, "--target", target)
@@ -231,6 +259,55 @@ func buildSpec(project config.ProjectConfig, kind string, configKey string, imag
 		Image:      fullImage,
 		Command:    command,
 	}, nil
+}
+
+func dockerImageBuildOptions(spec BuildSpec) (dockertypes.ImageBuildOptions, error) {
+	dockerfile, err := dockerfileForBuildContext(spec.Context, spec.Dockerfile)
+	if err != nil {
+		return dockertypes.ImageBuildOptions{}, err
+	}
+	options := dockertypes.ImageBuildOptions{
+		Tags:       []string{spec.Image},
+		Dockerfile: dockerfile,
+		BuildArgs:  buildArgMapFromSpec(spec),
+		Remove:     true,
+	}
+	if spec.Target != "" {
+		options.Target = spec.Target
+	}
+	return options, nil
+}
+
+func dockerfileForBuildContext(contextPath string, dockerfilePath string) (string, error) {
+	rel, err := filepath.Rel(contextPath, dockerfilePath)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return "", fmt.Errorf("dockerfile %s is outside build context %s", dockerfilePath, contextPath)
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+func dockerfilePathForDisplay(contextPath string, dockerfilePath string) string {
+	rel, err := dockerfileForBuildContext(contextPath, dockerfilePath)
+	if err != nil {
+		return dockerfilePath
+	}
+	return rel
+}
+
+func buildArgMapFromSpec(spec BuildSpec) map[string]*string {
+	values := map[string]*string{}
+	for _, arg := range spec.Command {
+		key, value, ok := strings.Cut(arg, "=")
+		if !ok || key == "" {
+			continue
+		}
+		copied := value
+		values[key] = &copied
+	}
+	return values
 }
 
 func resolveWorkspacePath(workspaceRoot string, value string) (string, error) {

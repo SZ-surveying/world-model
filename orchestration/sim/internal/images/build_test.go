@@ -9,17 +9,23 @@ import (
 	"strings"
 	"testing"
 
+	dockertypes "github.com/docker/docker/api/types"
+
 	"navlab/orchestration-sim/internal/config"
 )
 
-type recordingRunner struct {
-	calls []string
+type fakeDockerBuildClient struct {
+	calls []dockertypes.ImageBuildOptions
 	err   error
 }
 
-func (runner *recordingRunner) Run(ctx context.Context, name string, args []string, stdout io.Writer, stderr io.Writer) error {
-	runner.calls = append(runner.calls, name+" "+strings.Join(args, " "))
-	return runner.err
+func (client *fakeDockerBuildClient) ImageBuild(ctx context.Context, buildContext io.Reader, options dockertypes.ImageBuildOptions) (dockertypes.ImageBuildResponse, error) {
+	_, _ = ctx, buildContext
+	client.calls = append(client.calls, options)
+	if client.err != nil {
+		return dockertypes.ImageBuildResponse{}, client.err
+	}
+	return dockertypes.ImageBuildResponse{Body: io.NopCloser(strings.NewReader("sdk build output\n"))}, nil
 }
 
 func TestResolveBuildSpecsAllUsesConfiguredImages(t *testing.T) {
@@ -49,8 +55,8 @@ func TestResolveBuildSpecsAllUsesConfiguredImages(t *testing.T) {
 		t.Fatalf("image = %q", first.Image)
 	}
 	wantCommand := []string{
-		"docker", "build",
-		"-f", "/workspace/docker/images/base/ros-base.Dockerfile",
+		"docker-sdk", "build",
+		"-f", "docker/images/base/ros-base.Dockerfile",
 		"--build-arg", "INFRA_TAG=test-tag",
 		"--build-arg", "ROS_DISTRO=humble",
 		"-t", "navlab/ros-base:test-tag",
@@ -214,13 +220,13 @@ func TestResolveBuildSpecsRejectsUnsupportedTagPolicy(t *testing.T) {
 
 func TestBuildDryRunDoesNotRunDocker(t *testing.T) {
 	t.Setenv("NAVLAB_SIM_DISTRO", "")
-	runner := &recordingRunner{}
+	client := &fakeDockerBuildClient{}
 	result, err := Build(context.Background(), testProject(), BuildOptions{
 		Kind:   KindRuntime,
 		Image:  KindSlam,
 		Tag:    "local",
 		DryRun: true,
-		Runner: runner,
+		Client: client,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -228,45 +234,55 @@ func TestBuildDryRunDoesNotRunDocker(t *testing.T) {
 	if len(result.Specs) != 1 || result.Specs[0].Kind != KindSlam {
 		t.Fatalf("result = %#v", result)
 	}
-	if len(runner.calls) != 0 {
-		t.Fatalf("runner calls = %#v", runner.calls)
+	if len(client.calls) != 0 {
+		t.Fatalf("client calls = %#v", client.calls)
 	}
 }
 
-func TestBuildRunsDockerCommands(t *testing.T) {
+func TestBuildRunsDockerSDKBuild(t *testing.T) {
 	t.Setenv("NAVLAB_SIM_DISTRO", "")
-	runner := &recordingRunner{}
+	client := &fakeDockerBuildClient{}
 	var stdout bytes.Buffer
 	_, err := Build(context.Background(), testProject(), BuildOptions{
 		Kind:   KindRuntime,
 		Image:  KindGazeboSensor,
 		Tag:    "local",
-		Runner: runner,
+		Client: client,
 		Stdout: &stdout,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.calls) != 1 {
-		t.Fatalf("runner calls = %#v", runner.calls)
+	if len(client.calls) != 1 {
+		t.Fatalf("client calls = %#v", client.calls)
 	}
-	if !strings.Contains(runner.calls[0], "docker build") || !strings.Contains(runner.calls[0], "navlab/gazebo-sensor:local") {
-		t.Fatalf("runner call = %q", runner.calls[0])
+	call := client.calls[0]
+	if !reflect.DeepEqual(call.Tags, []string{"navlab/gazebo-sensor:local"}) {
+		t.Fatalf("tags = %#v", call.Tags)
+	}
+	if call.Dockerfile != "docker/images/runtime/gazebo-sensor.Dockerfile" {
+		t.Fatalf("dockerfile = %q", call.Dockerfile)
+	}
+	if call.BuildArgs["ROS_DISTRO"] == nil || *call.BuildArgs["ROS_DISTRO"] != "humble" {
+		t.Fatalf("build args = %#v", call.BuildArgs)
 	}
 	if !strings.Contains(stdout.String(), "Building NavLab gazebo-sensor image") {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "sdk build output") {
+		t.Fatalf("stdout missing SDK output = %q", stdout.String())
+	}
 }
 
-func TestBuildReturnsRunnerError(t *testing.T) {
+func TestBuildReturnsSDKError(t *testing.T) {
 	t.Setenv("NAVLAB_SIM_DISTRO", "")
-	runner := &recordingRunner{err: errors.New("docker failed")}
+	client := &fakeDockerBuildClient{err: errors.New("docker sdk failed")}
 	_, err := Build(context.Background(), testProject(), BuildOptions{
 		Kind:   KindRuntime,
 		Image:  KindCompanion,
-		Runner: runner,
+		Client: client,
 	})
-	if err == nil || !strings.Contains(err.Error(), "docker failed") {
+	if err == nil || !strings.Contains(err.Error(), "docker sdk failed") {
 		t.Fatalf("err = %v", err)
 	}
 }

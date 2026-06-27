@@ -1,4 +1,5 @@
 mod motor_debug;
+mod real_hover;
 mod registry;
 
 use std::path::PathBuf;
@@ -6,6 +7,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::config::{ProjectConfig, TaskConfig};
+use crate::workflows::DoctorChainSummary;
 
 pub use motor_debug::build_plan as build_motor_debug_plan;
 pub use motor_debug::{
@@ -16,6 +18,7 @@ pub use motor_debug::{
     arm_disarm_command, command_rejection_blockers, evaluate_command_ack, evaluate_guided_mode,
     motor_debug_command_plan,
 };
+pub use real_hover::{REAL_HOVER_SUMMARY_SCHEMA_VERSION, RealHoverPlan, RealHoverTask};
 pub use registry::Registry;
 
 #[derive(Debug, Clone, Default)]
@@ -25,6 +28,7 @@ pub struct RunOptions {
     pub operator_confirmations: OperatorConfirmations,
     pub artifact_dir: Option<PathBuf>,
     pub summary_path: Option<PathBuf>,
+    pub doctor_chain: Option<DoctorChainSummary>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

@@ -12,7 +12,7 @@ import (
 	"github.com/foxglove/mcap/go/mcap"
 	"github.com/klauspost/compress/zstd"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 )
 
 type hoverContractSpec struct {

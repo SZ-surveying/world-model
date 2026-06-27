@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use crate::config::TaskConfig;
 use crate::errors::RealOrchestrationError;
-use crate::tasks::{ConfiguredTask, MotorDebugTask, RealTask};
+use crate::tasks::{ConfiguredTask, MotorDebugTask, RealHoverTask, RealTask};
 
 #[derive(Clone)]
 pub struct Registry {
@@ -18,6 +18,7 @@ impl Default for Registry {
             tasks: BTreeMap::new(),
         };
         registry.register(MotorDebugTask);
+        registry.register(RealHoverTask);
         registry
     }
 }
@@ -56,9 +57,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_exposes_motor_debug_only() {
+    fn registry_exposes_motor_debug_and_hover() {
         let registry = Registry::default();
         assert!(registry.create("motor-debug").is_some());
-        assert!(registry.create("hover").is_none());
+        assert!(registry.create("hover").is_some());
+        assert!(registry.create("unknown").is_none());
     }
 }

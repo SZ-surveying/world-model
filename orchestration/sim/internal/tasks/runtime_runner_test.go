@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	"navlab/orchestration-sim/internal/config"
 	simruntime "navlab/orchestration-sim/internal/runtime"
 )
@@ -29,6 +29,11 @@ type fakeRuntimeBackend struct {
 
 type captureEventSink struct {
 	events []RuntimeEvent
+}
+
+type finalizingFakeRuntimeBackend struct {
+	*fakeRuntimeBackend
+	finalizeErr error
 }
 
 func (sink *captureEventSink) EmitRuntimeEvent(event RuntimeEvent) {
@@ -91,6 +96,22 @@ func (backend *fakeRuntimeBackend) Logs(handle simruntime.RuntimeHandle, tail in
 	return "", nil
 }
 
+func (backend *finalizingFakeRuntimeBackend) FinalizeRosbag(handle simruntime.RuntimeHandle) (simruntime.RuntimeHandle, error) {
+	backend.events = append(backend.events, "finalize-rosbag:"+handle.ServiceName)
+	if backend.finalizeErr != nil {
+		handle.FinalizeStatus = "finalize_timeout"
+		return handle, backend.finalizeErr
+	}
+	exitCode := 0
+	handle.FinalizeOK = true
+	handle.FinalizeStatus = "metadata_ready"
+	handle.StopSignal = "SIGINT"
+	handle.WaitExitCode = &exitCode
+	handle.MetadataPath = "rosbag/metadata.yaml"
+	handle.MessageCountsSource = "metadata"
+	return handle, nil
+}
+
 func TestExecuteRuntimeSpecsStartsRunsWaitsAndCleansUp(t *testing.T) {
 	backend := newFakeRuntimeBackend()
 	result, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
@@ -120,6 +141,65 @@ func TestExecuteRuntimeSpecsStartsRunsWaitsAndCleansUp(t *testing.T) {
 		"stop:hover_rosbag",
 		"stop:slam",
 		"stop:gazebo",
+	})
+}
+
+func TestExecuteRuntimeSpecsFinalizesRosbagAfterPostTaskGrace(t *testing.T) {
+	backend := &finalizingFakeRuntimeBackend{fakeRuntimeBackend: newFakeRuntimeBackend()}
+	sink := &captureEventSink{}
+	result, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
+		Rosbags: []simruntime.RosbagSpec{{Name: "hover_rosbag"}},
+		Probes:  []simruntime.ProbeSpec{{Name: "slam_hover_probe", Required: true}},
+	}, RuntimeExecutionOptions{
+		WaitForRosbags:         true,
+		RosbagPostTaskGraceSec: 0.001,
+		TaskID:                 "hover",
+		EventSink:              sink,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRuntimeSpecs() error = %v", err)
+	}
+	assertEvents(t, backend.events, []string{
+		"start-rosbag:hover_rosbag",
+		"probe:slam_hover_probe",
+		"finalize-rosbag:hover_rosbag",
+		"stop:hover_rosbag",
+	})
+	if len(result.RosbagHandles) != 1 || !result.RosbagHandles[0].FinalizeOK || result.RosbagHandles[0].FinalizeStatus != "metadata_ready" {
+		t.Fatalf("rosbag handles = %#v", result.RosbagHandles)
+	}
+	phases := make([]string, 0, len(sink.events))
+	for _, event := range sink.events {
+		phases = append(phases, event.Phase)
+	}
+	for _, want := range []string{"rosbag.post_task_grace", "rosbag.finalizing", "rosbag.finalized"} {
+		if !containsString(phases, want) {
+			t.Fatalf("phases missing %q: %#v", want, phases)
+		}
+	}
+}
+
+func TestExecuteRuntimeSpecsBlocksOnRosbagFinalizeFailure(t *testing.T) {
+	backend := &finalizingFakeRuntimeBackend{
+		fakeRuntimeBackend: newFakeRuntimeBackend(),
+		finalizeErr:        errors.New("rosbag finalize timeout"),
+	}
+	_, err := ExecuteRuntimeSpecs(backend, RuntimeSpecBundle{
+		Rosbags: []simruntime.RosbagSpec{{Name: "hover_rosbag", LogPath: "hover_rosbag.log"}},
+		Probes:  []simruntime.ProbeSpec{{Name: "slam_hover_probe", Required: true}},
+	}, RuntimeExecutionOptions{
+		WaitForRosbags:         true,
+		RosbagPostTaskGraceSec: 0.001,
+	})
+	if err == nil || !strings.Contains(err.Error(), "finalize rosbag hover_rosbag") {
+		t.Fatalf("ExecuteRuntimeSpecs() error = %v, want finalize failure", err)
+	}
+	assertEvents(t, backend.events, []string{
+		"start-rosbag:hover_rosbag",
+		"probe:slam_hover_probe",
+		"finalize-rosbag:hover_rosbag",
+		"logs:hover_rosbag",
+		"stop:hover_rosbag",
 	})
 }
 

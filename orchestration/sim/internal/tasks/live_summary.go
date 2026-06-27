@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	"navlab/orchestration-sim/internal/config"
 
 	hoveraudit "navlab/orchestration-sim/internal/audits/hover"

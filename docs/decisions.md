@@ -1,5 +1,136 @@
 # Decisions
 
+## 2026-06-27: Go sim runtime uses Docker SDK only
+
+Decision: replace the Go sim Docker CLI runtime backend with a Docker SDK
+backend behind the existing `runtime.Backend` interface. Runtime-execute now
+uses SDK container create/start/wait/stop/logs/remove for services, probes, and
+rosbag recording. The shell `docker` backend is not retained as a production
+fallback.
+
+Basis: WF1.x already moved preflight/prepare resource evidence to the Docker
+SDK, and keeping a separate CLI runtime path would split service lifecycle,
+rosbag finalize behavior, and failure evidence across two backends.
+
+Reason: SDK-only runtime keeps Docker/Gazebo/SITL side effects inside the sim
+runtime package while preserving the task/runtime spec schema. Rosbag is now a
+runtime-owned lifecycle: start recorder, wait post-task grace, stop with SIGINT
+through Docker SDK, wait for finalize evidence, then clean up the container.
+
+Update: the Go sim image build path and official overlay source extraction also
+use Docker SDK APIs. `navlab-sim build` now calls `ImageBuild` directly, and
+prepare reads official baseline files through an SDK-started container probe.
+The remaining Docker CLI mentions in Go sim are configuration/backend names,
+docs, or tests that assert old CLI wrappers are absent.
+
+## 2026-06-26: Real hover MAVLink runtime FSM stays behind tests
+
+Decision: WF5B implements a Rust real hover MAVLink runtime FSM in
+`runtime::mavlink`, with `RealHoverRuntimeRequest`,
+`RealHoverRuntimeReport`, `run_real_hover_runtime`, and
+`real_hover_runtime`. The `run hover` live CLI path still fails closed with
+`real_hover_live_task_not_enabled` and does not call this runtime yet.
+
+Basis: the command sequence and task FSM need unit coverage before any live
+flight wiring. The current implementation can be tested against a fake MAVLink
+adapter for GUIDED, arm, takeoff, hover-health hold, hover hold, landing, and
+disarm without touching hardware.
+
+Reason: this separates runtime behavior design from live-flight enablement.
+WF5C/WF5D still need real SLAM, ExternalNav, rangefinder, landing evidence,
+flight rosbag, and hover-health gates before the CLI can safely invoke the
+hover runtime.
+
+## 2026-06-26: Real hover safety uses props-installed, not no-props
+
+Decision: real hover has its own final operator safety gate:
+manual takeover, kill switch, safe area, and props installed. `motor-debug`
+continues to require `no_props`, but `hover` ignores `no_props` and requires
+`--confirm-props-installed` or `NAVLAB_CONFIRM_PROPS_INSTALLED=true`.
+
+Basis: motor-debug is a no-props bench task. Real hover is a flight task, so
+using a `no_props` confirmation would encode the wrong physical boundary and
+could make a dry-run/no-props artifact look like a flight release gate.
+
+Reason: the hover summary now records
+`props_required_for_real_hover_no_no_props_shortcut`. Missing confirmations
+block as `blocked_by_operator_safety` before runtime. Passing all confirmations
+still does not enable live hover until the dedicated MAVLink hover runtime and
+evidence gates are implemented.
+
+## 2026-06-26: Real hover starts as dry-run design and fails closed live
+
+Decision: register Rust real `hover` as a dry-run design task first. It writes
+the same run artifact surface as `motor-debug` and a planned task FSM, but live
+execution returns `real_hover_live_task_not_enabled` before any GUIDED, arm, or
+takeoff command.
+
+Basis: WF5 should extend the real workflow/FSM/artifact template after
+`motor-debug`, but the live hover runtime still needs dedicated operator safety,
+props-installed semantics, hover-health stable-window evidence, landing
+evidence, and real flight rosbag handling.
+
+Reason: this gives real hover a concrete artifact contract without creating a
+false sense that live flight is implemented. The completion definition is
+layered: MAVLink ExternalNav plus FCU local-position evidence is primary;
+official DDS pose evidence can be a secondary crosscheck, not the sole gate.
+
+## 2026-06-26: Common task FSM semantics stay pure and language-local
+
+Decision: WF4 shares task FSM and policy semantics through pure data shapes,
+not through cross-language runtime imports. Python common now exposes
+`navlab.common.companion.mission.task_fsm` and `policy` helpers. Rust real uses
+`workflows::task_fsm` with the same `navlab.task_fsm.v1` JSON shape, while
+`motor-debug` keeps only task-specific evidence mapping.
+
+Basis: `navlab.common` is a Python package used by companion/sim runtime code,
+while `navlab-real` is a Rust binary. Directly importing Python common from the
+Rust real runtime would add packaging and execution coupling before the schema
+is stable.
+
+Reason: the useful common layer here is pure FSM/evidence/policy vocabulary:
+states, transitions, blockers, reason codes, operator confirmation semantics,
+deadline semantics, and target/hard-cap checks. Docker/Gazebo/SITL, serial,
+FCU, lidar, rangefinder, ROS topic sampling, and MAVLink IO remain in their
+own sim or real runtime packages.
+
+## 2026-06-26: Rust real motor-debug FSM uses coarse mission states
+
+Decision: record `motor-debug` as a task FSM with coarse states:
+`runtime_ready -> guided -> armed -> motor_spin_hold -> disarmed -> completed`.
+MAVLink request, ACK, heartbeat, mode observation, and shutdown evidence stay
+on transitions instead of becoming top-level FSM states.
+
+Basis: WF3 needs motor-debug to be auditable and fail-closed without turning
+the task body into a command log. The workflow DAG already owns
+`preflight -> prepare -> common-doctor -> task-doctor -> runtime-execute`; the
+task FSM should only describe where the mission body is.
+
+Reason: a small stable state set makes blocked summaries actionable:
+`failed_state=armed` means the task failed while entering the armed state, while
+the transition evidence still preserves the exact arm request, ACK, heartbeat,
+or blocker details needed for debugging.
+
+## 2026-06-26: Rust real motor-debug owns run workflow DAG artifacts
+
+Decision: make `navlab-real run motor-debug` write a run-level workflow DAG
+summary beside the task request, task plan, runtime summary, and task result.
+When `--with-doctor-chain` is enabled, the doctor chain writes into the run
+artifact directory unless an explicit doctor artifact dir is provided. If the
+doctor chain blocks, the CLI passes that summary to motor-debug instead of
+returning early, so motor-debug writes a blocked run summary before failing.
+
+Basis: WF2 requires motor-debug to become the real orchestration shape sample:
+`preflight -> prepare -> common-doctor -> task-doctor -> runtime-execute`.
+The prior CLI behavior could stop at doctor-chain error without a task run
+summary, while dry-run wrote only `task_request.json`.
+
+Reason: blocked and dry-run real tasks now expose the same operator-facing
+artifact surface: `task_request.json`, `task_plan.json`,
+`workflow_summary.json`, `summary.json`, and `task_result.json`. This keeps
+doctor evidence attached to the task run and avoids treating motor-debug as a
+special path before real hover is designed.
+
 ## 2026-06-16: SITL rangefinder must emulate the real Benewake serial boundary
 
 Decision: `docker/profiles/navlab-sitl-external-nav.parm` is a
@@ -2539,3 +2670,20 @@ Reason: adding or reviewing a hover profile should be a registry-entry change,
 not another scattered control-plane branch. Keeping resolution in Go preserves
 the Go/Python boundary: Python receives generated runtime files and artifacts,
 but does not own profile policy.
+
+## 2026-06-27: WF-DAG breaks to the new workflow artifact contract
+
+Decision: Go sim and Rust real workflow artifacts use the new WF0/WF-DAG node
+contract directly: `id/kind/deps/required/mode/domain/side_effect_policy` plus
+node result fields such as `skipped`, `skip_reason`, `artifacts`, and
+`started_at`/`finished_at`. Legacy `node_id`/`stage` JSON fields and Rust real
+root `workflow_summary.json` compatibility output are not preserved.
+
+Basis: sim and real are being aligned around `dag/workflow_summary.json` as the
+single workflow DAG artifact. Keeping old field names or root mirrors would
+create two active contracts and make later proto/schema promotion ambiguous.
+
+Reason: this is still an internal orchestration artifact. Breaking now keeps
+review, gate, cohort, and future shared readers pointed at one shape while the
+surface area is small. Runtime side effects and evidence adapters remain
+domain-specific; only the workflow artifact contract is shared.

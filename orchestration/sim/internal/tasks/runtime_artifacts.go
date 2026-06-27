@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	"navlab/orchestration-sim/internal/config"
+	simruntime "navlab/orchestration-sim/internal/runtime"
 	"navlab/orchestration-sim/internal/tasks/helpers"
 )
 
@@ -514,12 +514,21 @@ func officialOverlaySource(project config.ProjectConfig, sourcePath string) (str
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "cat", image, sourcePath)
-	output, err := cmd.CombinedOutput()
+	_ = ctx
+	probe, err := simruntime.NewDockerBackend(nil).RunProbe(simruntime.ProbeSpec{
+		Name:       "official_overlay_source",
+		Image:      image,
+		Command:    []string{"cat", sourcePath},
+		TimeoutSec: 30,
+		Required:   true,
+	})
 	if err != nil {
-		return "", fmt.Errorf("read official overlay source %s from %s: %w: %s", sourcePath, image, err, strings.TrimSpace(string(output)))
+		return "", fmt.Errorf("read official overlay source %s from %s: %w: %s", sourcePath, image, err, strings.TrimSpace(probe.Stderr))
 	}
-	return string(output), nil
+	if !probe.OK() {
+		return "", fmt.Errorf("read official overlay source %s from %s: return code %d: %s", sourcePath, image, probe.ReturnCode, strings.TrimSpace(probe.Stderr))
+	}
+	return probe.Stdout, nil
 }
 
 func runningGoTest() bool {

@@ -38,8 +38,8 @@ func TestWriteRunPlanCanMarkDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteRunPlan(dry-run) error = %v", err)
 	}
-	if result.RunID != "20260612T010203Z" {
-		t.Fatalf("RunID = %q, want 20260612T010203Z", result.RunID)
+	if result.RunID != "20260612T010203.000000000Z" {
+		t.Fatalf("RunID = %q, want 20260612T010203.000000000Z", result.RunID)
 	}
 	for _, path := range []string{result.PlanPath, result.TaskRequestPath, result.ManifestPath} {
 		if _, err := os.Stat(path); err != nil {

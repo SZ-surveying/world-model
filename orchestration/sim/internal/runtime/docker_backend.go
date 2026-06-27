@@ -1,55 +1,114 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
-	"path"
-	"strconv"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
+
+	dockercontainer "github.com/docker/docker/api/types/container"
+	dockernetwork "github.com/docker/docker/api/types/network"
+	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-type CommandRunner interface {
-	Run(ctx context.Context, command string, args ...string) (CommandResult, error)
-}
+const (
+	dockerSDKBackendName          = "docker_sdk"
+	defaultContainerStopTimeout   = 15
+	defaultRosbagFinalizeTimeout  = 10 * time.Second
+	defaultProbeTimeoutReturnCode = 124
+)
 
-type CommandResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
-}
-
-type ExecRunner struct{}
-
-func (ExecRunner) Run(ctx context.Context, command string, args ...string) (CommandResult, error) {
-	cmd := exec.CommandContext(ctx, command, args...)
-	stdoutStderr, err := cmd.CombinedOutput()
-	exitCode := 0
-	if err != nil {
-		exitCode = 1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
-	}
-	return CommandResult{Stdout: string(stdoutStderr), ExitCode: exitCode}, err
+type DockerRuntimeClient interface {
+	ContainerCreate(ctx context.Context, config *dockercontainer.Config, hostConfig *dockercontainer.HostConfig, networkingConfig *dockernetwork.NetworkingConfig, platform *ocispec.Platform, containerName string) (dockercontainer.CreateResponse, error)
+	ContainerStart(ctx context.Context, containerID string, options dockercontainer.StartOptions) error
+	ContainerStop(ctx context.Context, containerID string, options dockercontainer.StopOptions) error
+	ContainerWait(ctx context.Context, containerID string, condition dockercontainer.WaitCondition) (<-chan dockercontainer.WaitResponse, <-chan error)
+	ContainerLogs(ctx context.Context, containerID string, options dockercontainer.LogsOptions) (io.ReadCloser, error)
+	ContainerRemove(ctx context.Context, containerID string, options dockercontainer.RemoveOptions) error
 }
 
 type DockerBackend struct {
-	Runner      CommandRunner
-	Now         func() time.Time
-	DefaultUser string
+	Client                 DockerRuntimeClient
+	Now                    func() time.Time
+	DefaultUser            string
+	RosbagFinalizeTimeout  time.Duration
+	ContainerStopTimeout   int
+	ProbeTimeoutReturnCode int
 }
 
-func NewDockerBackend(runner CommandRunner) DockerBackend {
-	if runner == nil {
-		runner = ExecRunner{}
+type dockerContainerSpec struct {
+	Config        *dockercontainer.Config
+	HostConfig    *dockercontainer.HostConfig
+	Network       *dockernetwork.NetworkingConfig
+	ContainerName string
+}
+
+func NewDockerBackend(client DockerRuntimeClient) DockerBackend {
+	if client == nil {
+		client = mustNewSDKDockerRuntimeClient()
 	}
 	return DockerBackend{
-		Runner:      runner,
-		Now:         time.Now,
-		DefaultUser: CurrentUserSpec(),
+		Client:                 client,
+		Now:                    time.Now,
+		DefaultUser:            CurrentUserSpec(),
+		RosbagFinalizeTimeout:  defaultRosbagFinalizeTimeout,
+		ContainerStopTimeout:   defaultContainerStopTimeout,
+		ProbeTimeoutReturnCode: defaultProbeTimeoutReturnCode,
 	}
+}
+
+func NewSDKDockerRuntimeClient() (*dockerclient.Client, error) {
+	return dockerclient.NewClientWithOpts(
+		dockerclient.FromEnv,
+		dockerclient.WithAPIVersionNegotiation(),
+	)
+}
+
+func mustNewSDKDockerRuntimeClient() DockerRuntimeClient {
+	client, err := NewSDKDockerRuntimeClient()
+	if err != nil {
+		return failingDockerRuntimeClient{err: err}
+	}
+	return client
+}
+
+type failingDockerRuntimeClient struct {
+	err error
+}
+
+func (client failingDockerRuntimeClient) ContainerCreate(context.Context, *dockercontainer.Config, *dockercontainer.HostConfig, *dockernetwork.NetworkingConfig, *ocispec.Platform, string) (dockercontainer.CreateResponse, error) {
+	return dockercontainer.CreateResponse{}, client.err
+}
+
+func (client failingDockerRuntimeClient) ContainerStart(context.Context, string, dockercontainer.StartOptions) error {
+	return client.err
+}
+
+func (client failingDockerRuntimeClient) ContainerStop(context.Context, string, dockercontainer.StopOptions) error {
+	return client.err
+}
+
+func (client failingDockerRuntimeClient) ContainerWait(context.Context, string, dockercontainer.WaitCondition) (<-chan dockercontainer.WaitResponse, <-chan error) {
+	resultC := make(chan dockercontainer.WaitResponse)
+	errC := make(chan error, 1)
+	errC <- client.err
+	return resultC, errC
+}
+
+func (client failingDockerRuntimeClient) ContainerLogs(context.Context, string, dockercontainer.LogsOptions) (io.ReadCloser, error) {
+	return nil, client.err
+}
+
+func (client failingDockerRuntimeClient) ContainerRemove(context.Context, string, dockercontainer.RemoveOptions) error {
+	return client.err
 }
 
 func (backend DockerBackend) StartService(spec ServiceSpec) (RuntimeHandle, error) {
@@ -57,27 +116,34 @@ func (backend DockerBackend) StartService(spec ServiceSpec) (RuntimeHandle, erro
 		return RuntimeHandle{}, err
 	}
 	spec = backend.withDefaultUser(spec)
-	args, err := DockerServiceArgs(spec)
+	containerSpec, err := DockerContainerSpec(spec)
 	if err != nil {
 		return RuntimeHandle{}, err
 	}
 	if spec.ContainerName != "" {
-		_, _ = backend.runner().Run(context.Background(), "docker", "rm", "-f", spec.ContainerName)
+		_ = backend.client().ContainerRemove(context.Background(), spec.ContainerName, dockercontainer.RemoveOptions{Force: true, RemoveVolumes: true})
 	}
-	result, err := backend.runner().Run(context.Background(), "docker", args...)
+	created, err := backend.client().ContainerCreate(context.Background(), containerSpec.Config, containerSpec.HostConfig, containerSpec.Network, nil, containerSpec.ContainerName)
 	if err != nil {
-		_ = writeLog(spec.LogPath, result.Stdout, result.Stderr)
-		return RuntimeHandle{}, fmt.Errorf("docker service %s failed: %w", spec.Name, err)
+		_ = writeLog(spec.LogPath, "", err.Error())
+		return RuntimeHandle{}, fmt.Errorf("docker sdk create service %s failed: %w", spec.Name, err)
 	}
-	_ = writeLog(spec.LogPath, result.Stdout, result.Stderr)
+	identifier := identifier(spec.ContainerName, created.ID)
+	if err := backend.client().ContainerStart(context.Background(), identifier, dockercontainer.StartOptions{}); err != nil {
+		_ = writeLog(spec.LogPath, "", err.Error())
+		_ = backend.client().ContainerRemove(context.Background(), identifier, dockercontainer.RemoveOptions{Force: true, RemoveVolumes: true})
+		return RuntimeHandle{}, fmt.Errorf("docker sdk start service %s failed: %w", spec.Name, err)
+	}
 	return RuntimeHandle{
-		Backend:       "docker",
-		ServiceName:   spec.Name,
-		Identifier:    identifier(spec.ContainerName, spec.Name),
-		ContainerName: spec.ContainerName,
-		Command:       append([]string{"docker"}, args...),
-		StartedAt:     backend.now(),
-		LogPath:       spec.LogPath,
+		Backend:        dockerSDKBackendName,
+		ServiceName:    spec.Name,
+		Identifier:     identifier,
+		Command:        append([]string(nil), spec.Command...),
+		StartedAt:      backend.now(),
+		LogPath:        spec.LogPath,
+		ContainerName:  spec.ContainerName,
+		StopSignal:     spec.StopSignal,
+		StopTimeoutSec: spec.StopTimeoutSec,
 	}, nil
 }
 
@@ -86,7 +152,14 @@ func (backend DockerBackend) StartRosbag(spec RosbagSpec) (RuntimeHandle, error)
 	if err != nil {
 		return RuntimeHandle{}, err
 	}
-	return backend.StartService(service)
+	handle, err := backend.StartService(service)
+	if err != nil {
+		return RuntimeHandle{}, err
+	}
+	handle.OutputPath = spec.OutputPath
+	handle.HostOutputPath = hostPathForContainerPath(spec.OutputPath, spec.Volumes)
+	handle.FinalizeTimeoutSec = backend.rosbagFinalizeTimeout().Seconds()
+	return handle, nil
 }
 
 func (backend DockerBackend) RunProbe(spec ProbeSpec) (ProbeResult, error) {
@@ -94,7 +167,7 @@ func (backend DockerBackend) RunProbe(spec ProbeSpec) (ProbeResult, error) {
 		return ProbeResult{}, err
 	}
 	service := backend.withDefaultUser(ProbeServiceSpec(spec))
-	args, err := DockerServiceArgs(service)
+	containerSpec, err := DockerContainerSpec(service)
 	if err != nil {
 		return ProbeResult{}, err
 	}
@@ -104,94 +177,160 @@ func (backend DockerBackend) RunProbe(spec ProbeSpec) (ProbeResult, error) {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(spec.TimeoutSec*float64(time.Second)))
 		defer cancel()
 	}
-	result, err := backend.runner().Run(ctx, "docker", args...)
-	_ = writeLog(spec.LogPath, result.Stdout, result.Stderr)
+	if service.ContainerName != "" {
+		_ = backend.client().ContainerRemove(context.Background(), service.ContainerName, dockercontainer.RemoveOptions{Force: true, RemoveVolumes: true})
+	}
+	created, err := backend.client().ContainerCreate(ctx, containerSpec.Config, containerSpec.HostConfig, containerSpec.Network, nil, containerSpec.ContainerName)
+	if err != nil {
+		probe := ProbeResult{Backend: dockerSDKBackendName, Name: spec.Name, ReturnCode: 1, Stderr: err.Error(), LogPath: spec.LogPath}
+		_ = writeLog(spec.LogPath, probe.Stdout, probe.Stderr)
+		return probe, fmt.Errorf("docker sdk create probe %s failed: %w", spec.Name, err)
+	}
+	identifier := identifier(service.ContainerName, created.ID)
+	defer func() {
+		_ = backend.client().ContainerRemove(context.Background(), identifier, dockercontainer.RemoveOptions{Force: true, RemoveVolumes: true})
+	}()
+	if err := backend.client().ContainerStart(ctx, identifier, dockercontainer.StartOptions{}); err != nil {
+		probe := ProbeResult{Backend: dockerSDKBackendName, Name: spec.Name, ReturnCode: 1, Stderr: err.Error(), LogPath: spec.LogPath}
+		_ = writeLog(spec.LogPath, probe.Stdout, probe.Stderr)
+		return probe, fmt.Errorf("docker sdk start probe %s failed: %w", spec.Name, err)
+	}
+	code, waitErr := backend.waitContainer(ctx, identifier)
+	stdout, stderr := backend.containerLogs(context.Background(), identifier, 0)
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		_ = backend.stopContainer(context.Background(), RuntimeHandle{Identifier: identifier, ServiceName: spec.Name}, "SIGTERM", 2)
+		code = backend.probeTimeoutReturnCode()
+		waitErr = ctx.Err()
+	}
+	_ = writeLog(spec.LogPath, stdout, stderr)
 	probe := ProbeResult{
-		Backend:    "docker",
+		Backend:    dockerSDKBackendName,
 		Name:       spec.Name,
-		ReturnCode: result.ExitCode,
-		Stdout:     result.Stdout,
-		Stderr:     result.Stderr,
+		ReturnCode: code,
+		Stdout:     stdout,
+		Stderr:     stderr,
 		LogPath:    spec.LogPath,
 	}
-	if err != nil {
-		return probe, fmt.Errorf("docker probe %s failed: %w", spec.Name, err)
+	if waitErr != nil {
+		return probe, fmt.Errorf("docker sdk probe %s failed: %w", spec.Name, waitErr)
+	}
+	if code != 0 {
+		return probe, fmt.Errorf("docker sdk probe %s returned code %d", spec.Name, code)
 	}
 	return probe, nil
 }
 
 func (backend DockerBackend) Wait(handle RuntimeHandle) (int, error) {
-	result, err := backend.runner().Run(context.Background(), "docker", "wait", handle.Identifier)
+	code, err := backend.waitContainer(context.Background(), handle.Identifier)
 	if err != nil {
-		return result.ExitCode, fmt.Errorf("docker wait %s failed: %w", handle.ServiceName, err)
-	}
-	if result.Stdout == "" {
-		return 0, nil
-	}
-	code, parseErr := strconv.Atoi(firstLine(result.Stdout))
-	if parseErr != nil {
-		return 1, fmt.Errorf("docker wait %s returned non-integer status %q", handle.ServiceName, result.Stdout)
+		return code, fmt.Errorf("docker sdk wait %s failed: %w", handle.ServiceName, err)
 	}
 	return code, nil
 }
 
-func (backend DockerBackend) Stop(handle RuntimeHandle) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	_, err := backend.runner().Run(ctx, "docker", "rm", "-f", handle.Identifier)
+func (backend DockerBackend) FinalizeRosbag(handle RuntimeHandle) (RuntimeHandle, error) {
+	handle.StopRequestedAt = backend.now().UTC().Format(time.RFC3339Nano)
+	signal := defaultString(handle.StopSignal, "SIGINT")
+	timeout := handle.StopTimeoutSec
+	if timeout <= 0 {
+		timeout = backend.containerStopTimeout()
+	}
+	handle.StopSignal = signal
+	handle.StopTimeoutSec = timeout
+	if err := backend.stopContainer(context.Background(), handle, signal, timeout); err != nil {
+		handle.FinalizeStatus = "stop_failed"
+		return handle, fmt.Errorf("docker sdk stop rosbag %s failed: %w", handle.ServiceName, err)
+	}
+	code, err := backend.waitContainer(context.Background(), handle.Identifier)
+	handle.WaitExitCode = &code
+	handle.StoppedAt = backend.now().UTC().Format(time.RFC3339Nano)
 	if err != nil {
-		return fmt.Errorf("docker stop %s failed: %w", handle.ServiceName, err)
+		handle.FinalizeStatus = "wait_failed"
+		return handle, fmt.Errorf("docker sdk wait rosbag %s failed: %w", handle.ServiceName, err)
+	}
+	if err := backend.waitForRosbagOutput(&handle); err != nil {
+		handle.FinalizeStatus = "finalize_timeout"
+		return handle, err
+	}
+	handle.FinalizeOK = true
+	return handle, nil
+}
+
+func (backend DockerBackend) Stop(handle RuntimeHandle) error {
+	if handle.FinalizeOK || handle.FinalizeStatus != "" {
+		if err := backend.client().ContainerRemove(context.Background(), handle.Identifier, dockercontainer.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
+			return fmt.Errorf("docker sdk remove %s failed: %w", handle.ServiceName, err)
+		}
+		return nil
+	}
+	signal := handle.StopSignal
+	timeout := handle.StopTimeoutSec
+	if timeout <= 0 {
+		timeout = backend.containerStopTimeout()
+	}
+	if err := backend.stopContainer(context.Background(), handle, signal, timeout); err != nil {
+		_ = backend.client().ContainerRemove(context.Background(), handle.Identifier, dockercontainer.RemoveOptions{Force: true, RemoveVolumes: true})
+		return fmt.Errorf("docker sdk stop %s failed: %w", handle.ServiceName, err)
+	}
+	if err := backend.client().ContainerRemove(context.Background(), handle.Identifier, dockercontainer.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
+		return fmt.Errorf("docker sdk remove %s failed: %w", handle.ServiceName, err)
 	}
 	return nil
 }
 
 func (backend DockerBackend) Logs(handle RuntimeHandle, tail int) (string, error) {
-	if tail <= 0 {
-		tail = 400
+	stdout, stderr := backend.containerLogs(context.Background(), handle.Identifier, tail)
+	text := stdout
+	if stderr != "" {
+		if text != "" {
+			text += "\n"
+		}
+		text += stderr
 	}
-	result, err := backend.runner().Run(context.Background(), "docker", "logs", "--tail", strconv.Itoa(tail), handle.Identifier)
-	if err != nil {
-		return result.Stdout, fmt.Errorf("docker logs %s failed: %w", handle.ServiceName, err)
+	if text == "" {
+		return "", nil
 	}
-	return result.Stdout, nil
+	return text, nil
 }
 
-func DockerServiceArgs(spec ServiceSpec) ([]string, error) {
+func DockerContainerSpec(spec ServiceSpec) (dockerContainerSpec, error) {
 	if err := spec.ValidateDocker(); err != nil {
-		return nil, err
+		return dockerContainerSpec{}, err
 	}
-	args := []string{"run"}
-	if spec.Detach {
-		args = append(args, "--detach")
+	binds, err := dockerBinds(spec.Volumes)
+	if err != nil {
+		return dockerContainerSpec{}, err
 	}
-	if spec.Remove {
-		args = append(args, "--rm")
+	hostConfig := &dockercontainer.HostConfig{
+		AutoRemove: spec.Remove,
+		Binds:      binds,
 	}
-	if spec.ContainerName != "" {
-		args = append(args, "--name", spec.ContainerName)
+	if len(spec.Networks) > 0 {
+		hostConfig.NetworkMode = dockercontainer.NetworkMode(spec.Networks[0])
 	}
-	for _, network := range spec.Networks {
-		args = append(args, "--network", network)
+	stopTimeout := spec.StopTimeoutSec
+	config := &dockercontainer.Config{
+		Image:        spec.Image,
+		Cmd:          append([]string(nil), spec.Command...),
+		Env:          dockerEnv(spec.Env),
+		User:         spec.User,
+		WorkingDir:   spec.CWD,
+		Labels:       dockerLabels(spec),
+		StopSignal:   spec.StopSignal,
+		StopTimeout:  nil,
+		AttachStdout: true,
+		AttachStderr: true,
 	}
-	for _, mount := range spec.Volumes {
-		value, err := mount.DockerArg()
-		if err != nil {
-			return nil, err
-		}
-		args = append(args, "--volume", value)
+	if stopTimeout > 0 {
+		config.StopTimeout = &stopTimeout
 	}
-	if spec.CWD != "" {
-		args = append(args, "--workdir", spec.CWD)
-	}
-	if spec.User != "" {
-		args = append(args, "--user", spec.User)
-	}
-	for key, value := range spec.Env {
-		args = append(args, "--env", key+"="+value)
-	}
-	args = append(args, spec.Image)
-	args = append(args, spec.Command...)
-	return args, nil
+	networkingConfig := &dockernetwork.NetworkingConfig{}
+	return dockerContainerSpec{
+		Config:        config,
+		HostConfig:    hostConfig,
+		Network:       networkingConfig,
+		ContainerName: spec.ContainerName,
+	}, nil
 }
 
 func ProbeServiceSpec(spec ProbeSpec) ServiceSpec {
@@ -205,7 +344,7 @@ func ProbeServiceSpec(spec ProbeSpec) ServiceSpec {
 		Volumes:       spec.Volumes,
 		Networks:      spec.Networks,
 		Detach:        false,
-		Remove:        true,
+		Remove:        false,
 		Required:      spec.Required,
 		LogPath:       spec.LogPath,
 		ServiceRole:   spec.ServiceRole,
@@ -221,6 +360,43 @@ func CurrentUserSpec() string {
 	return fmt.Sprintf("%d:%d", uid, gid)
 }
 
+func RosbagServiceSpec(spec RosbagSpec) (ServiceSpec, error) {
+	topics, err := spec.Topics()
+	if err != nil {
+		return ServiceSpec{}, err
+	}
+	storage := spec.Storage
+	if storage == "" {
+		storage = "mcap"
+	}
+	command := []string{"ros2", "bag", "record", "-s", storage, "--compression-mode", "file", "--compression-format", "zstd", "-o", spec.OutputPath, "--topics"}
+	command = append(command, topics...)
+	outputParent := pathDir(spec.OutputPath)
+	shellCommand := fmt.Sprintf(
+		"rm -rf %s && mkdir -p %s && exec %s",
+		shellQuote(spec.OutputPath),
+		shellQuote(outputParent),
+		shellJoin(command),
+	)
+	return ServiceSpec{
+		Name:           spec.Name,
+		Command:        []string{"bash", "-lc", shellCommand},
+		Image:          spec.Image,
+		ContainerName:  spec.ContainerName,
+		Env:            spec.Env,
+		CWD:            spec.CWD,
+		Volumes:        spec.Volumes,
+		Networks:       spec.Networks,
+		Detach:         true,
+		Remove:         false,
+		Required:       spec.Required,
+		LogPath:        spec.LogPath,
+		ServiceRole:    spec.ServiceRole,
+		StopSignal:     "SIGINT",
+		StopTimeoutSec: defaultContainerStopTimeout,
+	}, nil
+}
+
 func (backend DockerBackend) withDefaultUser(spec ServiceSpec) ServiceSpec {
 	if spec.User != "" {
 		return spec
@@ -231,6 +407,129 @@ func (backend DockerBackend) withDefaultUser(spec ServiceSpec) ServiceSpec {
 	spec.User = backend.DefaultUser
 	spec.Env = withWritableRuntimeEnv(spec.Env)
 	return spec
+}
+
+func (backend DockerBackend) waitContainer(ctx context.Context, identifier string) (int, error) {
+	resultC, errC := backend.client().ContainerWait(ctx, identifier, dockercontainer.WaitConditionNotRunning)
+	select {
+	case result := <-resultC:
+		if result.Error != nil {
+			return int(result.StatusCode), errors.New(result.Error.Message)
+		}
+		return int(result.StatusCode), nil
+	case err := <-errC:
+		if err == nil {
+			return 0, nil
+		}
+		return 1, err
+	case <-ctx.Done():
+		return 1, ctx.Err()
+	}
+}
+
+func (backend DockerBackend) stopContainer(ctx context.Context, handle RuntimeHandle, signal string, timeout int) error {
+	options := dockercontainer.StopOptions{Signal: signal}
+	if timeout > 0 {
+		options.Timeout = &timeout
+	}
+	return backend.client().ContainerStop(ctx, handle.Identifier, options)
+}
+
+func (backend DockerBackend) containerLogs(ctx context.Context, identifier string, tail int) (string, string) {
+	if tail <= 0 {
+		tail = 400
+	}
+	reader, err := backend.client().ContainerLogs(ctx, identifier, dockercontainer.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       fmt.Sprint(tail),
+	})
+	if err != nil {
+		return "", err.Error()
+	}
+	defer func() { _ = reader.Close() }()
+	data, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		return "", readErr.Error()
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if _, err := stdcopy.StdCopy(stdout, stderr, bytes.NewReader(data)); err != nil {
+		if stdout.Len() == 0 && stderr.Len() == 0 && len(data) > 0 {
+			return string(data), ""
+		}
+		if stderr.Len() == 0 {
+			stderr.WriteString(err.Error())
+		}
+	}
+	if stdout.Len() == 0 && stderr.Len() == 0 && len(data) > 0 {
+		return string(data), ""
+	}
+	return stdout.String(), stderr.String()
+}
+
+func (backend DockerBackend) waitForRosbagOutput(handle *RuntimeHandle) error {
+	hostOutput := handle.HostOutputPath
+	if strings.TrimSpace(hostOutput) == "" {
+		handle.FinalizeStatus = "host_output_path_unavailable"
+		return nil
+	}
+	deadline := time.Now().Add(backend.rosbagFinalizeTimeout())
+	for {
+		metadataPath := filepath.Join(hostOutput, "metadata.yaml")
+		if _, err := os.Stat(metadataPath); err == nil {
+			handle.MetadataPath = metadataPath
+			handle.FinalizeStatus = "metadata_ready"
+			handle.MessageCountsSource = "metadata"
+			return nil
+		}
+		mcapPaths := findMCAPPaths(hostOutput)
+		if len(mcapPaths) > 0 {
+			handle.MCAPPaths = mcapPaths
+			handle.FinalizeStatus = "mcap_ready"
+			handle.MessageCountsSource = "mcap_presence"
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("rosbag finalize timeout for %s: no metadata.yaml or mcap under %s", handle.ServiceName, hostOutput)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func (backend DockerBackend) client() DockerRuntimeClient {
+	if backend.Client != nil {
+		return backend.Client
+	}
+	return mustNewSDKDockerRuntimeClient()
+}
+
+func (backend DockerBackend) now() time.Time {
+	if backend.Now != nil {
+		return backend.Now()
+	}
+	return time.Now()
+}
+
+func (backend DockerBackend) rosbagFinalizeTimeout() time.Duration {
+	if backend.RosbagFinalizeTimeout > 0 {
+		return backend.RosbagFinalizeTimeout
+	}
+	return defaultRosbagFinalizeTimeout
+}
+
+func (backend DockerBackend) containerStopTimeout() int {
+	if backend.ContainerStopTimeout > 0 {
+		return backend.ContainerStopTimeout
+	}
+	return defaultContainerStopTimeout
+}
+
+func (backend DockerBackend) probeTimeoutReturnCode() int {
+	if backend.ProbeTimeoutReturnCode > 0 {
+		return backend.ProbeTimeoutReturnCode
+	}
+	return defaultProbeTimeoutReturnCode
 }
 
 func withWritableRuntimeEnv(env map[string]string) map[string]string {
@@ -255,59 +554,76 @@ func withWritableRuntimeEnv(env map[string]string) map[string]string {
 	return env
 }
 
-func RosbagServiceSpec(spec RosbagSpec) (ServiceSpec, error) {
-	topics, err := spec.Topics()
+func dockerEnv(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, key+"="+env[key])
+	}
+	return result
+}
+
+func dockerBinds(volumes []VolumeMount) ([]string, error) {
+	binds := make([]string, 0, len(volumes))
+	for _, mount := range volumes {
+		value, err := mount.DockerArg()
+		if err != nil {
+			return nil, err
+		}
+		binds = append(binds, value)
+	}
+	return binds, nil
+}
+
+func dockerLabels(spec ServiceSpec) map[string]string {
+	labels := map[string]string{
+		"navlab.runtime.backend": "docker_sdk",
+		"navlab.runtime.service": spec.Name,
+	}
+	if spec.ServiceRole != "" {
+		labels["navlab.runtime.role"] = spec.ServiceRole
+	}
+	return labels
+}
+
+func hostPathForContainerPath(containerPath string, volumes []VolumeMount) string {
+	containerPath = filepath.Clean(containerPath)
+	bestTarget := ""
+	bestSource := ""
+	for _, volume := range volumes {
+		target := filepath.Clean(volume.Target)
+		if target == "." || target == string(filepath.Separator) {
+			continue
+		}
+		if containerPath == target || strings.HasPrefix(containerPath, target+string(filepath.Separator)) {
+			if len(target) > len(bestTarget) {
+				bestTarget = target
+				bestSource = filepath.Clean(volume.Source)
+			}
+		}
+	}
+	if bestTarget == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(bestTarget, containerPath)
 	if err != nil {
-		return ServiceSpec{}, err
+		return ""
 	}
-	storage := spec.Storage
-	if storage == "" {
-		storage = "mcap"
-	}
-	command := []string{"ros2", "bag", "record", "-s", storage, "--compression-mode", "file", "--compression-format", "zstd", "-o", spec.OutputPath, "--topics"}
-	command = append(command, topics...)
-	if spec.DurationSec > 0 {
-		outputParent := path.Dir(spec.OutputPath)
-		metadataPath := path.Join(spec.OutputPath, "metadata.yaml")
-		shellCommand := fmt.Sprintf(
-			"rm -rf %s && mkdir -p %s && set +e; timeout --signal=INT %.1f %s; rc=$?; set -e; if [ \"$rc\" != \"0\" ] && [ \"$rc\" != \"124\" ] && [ \"$rc\" != \"130\" ]; then exit \"$rc\"; fi; for i in $(seq 1 40); do [ -f %s ] && exit 0; sleep 0.25; done; exit 2",
-			shellQuote(spec.OutputPath),
-			shellQuote(outputParent),
-			spec.DurationSec,
-			shellJoin(command),
-			shellQuote(metadataPath),
-		)
-		command = []string{"bash", "-lc", shellCommand}
-	}
-	return ServiceSpec{
-		Name:          spec.Name,
-		Command:       command,
-		Image:         spec.Image,
-		ContainerName: spec.ContainerName,
-		Env:           spec.Env,
-		CWD:           spec.CWD,
-		Volumes:       spec.Volumes,
-		Networks:      spec.Networks,
-		Detach:        true,
-		Remove:        false,
-		Required:      spec.Required,
-		LogPath:       spec.LogPath,
-		ServiceRole:   spec.ServiceRole,
-	}, nil
+	return filepath.Join(bestSource, rel)
 }
 
-func (backend DockerBackend) runner() CommandRunner {
-	if backend.Runner == nil {
-		return ExecRunner{}
+func findMCAPPaths(root string) []string {
+	matches := []string{}
+	for _, pattern := range []string{"*.mcap", "*.mcap.zstd"} {
+		found, _ := filepath.Glob(filepath.Join(root, pattern))
+		matches = append(matches, found...)
 	}
-	return backend.Runner
-}
-
-func (backend DockerBackend) now() time.Time {
-	if backend.Now != nil {
-		return backend.Now()
-	}
-	return time.Now()
+	sort.Strings(matches)
+	return matches
 }
 
 func identifier(containerName string, fallback string) string {
@@ -317,13 +633,11 @@ func identifier(containerName string, fallback string) string {
 	return fallback
 }
 
-func firstLine(value string) string {
-	for index, char := range value {
-		if char == '\n' || char == '\r' {
-			return value[:index]
-		}
+func defaultString(value string, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
 	}
-	return value
+	return fallback
 }
 
 func shellJoin(args []string) string {
@@ -331,47 +645,24 @@ func shellJoin(args []string) string {
 	for _, arg := range args {
 		quoted = append(quoted, shellQuote(arg))
 	}
-	return joinWithSpace(quoted)
+	return strings.Join(quoted, " ")
 }
 
 func shellQuote(value string) string {
 	if value == "" {
 		return "''"
 	}
-	return "'" + stringsReplaceAll(value, "'", "'\"'\"'") + "'"
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func stringsReplaceAll(value string, old string, next string) string {
-	if old == "" {
-		return value
+func pathDir(value string) string {
+	cleaned := strings.TrimRight(value, "/")
+	if cleaned == "" {
+		return "."
 	}
-	result := ""
-	for {
-		index := stringsIndex(value, old)
-		if index < 0 {
-			return result + value
-		}
-		result += value[:index] + next
-		value = value[index+len(old):]
+	index := strings.LastIndex(cleaned, "/")
+	if index <= 0 {
+		return "."
 	}
-}
-
-func stringsIndex(value string, substr string) int {
-	for i := 0; i+len(substr) <= len(value); i++ {
-		if value[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}
-
-func joinWithSpace(values []string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	result := values[0]
-	for _, value := range values[1:] {
-		result += " " + value
-	}
-	return result
+	return cleaned[:index]
 }

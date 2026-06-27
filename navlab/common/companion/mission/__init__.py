@@ -90,6 +90,18 @@ from navlab.common.companion.mission.mavlink_protocol import (
     mode_number,
 )
 from navlab.common.companion.mission.pipeline import FlightPipeline, Stage, StageResult, StageStatus
+from navlab.common.companion.mission.policy import (
+    DeadlineEvaluation,
+    GateStatus,
+    OperatorConfirmationEvaluation,
+    OperatorConfirmationRequirement,
+    TargetHardCapEvaluation,
+    evaluate_deadline_policy,
+    evaluate_operator_confirmations,
+    evaluate_target_hard_cap_policy,
+    merge_gate_statuses,
+    reason_code,
+)
 from navlab.common.companion.mission.runtime_state import (
     ExternalNavStatusSnapshot,
     MavlinkExternalNavStatusSnapshot,
@@ -159,6 +171,13 @@ from navlab.common.companion.mission.stages.prefix import (
 from navlab.common.companion.mission.summary_runtime import (
     HoverMissionSummaryConfig,
     HoverMissionSummaryRuntime,
+)
+from navlab.common.companion.mission.task_fsm import (
+    TASK_FSM_SCHEMA_VERSION,
+    TaskFsmRecorder,
+    TaskFsmState,
+    TaskFsmSummary,
+    TaskFsmTransition,
 )
 
 __all__ = [name for name in globals() if not name.startswith("_") and name != "annotations"]

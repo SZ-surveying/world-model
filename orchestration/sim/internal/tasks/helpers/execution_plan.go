@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	"navlab/orchestration-sim/internal/config"
 )
 
@@ -656,7 +656,7 @@ func BuildRosbagRecordPlanWithRequired(helperID string, name string, profilePath
 		OutputDir:      outputDir,
 		Topics:         append([]string(nil), topics...),
 		RequiredTopics: append([]string(nil), requiredTopics...),
-		Command:        fmt.Sprintf("timeout --signal=INT %.1f ros2 bag record -s mcap -o %s --topics %s", durationSec, outputDir, strings.Join(quotedTopics, " ")),
+		Command:        fmt.Sprintf("ros2 bag record -s mcap -o %s --topics %s # runtime_owned_stop=SIGINT duration_sec=%.1f", outputDir, strings.Join(quotedTopics, " "), durationSec),
 		Status:         "ported_command_planning",
 	}
 }

@@ -10,21 +10,23 @@ import (
 )
 
 type ServiceSpec struct {
-	Name          string
-	Command       []string
-	Image         string
-	ContainerName string
-	Env           map[string]string
-	CWD           string
-	Volumes       []VolumeMount
-	Networks      []string
-	User          string
-	Detach        bool
-	Remove        bool
-	Required      bool
-	Restartable   bool
-	LogPath       string
-	ServiceRole   string
+	Name           string
+	Command        []string
+	Image          string
+	ContainerName  string
+	Env            map[string]string
+	CWD            string
+	Volumes        []VolumeMount
+	Networks       []string
+	User           string
+	Detach         bool
+	Remove         bool
+	Required       bool
+	Restartable    bool
+	LogPath        string
+	ServiceRole    string
+	StopSignal     string
+	StopTimeoutSec int
 }
 
 type VolumeMount struct {
@@ -67,13 +69,26 @@ type ProbeSpec struct {
 }
 
 type RuntimeHandle struct {
-	Backend       string    `json:"backend"`
-	ServiceName   string    `json:"service_name"`
-	Identifier    string    `json:"identifier"`
-	Command       []string  `json:"command"`
-	StartedAt     time.Time `json:"started_at"`
-	LogPath       string    `json:"log_path,omitempty"`
-	ContainerName string    `json:"container_name,omitempty"`
+	Backend             string    `json:"backend"`
+	ServiceName         string    `json:"service_name"`
+	Identifier          string    `json:"identifier"`
+	Command             []string  `json:"command"`
+	StartedAt           time.Time `json:"started_at"`
+	LogPath             string    `json:"log_path,omitempty"`
+	ContainerName       string    `json:"container_name,omitempty"`
+	StopSignal          string    `json:"stop_signal,omitempty"`
+	StopTimeoutSec      int       `json:"stop_timeout_sec,omitempty"`
+	OutputPath          string    `json:"output_path,omitempty"`
+	HostOutputPath      string    `json:"host_output_path,omitempty"`
+	StopRequestedAt     string    `json:"stop_requested_at,omitempty"`
+	StoppedAt           string    `json:"stopped_at,omitempty"`
+	WaitExitCode        *int      `json:"wait_exit_code,omitempty"`
+	FinalizeOK          bool      `json:"finalize_ok,omitempty"`
+	FinalizeStatus      string    `json:"finalize_status,omitempty"`
+	FinalizeTimeoutSec  float64   `json:"finalize_timeout_sec,omitempty"`
+	MetadataPath        string    `json:"metadata_path,omitempty"`
+	MCAPPaths           []string  `json:"mcap_paths,omitempty"`
+	MessageCountsSource string    `json:"message_counts_source,omitempty"`
 }
 
 type ProbeResult struct {
@@ -96,6 +111,10 @@ type Backend interface {
 	Wait(handle RuntimeHandle) (int, error)
 	Stop(handle RuntimeHandle) error
 	Logs(handle RuntimeHandle, tail int) (string, error)
+}
+
+type RosbagFinalizer interface {
+	FinalizeRosbag(handle RuntimeHandle) (RuntimeHandle, error)
 }
 
 func (spec ServiceSpec) ValidateDocker() error {

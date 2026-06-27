@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	"navlab/orchestration-sim/internal/config"
 	simruntime "navlab/orchestration-sim/internal/runtime"
 )
@@ -190,6 +190,11 @@ func ExecuteRuntimeSpecs(
 		if options.WaitForRosbags {
 			if options.RosbagPostTaskGraceSec > 0 {
 				waitPostTaskRosbagGrace(result.RosbagHandles, options)
+				if err := finalizeRosbags(backend, result.RosbagHandles, options, &result); err != nil {
+					cleanup()
+					emitRuntimeEvent(options, RuntimeEvent{Phase: "run.failed", Level: "error", Message: err.Error()})
+					return result, err
+				}
 			} else if waitErr := waitForRosbags(backend, result.RosbagHandles, options); waitErr != nil {
 				cleanup()
 				emitRuntimeEvent(options, RuntimeEvent{Phase: "run.failed", Level: "error", Message: waitErr.Error()})
@@ -206,6 +211,11 @@ func ExecuteRuntimeSpecs(
 	if options.WaitForRosbags {
 		if options.RosbagPostTaskGraceSec > 0 {
 			waitPostTaskRosbagGrace(result.RosbagHandles, options)
+			if err := finalizeRosbags(backend, result.RosbagHandles, options, &result); err != nil {
+				cleanup()
+				emitRuntimeEvent(options, RuntimeEvent{Phase: "run.failed", Level: "error", Message: err.Error()})
+				return result, err
+			}
 		} else if err := waitForRosbags(backend, result.RosbagHandles, options); err != nil {
 			cleanup()
 			emitRuntimeEvent(options, RuntimeEvent{Phase: "run.failed", Level: "error", Message: err.Error()})
@@ -594,6 +604,36 @@ func waitPostTaskRosbagGrace(handles []simruntime.RuntimeHandle, options Runtime
 		Payload: map[string]any{"grace_sec": options.RosbagPostTaskGraceSec},
 	})
 	time.Sleep(time.Duration(options.RosbagPostTaskGraceSec * float64(time.Second)))
+}
+
+func finalizeRosbags(backend simruntime.Backend, handles []simruntime.RuntimeHandle, options RuntimeExecutionOptions, result *RuntimeExecutionResult) error {
+	finalizer, ok := backend.(simruntime.RosbagFinalizer)
+	if !ok {
+		return nil
+	}
+	for index, handle := range handles {
+		emitRuntimeEvent(options, componentEvent("rosbag.finalizing", "rosbag", handle.ServiceName, handle.LogPath, "finalizing rosbag"))
+		updated, err := finalizer.FinalizeRosbag(handle)
+		if index < len(result.RosbagHandles) {
+			result.RosbagHandles[index] = updated
+		}
+		if err != nil {
+			captureRuntimeLogs(backend, updated, "rosbag finalize error")
+			emitRuntimeEvent(options, componentEvent("rosbag.finalize_failed", "rosbag", handle.ServiceName, handle.LogPath, err.Error()))
+			return fmt.Errorf("finalize rosbag %s: %w", handle.ServiceName, err)
+		}
+		event := componentEvent("rosbag.finalized", "rosbag", updated.ServiceName, updated.LogPath, "rosbag finalized")
+		event.Payload = map[string]any{
+			"finalize_ok":     updated.FinalizeOK,
+			"finalize_status": updated.FinalizeStatus,
+			"stop_signal":     updated.StopSignal,
+			"wait_exit_code":  updated.WaitExitCode,
+			"metadata_path":   updated.MetadataPath,
+			"mcap_paths":      updated.MCAPPaths,
+		}
+		emitRuntimeEvent(options, event)
+	}
+	return nil
 }
 
 func taskRuntimeTimeoutError(options RuntimeExecutionOptions, stage string) error {

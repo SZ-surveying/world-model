@@ -65,7 +65,7 @@ func NewWriter(root string) Writer {
 }
 
 func NewRunID(now time.Time) string {
-	return now.UTC().Format("20060102T150405Z")
+	return now.UTC().Format("20060102T150405.000000000Z")
 }
 
 func (writer Writer) WriteRunPlan(

@@ -16,7 +16,7 @@ import (
 	"github.com/foxglove/mcap/go/mcap"
 	"github.com/klauspost/compress/zstd"
 
-	"navlab/orchestration-sim/internal/artifactlayout"
+	artifactlayout "navlab/orchestration-sim/internal/artifacts/layout"
 	"navlab/orchestration-sim/internal/config"
 	"navlab/orchestration-sim/internal/tasks/helpers"
 )
@@ -45,10 +45,12 @@ type ProbeOutputSummary struct {
 type RosbagGateSummary struct {
 	Name                        string         `json:"name"`
 	MetadataPath                string         `json:"metadata_path"`
+	MCAPPaths                   []string       `json:"mcap_paths,omitempty"`
 	Exists                      bool           `json:"exists"`
 	OK                          bool           `json:"ok"`
 	RequiredTopics              []string       `json:"required_topics"`
 	MessageCounts               map[string]int `json:"message_counts,omitempty"`
+	MessageCountsSource         string         `json:"message_counts_source,omitempty"`
 	MissingRequiredTopics       []string       `json:"missing_required_topics,omitempty"`
 	ZeroCountRequiredTopics     []string       `json:"zero_count_required_topics,omitempty"`
 	MetadataMissingOrUnreadable string         `json:"metadata_missing_or_unreadable,omitempty"`
@@ -3334,27 +3336,138 @@ func evaluateRosbagProfiles(plan Plan, artifactDir string) []RosbagGateSummary {
 		}
 		data, err := os.ReadFile(metadataPath)
 		if err != nil {
-			summary.MetadataMissingOrUnreadable = err.Error()
+			counts, paths, mcapErr := rosbagMCAPMessageCounts(filepath.Join(artifactDir, rosbag.OutputDir))
+			if mcapErr != nil {
+				summary.MetadataMissingOrUnreadable = err.Error() + "; mcap_fallback=" + mcapErr.Error()
+				summaries = append(summaries, summary)
+				continue
+			}
+			summary.Exists = true
+			summary.MCAPPaths = paths
+			summary.MessageCounts = counts
+			summary.MessageCountsSource = "mcap_stream"
+			evaluateRosbagRequiredTopics(&summary, requiredTopics)
 			summaries = append(summaries, summary)
 			continue
 		}
 		summary.Exists = true
 		counts := helpers.MetadataCountsFromString(string(data))
 		summary.MessageCounts = counts
-		for _, topic := range requiredTopics {
-			count, exists := counts[topic]
-			if !exists {
-				summary.MissingRequiredTopics = append(summary.MissingRequiredTopics, topic)
-				continue
-			}
-			if count <= 0 {
-				summary.ZeroCountRequiredTopics = append(summary.ZeroCountRequiredTopics, topic)
-			}
-		}
-		summary.OK = len(summary.MissingRequiredTopics) == 0 && len(summary.ZeroCountRequiredTopics) == 0
+		summary.MessageCountsSource = "metadata"
+		evaluateRosbagRequiredTopics(&summary, requiredTopics)
 		summaries = append(summaries, summary)
 	}
 	return summaries
+}
+
+func evaluateRosbagRequiredTopics(summary *RosbagGateSummary, requiredTopics []string) {
+	for _, topic := range requiredTopics {
+		count, exists := summary.MessageCounts[topic]
+		if !exists {
+			summary.MissingRequiredTopics = append(summary.MissingRequiredTopics, topic)
+			continue
+		}
+		if count <= 0 {
+			summary.ZeroCountRequiredTopics = append(summary.ZeroCountRequiredTopics, topic)
+		}
+	}
+	summary.OK = len(summary.MissingRequiredTopics) == 0 && len(summary.ZeroCountRequiredTopics) == 0
+}
+
+func rosbagMCAPMessageCounts(outputDir string) (map[string]int, []string, error) {
+	var lastErr error
+	for attempt := 0; attempt < 40; attempt++ {
+		paths, err := rosbagMCAPPaths(outputDir)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(paths) == 0 {
+			lastErr = fmt.Errorf("no mcap files found in %s", outputDir)
+			time.Sleep(250 * time.Millisecond)
+			continue
+		}
+		counts := map[string]int{}
+		readable := true
+		for _, path := range paths {
+			if err := addMCAPMessageCounts(path, counts); err != nil {
+				lastErr = err
+				readable = false
+				break
+			}
+		}
+		if readable {
+			return counts, paths, nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no readable mcap files found in %s", outputDir)
+	}
+	return nil, nil, lastErr
+}
+
+func rosbagMCAPPaths(outputDir string) ([]string, error) {
+	paths, err := filepath.Glob(filepath.Join(outputDir, "*.mcap"))
+	if err != nil {
+		return nil, err
+	}
+	compressedPaths, err := filepath.Glob(filepath.Join(outputDir, "*.mcap.zstd"))
+	if err != nil {
+		return nil, err
+	}
+	paths = append(paths, compressedPaths...)
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func addMCAPMessageCounts(path string, counts map[string]int) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	var stream io.Reader = file
+	var decoder *zstd.Decoder
+	if strings.HasSuffix(path, ".zstd") {
+		decoder, err = zstd.NewReader(file)
+		if err != nil {
+			return err
+		}
+		defer decoder.Close()
+		stream = decoder
+	}
+	reader, err := mcap.NewReader(stream)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	it, err := reader.Messages(mcap.UsingIndex(false))
+	if err != nil {
+		return err
+	}
+	localCounts := map[string]int{}
+	for {
+		_, channel, _, err := it.Next(nil) //nolint:staticcheck
+		if errorsIsEOF(err) {
+			break
+		}
+		if err != nil {
+			if len(localCounts) > 0 {
+				for topic, count := range localCounts {
+					counts[topic] += count
+				}
+				return nil
+			}
+			return err
+		}
+		if channel != nil {
+			localCounts[channel.Topic]++
+		}
+	}
+	for topic, count := range localCounts {
+		counts[topic] += count
+	}
+	return nil
 }
 
 func taskSpecificChecks(runtimeConfig config.TaskRuntimeConfig, taskID string) map[string]bool {

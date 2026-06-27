@@ -151,6 +151,7 @@ fn build_task_specific(
 ) -> Value {
     match task_config.id.as_str() {
         "motor-debug" => build_motor_debug_task_doctor(project, upstream),
+        "hover" => build_hover_task_doctor(project, upstream),
         task_name => json!({
             "ok": true,
             "blocked": false,
@@ -180,6 +181,74 @@ fn build_motor_debug_task_doctor(project: &ProjectConfig, upstream: &UpstreamEvi
         "current_fcu_mode": current_mode,
         "guided_mode": "deferred_to_run"
     })
+}
+
+fn build_hover_task_doctor(project: &ProjectConfig, upstream: &UpstreamEvidence) -> Value {
+    let slam_odom = topic_ready(upstream, "/slam/odom");
+    let external_nav = topic_ready(
+        upstream,
+        project.common_doctor.external_nav_status_topic.as_str(),
+    );
+    let mavlink_external_nav = topic_ready(
+        upstream,
+        project
+            .common_doctor
+            .mavlink_external_nav_status_topic
+            .as_str(),
+    );
+    let rangefinder_range = topic_ready(upstream, "/rangefinder/down/range");
+    let rangefinder_status = topic_ready(upstream, "/rangefinder/down/status");
+    let fcu_status = topic_ready(upstream, project.task_doctor.fcu_status_topic.as_str())
+        || topic_ready(
+            upstream,
+            project.task_doctor.fcu_bridge_state_topic.as_str(),
+        );
+    let mut blockers = Vec::new();
+    if !slam_odom {
+        blockers.push("real_hover_slam_odom_not_ready");
+    }
+    if !external_nav {
+        blockers.push("real_hover_external_nav_not_ready");
+    }
+    if !mavlink_external_nav {
+        blockers.push("real_hover_mavlink_external_nav_not_ready");
+    }
+    if !rangefinder_range || !rangefinder_status {
+        blockers.push("real_hover_rangefinder_not_ready");
+    }
+    if !fcu_status {
+        blockers.push("real_hover_fcu_status_not_ready");
+    }
+    json!({
+        "ok": blockers.is_empty(),
+        "blocked": !blockers.is_empty(),
+        "blockers": blockers,
+        "required_mode": "GUIDED",
+        "guided_gate": "run_stage",
+        "takeoff_gate": "run_stage",
+        "landing_gate": "run_stage",
+        "completion_definition": {
+            "primary": "mavlink_external_nav_and_fcu_local_position",
+            "secondary": "official_dds_pose_if_available",
+            "gate_policy": "mavlink_external_nav_required_official_dds_crosscheck"
+        },
+        "required_evidence": {
+            "slam_odom_ready": slam_odom,
+            "external_nav_ready": external_nav,
+            "mavlink_external_nav_ready": mavlink_external_nav,
+            "rangefinder_ready": rangefinder_range && rangefinder_status,
+            "fcu_status_ready": fcu_status
+        },
+        "sim_dependency_claim": "forbidden",
+        "flight_claim": "not_started"
+    })
+}
+
+fn topic_ready(upstream: &UpstreamEvidence, topic_name: &str) -> bool {
+    upstream
+        .required_topics
+        .get(topic_name)
+        .is_some_and(|topic| topic.present.unwrap_or(true) && topic.fresh.unwrap_or(true))
 }
 
 fn task_fcu_status_metadata(
@@ -309,6 +378,17 @@ mod tests {
         }
     }
 
+    fn hover_task_config() -> TaskConfig {
+        TaskConfig {
+            id: "hover".to_string(),
+            family: "real".to_string(),
+            description: "hover".to_string(),
+            capabilities: vec![],
+            task: BTreeMap::new(),
+            safety: BTreeMap::new(),
+        }
+    }
+
     #[test]
     fn motor_debug_task_doctor_uses_fcu_status_metadata() {
         let upstream: UpstreamEvidence = serde_json::from_value(json!({
@@ -341,6 +421,58 @@ mod tests {
         assert!(!summary.ok);
         assert_eq!(summary.blockers, vec!["upstream_evidence_missing"]);
         assert_eq!(summary.task_specific["current_fcu_mode"], "unknown");
+    }
+
+    #[test]
+    fn hover_task_doctor_blocks_without_runtime_evidence() {
+        let summary = build_task_doctor_summary(
+            &project(),
+            &hover_task_config(),
+            UpstreamEvidence {
+                ok: true,
+                blocked: false,
+                blockers: Vec::new(),
+                required_topics: BTreeMap::new(),
+            },
+        );
+
+        assert!(!summary.ok);
+        assert_eq!(
+            summary.task_specific["blockers"][0],
+            "real_hover_slam_odom_not_ready"
+        );
+        assert_eq!(
+            summary.task_specific["completion_definition"]["gate_policy"],
+            "mavlink_external_nav_required_official_dds_crosscheck"
+        );
+    }
+
+    #[test]
+    fn hover_task_doctor_accepts_required_real_evidence_shape() {
+        let upstream: UpstreamEvidence = serde_json::from_value(json!({
+            "ok": true,
+            "blocked": false,
+            "blockers": [],
+            "required_topics": {
+                "/slam/odom": {"present": true, "fresh": true},
+                "/external_nav/status": {"present": true, "fresh": true},
+                "/mavlink_external_nav/status": {"present": true, "fresh": true},
+                "/rangefinder/down/range": {"present": true, "fresh": true},
+                "/rangefinder/down/status": {"present": true, "fresh": true},
+                "/ap/v1/status": {"present": true, "fresh": true}
+            }
+        }))
+        .expect("upstream");
+
+        let summary = build_task_doctor_summary(&project(), &hover_task_config(), upstream);
+
+        assert!(summary.ok);
+        assert_eq!(summary.task_name, "hover");
+        assert_eq!(
+            summary.task_specific["required_evidence"]["mavlink_external_nav_ready"],
+            true
+        );
+        assert_eq!(summary.task_specific["sim_dependency_claim"], "forbidden");
     }
 
     #[test]
